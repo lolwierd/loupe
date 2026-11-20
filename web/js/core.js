@@ -1,6 +1,8 @@
 // Shared parts of the page: DOM helpers, the API, browser-side preferences, icons, the app's state object.
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+// a title that may hold `code`: escaped, with the code spans kept as code (guide titles come from the model)
+export const tick = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 export const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
@@ -60,7 +62,11 @@ export const modelName = (id) => S.app?.models.find((m) => m.id === String(id ||
 // The model and effort a new question starts with: what you picked last, in this browser.
 // a remembered model that the list has moved past becomes the newest of its line (opus, gpt:astra), else the default
 const lineOf = (id = '') => { const c = /^claude-([a-z]+)-/.exec(id), g = /^gpt-[\d.]+-([a-z]+)$/.exec(id); return c ? c[1] : g ? 'gpt:' + g[1] : null; };
-export const freshModel = (id, d) => { const ms = S.app?.models || []; return ms.some((m) => m.id === id) ? id : ms.find((m) => lineOf(id) && lineOf(m.id) === lineOf(id))?.id || d; };
+export const freshModel = (id, d) => {
+  const ms = S.app?.models || [], line = lineOf(id);
+  if (ms.some((m) => m.id === id)) return id;
+  return (line && ms.find((m) => lineOf(m.id) === line)?.id) || (/^gpt-/.test(id || '') && ms.find((m) => m.kind === 'codex')?.id) || d;
+};
 export const lastRun = () => ({ model: freshModel(pref.get('model', S.app?.defaults.model), S.app?.defaults.model), effort: pref.get('effort', S.app?.defaults.effort) });
 export const briefRun = () => ({ model: freshModel(pref.get('briefModel', S.app?.defaults.briefModel), S.app?.defaults.briefModel), effort: pref.get('briefEffort', S.app?.defaults.briefEffort) });
 export const rememberRun = (r) => { if (r.model) pref.set('model', r.model); if (r.effort) pref.set('effort', r.effort); };

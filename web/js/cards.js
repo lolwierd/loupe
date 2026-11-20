@@ -1,6 +1,6 @@
 // The diff column: every changed file as a card in one scroll (tree order, or the guide's), loaded as it nears the
 // viewport. Selecting lines, the composer under them, and the threads anchored to them live here.
-import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, convOf, threadsAt, lastRun, rememberRun, plural, ago } from './core.js';
+import { S, $, $$, esc, tick, h, api, wsApi, I, pref, toast, fileOf, convOf, threadsAt, lastRun, rememberRun, plural, ago } from './core.js';
 import { buildRows, buildSplit, wordRanges, findRow, revealAround, expandGap, loadTokens, tokHTML, headText, rangeLabel, selText } from './diff.js';
 import { md } from './md.js';
 import { modelKind, msgHTML, runBtn, runOf, grow, menu, shimmerSync } from './ui.js';
@@ -69,8 +69,8 @@ function guideHeadHTML(sec, k) {
     return `<button class="gck${on ? ' on' : ''}" data-act="gck" data-key="${esc(checkKey(k, j))}" aria-pressed="${on}"><span class="b">${icon('check', '--on-act')}</span><span class="x">${md(c, markdown).replace(/^<p>|<\/p>\s*$/g, '')}</span></button>`;
   }).join('');
   const n = S.review.brief.sections.length;
-  return `<div class="gsec" id="g-${k}"><div class="sh"><span>Section ${k + 1} of ${n}</span><span class="dot">·</span><span>${esc(sec.role)}</span><span class="sp"></span><span class="n">${left ? `${left.toLocaleString()} lines left` : 'all viewed'}</span></div><h2>${esc(sec.title)}</h2>` +
-    (sec.context ? `<div class="ctx md">${md(sec.context, markdown)}</div>` : '') + `<div class="why md">${md(sec.why, markdown)}</div>${checks ? `<div class="gcks" aria-label="What to check">${checks}</div>` : ''}</div>`;
+  return `<div class="gsec" id="g-${k}"><div class="gmain"><div class="sh"><span>Section ${k + 1} of ${n}</span><span class="dot">·</span><span>${esc(sec.role)}</span><span class="sp"></span><span class="n">${left ? `${left.toLocaleString()} lines left` : 'all viewed'}</span></div><h2 class="tick">${tick(sec.title)}</h2>` +
+    (sec.context ? `<div class="ctx md">${md(sec.context, markdown)}</div>` : '') + `<div class="why md">${md(sec.why, markdown)}</div></div>${checks ? `<div class="gcks" aria-label="What to check"><div class="sh">What to check</div>${checks}</div>` : ''}</div>`;
 }
 
 let io = null;

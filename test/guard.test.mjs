@@ -6,7 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 process.env.LOUPE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-test-'));
-const { gitArgsProblem, normalizeGuide } = await import('../src/claude.mjs');
+const { gitArgsProblem, normalizeGuide, brief } = await import('../src/claude.mjs');
 const { parseTarget } = await import('../src/workspaces.mjs');
 
 test('git: read-only subcommands pass', () => {
@@ -61,4 +61,21 @@ test('legacy notes stay on disk but are not shown', async () => {
   // what was written is still there
   assert.deepEqual(ws.review.data.threads.map((t) => t.id), ['note', 'ask']);
   assert.ok(ws.review.data.convs['note-conv']);
+});
+
+test('brief preparation errors clear pending and preserve the previous guide', async () => {
+  const events = [];
+  const ws = {
+    id: 'failed-brief',
+    files: async () => { throw new Error('Could not read the diff'); },
+    review: { data: { brief: { tldr: 'Previous summary', key: 'old' } }, save() {} },
+    emit(name, data) { if (name === 'brief') events.push(data); },
+  };
+  await brief(ws);
+  assert.equal(events.length, 2);
+  assert.equal(events[0].pending, true);
+  assert.equal(events[1].pending, false);
+  assert.equal(events[1].error, 'Could not read the diff');
+  assert.equal(events[1].tldr, 'Previous summary');
+  assert.equal(events[1].stale, true);
 });

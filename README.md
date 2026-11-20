@@ -21,7 +21,7 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
   repository's style.
 - **Keyboard first.** `⌘K` finds any file, commit or action; `?` lists the keys.
 
-Mote, the small beetle at the foot of the file list, shows what the desk is doing: working while an answer or the map
+Mote, the small beetle floating in the corner (drag him anywhere), shows what the desk is doing: working while an answer or the map
 is being written, and jumping when you have read the last file.
 
 ![The map of a change](docs/img/map.png)

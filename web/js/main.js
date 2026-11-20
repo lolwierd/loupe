@@ -6,7 +6,7 @@ import { renderTree, markCurrent, nextUnviewed } from './tree.js';
 import { renderPanel, setTab, renderTabs, openChat, paintMessage } from './panel.js';
 import { goLoc, goThread, openViewer, closeViewer, hideTip } from './nav.js';
 import { renderProgress, paintProgress, renderGo, renderStack, doAct } from './acts.js';
-import { menu, closeMenu, shimmerSync } from './ui.js';
+import { menu, closeMenu, shimmerSync, refreshRunButtons } from './ui.js';
 import { hooks } from './hooks.js';
 import './actions.js';
 import { loadShip, sheetOpen, closeSheet } from './sheets.js';
@@ -93,10 +93,10 @@ function frame() {
     <span class="layout-toggles"><button class="icon" data-act="togglebin" title="Files (t)">${I.sidebarL}</button><button class="icon" data-act="togglepanel" title="Inspector (p)">${I.sidebarR}</button></span></span>
   </header>
   <div class="main" id="main">
-    <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd title="Focus it">/</kbd></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="motedock" id="motedock"></div><div class="resizer" data-resize="bin"></div></aside>
+    <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd title="Focus it">/</kbd></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="resizer" data-resize="bin"></div></aside>
     <main class="viewer-col"><div class="scroller" id="center"><div class="cards" id="cards"><div class="loadd">Loading…</div></div></div>
       <button class="aifab" id="aifab" data-act="askai" title="Ask about the selected lines or the whole change (a)"><span class="aispark">${spark(32, true)}</span><span class="ail">Ask</span></button></main>
-    <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon sm" data-act="keys" title="Keys (?)"><kbd>?</kbd></button></div><div class="pbody" id="pbody"></div></aside>
+    <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon sm" data-act="keys" title="Keys (?)"><kbd>?</kbd></button></div><div class="pbody" id="pbody"></div></aside><div class="motefloat" id="motedock"></div>
   </div></div>`;
   applyMode(S.mode, true);
   // only a width you dragged is set here; the defaults live in the style sheet, where the narrow-window rule can change them
@@ -138,6 +138,7 @@ let fileRequest = 0;
 async function loadFiles(reason) {
   const id = S.id, request = ++fileRequest;
   const current = () => id === S.id && request === fileRequest;
+  const briefAtRequest = S.review.brief;
   const spot = reason ? scrollSpot() : null;
   let files, review;
   const ghReq = api(`/api/w/${S.id}/github`).catch(() => null);
@@ -149,6 +150,8 @@ async function loadFiles(reason) {
   S.untrackedSkipped = files.untrackedSkipped || 0;
   S.files = files.files.map((f, i) => ({ ...f, i }));
   S.byPath = new Map(S.files.map((f) => [f.path, f]));
+  // A brief event can land while the files request is still in flight.
+  if (S.review.brief !== briefAtRequest) review.brief = S.review.brief;
   S.review = review;
   S.github ||= { pr: null, threads: [] };
   // GitHub's side (the PR, its checks, its threads) is never waited for: it lands when it lands.
@@ -220,7 +223,9 @@ function renderScopebar() {
   const t = S.files.reduce((a, f) => ({ add: a.add + f.added, del: a.del + f.deleted }), { add: 0, del: 0 });
   $('#scopebar').classList.toggle('steps', k >= 0);
   $('#scopebar').innerHTML = `<button class="scopebtn" data-act="scopemenu" title="What to compare: ${esc(scopeLabel())}"><span class="l">${esc(scopeLabel())}</span>${I.chev}</button>${step}` +
-    `<span class="what"><span class="num">${plural(S.files.length, 'file')}</span><span class="delta"><span class="add num">+${t.add.toLocaleString()}</span><span class="del num">−${t.del.toLocaleString()}</span></span></span>`;
+    `<span class="what"><span class="num">${plural(S.files.length, 'file')}</span><span class="delta"><span class="add num">+${t.add.toLocaleString()}</span><span class="del num">−${t.del.toLocaleString()}</span></span>` +
+    // the list is a tree or the guide's sections; the way back is here, not only on g
+    (S.review.brief?.sections?.length ? `<span class="sp"></span><button class="link ord" data-act="treeorder" title="Files in ${S.order === 'guide' ? 'tree' : "the guide's"} order (g)">${S.order === 'guide' ? 'Tree' : 'Guide order'}</button>` : '') + `</span>`;
 }
 // Animate the floating spark while Claude is answering.
 function renderFab() {
@@ -267,7 +272,7 @@ async function setScope(scope) {
 function setOrder(o) {
   if (o === S.order) return;
   S.order = o; pref.set('order', o);
-  renderTree(); renderCards(); renderProgress(); if (S.tab === 'overview') renderPanel();
+  renderScopebar(); renderTree(); renderCards(); renderProgress(); if (S.tab === 'overview') renderPanel();
   $('#center').scrollTop = 0;
   requestAnimationFrame(spyNow);
 }
@@ -378,9 +383,16 @@ function listenWs() {
   wsEs?.close();
   const es = wsEs = new EventSource(`/api/w/${S.id}/events`);
   const on = (ev, fn) => es.addEventListener(ev, (e) => { try { fn(JSON.parse(e.data)); } catch (err) { console.error(ev, err); } });
+  const models = ({ models, efforts, defaults }) => {
+    if (!models) return;
+    Object.assign(S.app, { models, efforts, defaults });
+    refreshRunButtons();
+  };
+  on('models', models);
   // A reconnect can have missed events (an answer's last one): read everything again, quietly.
   es.addEventListener('error', () => { S.lost = true; });
   on('hello', (d) => {
+    models(d);
     if (S.boot && S.boot !== d.boot) loadWorkspace('loupe restarted; the change is read again');
     else if (S.lost && S.ws) loadWorkspace();
     S.lost = false; S.boot = d.boot;
@@ -438,7 +450,7 @@ function listenWs() {
     S.review.brief = d;
     // while it is being written, only the line that says what it is reading changes
     if (d.pending && was?.pending) { hooks.briefStep?.(); hooks.mapStep?.(); return; }
-    renderFab();
+    renderFab(); if (S.ws) renderScopebar();
     if (S.tab === 'overview') renderPanel(); else renderTabs();
     if (S.order === 'guide') { renderTree(); renderCards(); renderProgress(); } else hooks.mapChanged?.();
   });
@@ -800,7 +812,7 @@ function scopeMenu(btn) {
 // ------------------------------------------------------------------ clicks in the frame
 document.addEventListener('click', async (e) => {
   const b = e.target.closest?.('[data-act]');
-  if (b && b.closest('.top, .ptabs, .state, #aifab')) {
+  if (b && b.closest('.top, #scopebar, .ptabs, .state, #aifab')) { // the scope bar sits in the file list's head
     const act = b.dataset.act;
     if (act === 'palette') openPalette();
     if (act === 'layout') setLayout(b.dataset.l);
@@ -829,6 +841,7 @@ document.addEventListener('click', async (e) => {
     if (act === 'togglepanel') setPane('panel', !paneOpen('panel'));
     if (act === 'keys') keySheet();
     if (act === 'scopemenu') scopeMenu(b);
+    if (act === 'treeorder') setOrder(S.order === 'guide' ? 'tree' : 'guide');
     if (act === 'scope') setScope(b.dataset.scope);
     if (act === 'askai') return askAi();
     if (act === 'gochat') { setPane('panel', true); S.chat = b.dataset.conv; setTab('chat'); }

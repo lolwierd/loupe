@@ -83,6 +83,7 @@ test('the run picker offers all models for a new chat and only the matching kind
   const markdownOptions = [];
   const code = vm.runInNewContext(picker + messages + '\n({ pickRun, runBtn, msgHTML })', {
     S, I: { spark: '<svg data-spark></svg>' }, esc: String, md: (text, options) => { markdownOptions.push(options); return text; }, ago: () => 'now',
+    freshModel: (id) => models.some((m) => m.id === id) ? id : undefined,
     spark: () => '<canvas class="spark"></canvas>', modelName: (id) => models.find((m) => m.id === id)?.label,
     menu: (_button, options) => { items = options; },
   });
@@ -136,4 +137,109 @@ test('the Stop button sends a stop request for its containing conversation', asy
   await click({ target: { closest: () => button } });
   assert.equal(calls[0]?.[0], '/api/w/workspace/convs/chat-id/stop');
   assert.equal(calls[0]?.[1].method, 'POST');
+});
+
+test('a rejected manual brief can be retried without reloading', async () => {
+  const source = fs.readFileSync(new URL('../web/js/panel.js', import.meta.url), 'utf8');
+  const brief = source.slice(source.indexOf('export function rebrief()'), source.indexOf('hooks.rebrief =')).replace('export ', '');
+  const S = { id: 'pr', tab: 'chat', review: { brief: { tldr: 'Old brief' } } };
+  let refreshed = 0;
+  await vm.runInNewContext(brief + '\nrebrief()', {
+    S, hooks: {}, renderTabs() { refreshed++; }, toast() {}, wsApi: (p) => p, briefRun: () => ({}),
+    api: async () => { throw new Error('daemon unavailable'); },
+  });
+  assert.equal(S.review.brief.pending, false);
+  assert.equal(S.review.brief.error, 'daemon unavailable');
+  assert.equal(S.review.brief.tldr, 'Old brief');
+  assert.equal(refreshed, 2);
+});
+
+test('a saved Codex brief keeps images disabled after its model leaves the picker', () => {
+  const ui = fs.readFileSync(new URL('../web/js/ui.js', import.meta.url), 'utf8').match(/^export const modelKind = .*$/m)[0].replace('export ', '');
+  const panel = fs.readFileSync(new URL('../web/js/panel.js', import.meta.url), 'utf8');
+  const brief = panel.slice(panel.indexOf('const tldrText'), panel.indexOf('function descHTML'));
+  const calls = [];
+  vm.runInNewContext(ui + '\n' + brief + '\ntldrHTML()', {
+    S: { app: { models: [] }, review: { brief: { model: 'gpt-6-sol', tldr: 'Summary', riskWhy: 'Reason' } } },
+    esc: String, modelName: String, ago: () => '', briefRunBtn: () => '',
+    md(text, options) { calls.push([text, options?.images]); return text; },
+  });
+  assert.deepEqual(calls, [['Summary', false], ['Reason', false]]);
+});
+
+test('Mote cancels detached and hidden animation timers', () => {
+  const source = fs.readFileSync(new URL('../web/js/mote.js', import.meta.url), 'utf8')
+    .replace(/^import .*$/gm, '').replace(/^export /gm, '');
+  const timers = new Map(), listeners = {};
+  let next = 0;
+  const hooks = {}, document = { hidden: false, addEventListener: (name, fn) => { listeners[name] = fn; } };
+  const classList = { add() {}, remove() {}, toggle() {} };
+  const dock = { style: {}, classList, querySelector: () => ({ style: {} }) }; // the floating dock: placed, then filled
+  vm.runInNewContext(source, {
+    hooks, document, S: { review: { brief: { pending: true } } }, $: () => dock, reducedMotion: () => false,
+    pref: { get: () => null, set() {} }, addEventListener() {}, innerWidth: 1440, innerHeight: 900,
+    setTimeout(fn) { timers.set(++next, fn); return next; }, clearTimeout: (id) => timers.delete(id),
+  });
+  hooks.moteMount(false);
+  assert.equal(timers.size, 2);
+  hooks.moteMount(false);
+  assert.equal(timers.size, 2);
+  document.hidden = true;
+  listeners.visibilitychange();
+  assert.equal(timers.size, 0);
+  document.hidden = false;
+  listeners.visibilitychange();
+  assert.equal(timers.size, 1);
+});
+
+test('a removed Codex model line falls back to another Codex model', () => {
+  const source = fs.readFileSync(new URL('../web/js/core.js', import.meta.url), 'utf8');
+  const model = source.slice(source.indexOf('const lineOf'), source.indexOf('export const lastRun')).replace('export ', '');
+  const S = { app: { models: [{ id: 'claude-sonnet-5-5', kind: 'claude' }, { id: 'gpt-7-sol', kind: 'codex' }] } };
+  const fresh = vm.runInNewContext(model + '\nfreshModel', { S });
+  assert.equal(fresh('gpt-6-sol', 'claude-sonnet-5-5'), 'gpt-7-sol');
+  assert.equal(fresh('gpt-6-astra', 'claude-sonnet-5-5'), 'gpt-7-sol');
+});
+
+test('the map routes a full grid with 24 edges and reuses a drawing at the same width', () => {
+  const source = fs.readFileSync(new URL('../web/js/map.js', import.meta.url), 'utf8')
+    .replace(/^import .*$/gm, '').replace(/^export /gm, '');
+  const cards = { clientWidth: 390 };
+  const d = {
+    kind: 'map', title: 'Dense', groups: [],
+    nodes: Array.from({ length: 16 }, (_, i) => ({ id: String(i), label: 'Service ' + i + ' routes requests', ref: 'longSourceFilename' + i + '.mjs', col: i % 4, row: i >> 2, change: 'changed' })),
+    edges: Array.from({ length: 24 }, (_, i) => ({ from: String(i % 16), to: String((i * 3 + 5) % 16), label: 'read the shared request', change: 'none' })),
+  };
+  let measured = 0;
+  const context = vm.createContext({
+    d, $: () => cards, hooks: {}, esc: String,
+    document: { addEventListener() {}, createElement: () => ({ getContext: () => ({ measureText: (t) => { measured++; return { width: t.length * 7 }; } }) }) },
+    getComputedStyle: () => ({ getPropertyValue: () => '' }),
+  });
+  vm.runInContext(source, context);
+  const svg = vm.runInContext('diagramSVG(d, "tb")', context);
+  const first = measured;
+  assert.equal((svg.match(/class="ed /g) || []).length, 24);
+  assert.doesNotMatch(svg, /NaN|Infinity/);
+  assert.equal(vm.runInContext('diagramSVG(d, "tb")', context), svg);
+  assert.equal(measured, first);
+});
+
+test('a file refresh keeps a brief event newer than its review snapshot', async () => {
+  const source = fs.readFileSync(new URL('../web/js/main.js', import.meta.url), 'utf8');
+  const load = source.slice(source.indexOf('let fileRequest'), source.indexOf('  S.github ||='));
+  const S = { id: 'pr', review: { brief: { pending: true } } };
+  const result = { pending: false, tldr: 'New guide' };
+  let finishFiles;
+  const pending = vm.runInNewContext(load + '\n}\nloadFiles()', {
+    S, wsApi: (p) => p,
+    api(url) {
+      if (url === '/files') return new Promise((resolve) => { finishFiles = resolve; });
+      return Promise.resolve({ brief: { pending: true } });
+    },
+  });
+  S.review.brief = result;
+  finishFiles({ files: [] });
+  await pending;
+  assert.equal(S.review.brief, result);
 });

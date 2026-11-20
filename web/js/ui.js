@@ -1,6 +1,6 @@
 // Shared parts: the menu, the composer (one shape for a new thread, a reply and the chat box), the model and effort
 // picker, and how a message is drawn.
-import { S, $, $$, esc, h, I, pref, modelName, lastRun, rememberRun, ago, briefRun } from './core.js';
+import { S, $, $$, esc, h, I, pref, modelName, lastRun, rememberRun, ago, briefRun, freshModel } from './core.js';
 import { md } from './md.js';
 import { spark } from './pixel.js';
 
@@ -55,13 +55,28 @@ export function menu(anchor, items, onPick, { align = 'left', width } = {}) {
 // A button that says what the box will use ("Opus 5.5 · xhigh"); the choice is remembered in this browser.
 export const runLabel = (r) => `${modelName(r.model)} · ${r.effort}`;
 export const briefRunBtn = () => runBtn(briefRun(), { purpose: 'brief' });
-export const modelKind = (model) => S.app?.models.find((m) => m.id === model)?.kind || 'claude';
+export const modelKind = (model) => S.app?.models.find((m) => m.id === model)?.kind || (/^gpt-/.test(model || '') ? 'codex' : 'claude');
 const runContent = (r) => `${modelKind(r.model) === 'claude' ? I.spark : ''}<span>${esc(runLabel(r))}</span>`;
 const convKind = (conv) => (conv?.linked || conv?.sessionId ? 'claude' : conv?.modelKind || conv?.messages.find((m) => m.role !== 'user')?.role);
+function availableModel(model, conv, fallback) {
+  const kind = convKind(conv) || modelKind(model);
+  const current = freshModel(model);
+  if (current && modelKind(current) === kind) return current;
+  if (fallback && modelKind(fallback) === kind) return fallback;
+  return S.app.models.find((m) => m.kind === kind)?.id || fallback || model;
+}
 export function runBtn(r, { conv, purpose = '' } = {}) {
-  const kind = convKind(conv);
-  if (kind && modelKind(r.model) !== kind) r = { ...r, model: S.app.models.find((m) => m.kind === kind).id };
+  r = { ...r, model: availableModel(r.model, conv, purpose === 'brief' ? S.app.defaults?.briefModel : S.app.defaults?.model) };
   return `<button type="button" class="chip" data-act="run" data-model="${esc(r.model)}" data-effort="${esc(r.effort)}" data-run-conv="${esc(conv?.id || '')}" data-purpose="${esc(purpose)}" title="Model and effort">${runContent(r)}</button>`;
+}
+export function refreshRunButtons() {
+  for (const btn of $$('[data-act="run"]')) {
+    const conv = S.review?.convs?.[btn.dataset.runConv];
+    const fallback = btn.dataset.purpose === 'brief' ? S.app.defaults.briefModel : S.app.defaults.model;
+    const run = { model: availableModel(btn.dataset.model, conv, fallback), effort: btn.dataset.effort };
+    btn.dataset.model = run.model;
+    btn.innerHTML = runContent(run);
+  }
 }
 export function pickRun(btn) {
   const cur = { model: btn.dataset.model, effort: btn.dataset.effort };

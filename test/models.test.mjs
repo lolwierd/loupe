@@ -21,3 +21,15 @@ test('the picker lists the newest Codex model of each line, and an old pick move
   assert.equal(d, 'gpt-7-sol');
   assert.deepEqual(up, ['gpt-6.2-astra', 'gpt-6.1-terra', 'claude-opus-5-5', null]);
 });
+
+test('guide normalization keeps crowded diagram nodes in distinct cells', { timeout: 5000 }, () => {
+  const out = execFileSync(process.execPath, ['--input-type=module', '-e', `
+    const { normalizeGuide } = await import('./src/claude.mjs');
+    const nodes = Array.from({ length: 16 }, (_, i) => ({ id: String(i), label: 'Node ' + i, col: 5, row: 5 }));
+    const guide = normalizeGuide({ diagrams: [{ nodes }] }, []);
+    console.log(JSON.stringify(guide.diagrams[0].nodes.map(({ col, row }) => [col, row])));
+  `], { encoding: 'utf8', timeout: 4000 });
+  const cells = JSON.parse(out);
+  assert.equal(cells.length, 16);
+  assert.equal(new Set(cells.map(String)).size, 16);
+});

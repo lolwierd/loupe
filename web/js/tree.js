@@ -1,7 +1,7 @@
 // The bin: the changed files as a tree, directories squashed where they hold one child, each file with its status,
 // its lines left, a check once viewed (amber when it changed since), and how many marks are on it. The strip in the
 // top bar draws the same files as segments.
-import { S, $, $$, esc, I, threadsAt, fileOf, plural } from './core.js';
+import { S, $, $$, esc, tick, I, threadsAt, fileOf, plural } from './core.js';
 import { isViewed, isStale, lines, statusGlyph, cardEl, orderedFiles, countedOnly } from './cards.js';
 import { icon } from './pixel.js';
 import { md } from './md.js';
@@ -49,7 +49,7 @@ function guideSideHTML(match) {
   const row = (k, title, fs, checks) => {
     const left = leftIn(fs), open = k === openSec;
     const ticked = checks.filter((_, j) => S.review.checks?.[checkKey(k, j)]).length;
-    return `<section class="gside${left ? '' : ' done'}${open ? ' open' : ''}" id="gs-${k}"><button class="gsh" data-act="gosec" data-k="${k}" aria-expanded="${open}"><span class="gi">${k < secs.length ? k + 1 : ''}</span><span class="gt">${esc(title)}</span><span class="num">${left ? left.toLocaleString() : icon('check', '--ok')}</span></button>` +
+    return `<section class="gside${left ? '' : ' done'}${open ? ' open' : ''}" id="gs-${k}"><button class="gsh" data-act="gosec" data-k="${k}" aria-expanded="${open}"><span class="gi">${k < secs.length ? k + 1 : ''}</span><span class="gt tick">${tick(title)}</span><span class="num">${left ? left.toLocaleString() : icon('check', '--ok')}</span></button>` +
       (open ? `<div class="gfiles">${fs.map((f) => fileRow(f, 0, f.path.split('/').pop())).join('')}</div>${checks.length ? `<div class="gsum">${ticked} of ${plural(checks.length, 'check')} ticked</div>` : ''}` : '') + '</section>';
   };
   return `<nav class="gtoc" aria-label="The guide">${secs.map((sec, k) => row(k, sec.title, sec.files.map(fileOf).filter((f) => f && match(f)), sec.check || [])).join('')}` +
@@ -71,7 +71,7 @@ export function renderTree() {
       const fs = sec.files.map(fileOf).filter((f) => f && match(f));
       if (!fs.length) return;
       const left = leftIn(fs);
-      html += `<div class="sh tsection"><span>${k + 1} · ${esc(sec.title)}</span><span class="sp"></span><span class="n">${left ? left.toLocaleString() : ''}</span></div>` + fs.map((f) => fileRow(f, 0, f.path.split('/').pop())).join('');
+      html += `<div class="tsection"><span class="gi">${k + 1}</span><span class="gt tick">${tick(sec.title)}</span><span class="n">${left ? left.toLocaleString() : ''}</span></div>` + fs.map((f) => fileRow(f, 0, f.path.split('/').pop())).join('');
     });
   } else {
     const node = (n, depth) => [...n.dirs.values()].sort((a, b) => a.name.localeCompare(b.name)).map((d) => {

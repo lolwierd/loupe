@@ -5,28 +5,33 @@
 // A provider that cannot be asked keeps the list it had (at first the fixed one in config.mjs).
 import fs from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { BIN, MODELS, CODEX_CACHE, codexModels, claudeFixed, newestPerLine, setModels } from './config.mjs';
+import { BIN, MODELS, CODEX_CACHE, codexModels, claudeFixed, newestPerLine, setModels, modelKind } from './config.mjs';
 
 const ORDER = ['opus', 'sonnet', 'haiku', 'fable']; // the page's order; a new line goes after these
 let claude = claudeFixed();
+let changed = () => {};
 
 async function askClaude() {
   const never = (async function* () { await new Promise(() => {}); })(); // a session that is never sent a prompt
   const q = query({ prompt: never, options: { ...(BIN.claude ? { pathToClaudeCodeExecutable: BIN.claude } : {}), tools: [], mcpServers: {}, strictMcpConfig: true, settingSources: [], persistSession: false, env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: 'false' } } });
+  let timer;
   try {
-    const rows = await Promise.race([q.supportedModels(), new Promise((_, no) => setTimeout(() => no(new Error('no answer in 20 s')), 20000))]);
+    const rows = await Promise.race([q.supportedModels(), new Promise((_, no) => { timer = setTimeout(() => no(new Error('no answer in 20 s')), 20000); })]);
     const line = (id) => /^claude-([a-z]+)-/.exec(id)[1], rank = (id) => (ORDER.includes(line(id)) ? ORDER.indexOf(line(id)) : ORDER.length);
     const list = rows.filter((r) => r.value !== 'default').map((r) => [r.resolvedModel || r.value, r.displayName])
       .filter(([id], i, all) => /^claude-[a-z]+-[\d-]+$/.test(id) && all.findIndex(([x]) => x === id) === i); // explicit ids only, once each
     return newestPerLine(list).sort((a, b) => rank(a[0]) - rank(b[0]));
-  } finally { try { q.close?.(); } catch { /* already gone */ } }
+  } finally { clearTimeout(timer); try { q.close(); } catch { /* already gone */ } }
 }
 
 function apply(why) {
-  const before = MODELS.map(([id]) => id).join(' ');
-  setModels(claude, codexModels());
-  const after = MODELS.map(([id]) => id).join(' ');
-  if (after !== before) console.log(`loupe: models (${why}): ${MODELS.map(([, l]) => l).join(', ')}`);
+  const before = JSON.stringify(MODELS);
+  const codex = codexModels(MODELS.filter(([id]) => modelKind(id) === 'codex'));
+  setModels(claude, codex);
+  if (JSON.stringify(MODELS) !== before) {
+    console.log(`loupe: models (${why}): ${MODELS.map(([, l]) => l).join(', ')}`);
+    changed();
+  }
 }
 
 export async function refreshClaude() {
@@ -35,9 +40,10 @@ export async function refreshClaude() {
 }
 
 // started once by the daemon; LOUPE_MODELS=fixed (the tests) keeps the starting list
-export function keepModelsCurrent() {
+export function keepModelsCurrent(onChange) {
   if (process.env.LOUPE_MODELS === 'fixed') return;
+  changed = onChange;
   refreshClaude();
   setInterval(refreshClaude, 6 * 60 * 60 * 1000).unref();
-  fs.watchFile(CODEX_CACHE, { interval: 60 * 1000 }, () => apply('Codex'));
+  fs.watchFile(CODEX_CACHE, { interval: 60 * 1000, persistent: false }, () => apply('Codex'));
 }

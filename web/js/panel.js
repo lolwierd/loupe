@@ -94,7 +94,7 @@ function tldrHTML() {
   const risk = { low: 'ok', typical: '', high: 'warn', 'very high': 'danger' }[b.risk] ?? '';
   return `<div class="card tldr">` +
     (b.stale ? `<div class="banner warn tight"><span>Written for an earlier version of the change.</span><span class="sp"></span><button class="btn sm" data-act="brief">Regenerate</button></div>` : '') +
-    `<div class="md">${md(tldrText(b.tldr), { images: modelKind(b.model) !== 'codex' })}</div><div class="risk"><span class="pill ${risk}">${esc(b.risk)} risk</span><span>${md(b.riskWhy || '').replace(/^<p>|<\/p>\s*$/g, '')}</span></div>` +
+    `<div class="md">${md(tldrText(b.tldr), { images: modelKind(b.model) !== 'codex' })}</div><div class="risk"><span class="pill ${risk}">${esc(b.risk)} risk</span><span>${md(b.riskWhy || '', { images: modelKind(b.model) !== 'codex' }).replace(/^<p>|<\/p>\s*$/g, '')}</span></div>` +
     (b.startHere ? `<div class="risk"><span class="faint">Start with</span><button class="chip" data-act="gofile" data-p="${esc(b.startHere)}"><span>${esc(b.startHere)}</span></button></div>` : '') +
     (b.context?.system || b.diagrams?.length ? `<div class="risk"><button class="link" data-act="gomap">The map of this change, above the code</button></div>` : '') +
     `<div class="mfoot"><span>${esc(modelName(b.model))} · ${esc(b.effort)}${b.ms ? ' · ' + (b.ms / 1000).toFixed(0) + ' s' : ''}${b.cost ? ' · $' + b.cost.toFixed(2) : ''} · ${ago(b.at)}</span></div>` +
@@ -351,9 +351,20 @@ function renderReview(body) {
 export function rebrief() {
   if (S.review.brief?.pending) return;
   const run = briefRun();
-  S.review.brief = { ...(S.review.brief || {}), pending: true, step: null };
-  renderPanel(); hooks.briefPending?.();
-  return api(wsApi('/brief'), { method: 'POST', body: run }).catch((err) => toast(err.message));
+  const id = S.id;
+  const pending = S.review.brief = { ...(S.review.brief || {}), pending: true, error: null, step: null };
+  const refresh = () => {
+    if (S.tab === 'overview') renderPanel(); else renderTabs();
+    hooks.briefPending?.();
+    hooks.renderFab?.();
+  };
+  refresh();
+  return api(wsApi('/brief'), { method: 'POST', body: run }).catch((err) => {
+    if (S.id !== id || S.review.brief !== pending) return;
+    S.review.brief = { ...pending, pending: false, error: err.message };
+    refresh();
+    toast(err.message);
+  });
 }
 hooks.rebrief = rebrief;
 hooks.briefStep = () => { const t = $('#panel .card.tldr .shimmer'), b = S.review.brief; if (t && b?.step) t.textContent = `Reading ${b.step}`; };

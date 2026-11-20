@@ -16,7 +16,7 @@ import { uid } from './util.mjs';
 import { WORKTREE, readWorktree } from './git.mjs';
 
 // a model still offered, or the newest of its line (the list moves on as providers ship); else the default
-const pickModel = (m, d = DEFAULTS.model) => currentModel(m) || d;
+const pickModel = (m, d = DEFAULTS.model) => currentModel(m) || (modelKind(m) === 'codex' ? codexDefault() : d);
 const pickEffort = (e, d = DEFAULTS.effort) => (EFFORTS.includes(e) ? e : d);
 const ENV = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: 'false', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
 
@@ -365,7 +365,7 @@ const BRIEF_SCHEMA = {
       type: 'object',
       description: 'The surroundings a reviewer new to this codebase needs, read from the code around the change, not only the diff.',
       properties: {
-        system: { type: 'string', description: 'Markdown, one or two short paragraphs: what this part of the system is and does today, who calls it and when, what happens at runtime. Cite code as path:line. Say "I infer" where you infer.' },
+        system: { type: 'string', description: 'Markdown, one or two short paragraphs: what this part of the system is and does today, who calls it and when, what happens at runtime, in words; at most two path:line references, at the end. Say "I infer" where you infer.' },
         before: { type: 'string', description: 'Markdown, one to three sentences: how it behaved before this change, and the problem or limit the change addresses.' },
         after: { type: 'string', description: 'Markdown, one to three sentences: how it behaves after, as a user or caller would notice.' },
         glossary: { type: 'array', description: 'Up to eight terms of this codebase or company that a newcomer will meet in this change, defined from how the code uses them.', items: { type: 'object', properties: { term: { type: 'string' }, meaning: { type: 'string', description: 'One sentence.' }, where: { type: 'string', description: 'path:line where it is defined or best seen.' } }, required: ['term', 'meaning'] } },
@@ -436,7 +436,7 @@ const BRIEF_SCHEMA = {
           title: { type: 'string', description: 'A short heading naming what this part does, e.g. "Sessions expire after an hour without use"' },
           role: { type: 'string', enum: ['core', 'supporting', 'tests', 'config', 'docs', 'other'] },
           context: { type: 'string', description: 'One or two sentences: where this code sits and what it did before this change.' },
-          why: { type: 'string', description: 'One to three sentences of markdown: what this part changes and why. Cite code as path:line.' },
+          why: { type: 'string', description: 'One to three sentences of markdown: what this part changes and why, in words; at most one path:line reference.' },
           check: { type: 'array', items: { type: 'string' }, description: 'One to three specific things a reviewer should verify in this part.' },
           files: { type: 'array', items: { type: 'string' }, description: 'Repository-relative paths, in reading order.' },
         },
@@ -473,14 +473,17 @@ const briefRuns = new Map(); // ws id -> promise
 export function brief(ws, { model, effort } = {}) {
   if (briefRuns.has(ws.id)) return briefRuns.get(ws.id);
   const p = (async () => {
-    const files = await ws.files('all');
-    const key = contentKey(files);
-    const m = ws.meta;
-    ws.review.data.brief = { ...(ws.review.data.brief || {}), pending: true, error: null };
+    ws.review.data.brief = { ...(ws.review.data.brief || {}), pending: true, error: null, step: null };
     ws.emit('brief', ws.review.data.brief);
-    const t = totalsOf(files);
-    const pr = m.pr ? `Pull request #${m.pr.number}: ${m.pr.title}\nBy ${m.pr.author}, ${m.pr.headRefName} into ${m.pr.baseRefName}.\n\nDescription:\n${(m.pr.body || '(none)').slice(0, 8000)}\n` : `Local branch ${m.branch} (base ${m.base})${m.dirty ? `, with ${m.dirty} files of uncommitted work` : ''}.\n`;
-    const text = `Write a map of this change for a reviewer: a senior engineer who is new to this codebase and this company, who has to review the change without knowing the code around it.
+    const abort = new AbortController();
+    let timer;
+    try {
+      const files = await ws.files('all');
+      const key = contentKey(files);
+      const m = ws.meta;
+      const t = totalsOf(files);
+      const pr = m.pr ? `Pull request #${m.pr.number}: ${m.pr.title}\nBy ${m.pr.author}, ${m.pr.headRefName} into ${m.pr.baseRefName}.\n\nDescription:\n${(m.pr.body || '(none)').slice(0, 8000)}\n` : `Local branch ${m.branch} (base ${m.base})${m.dirty ? `, with ${m.dirty} files of uncommitted work` : ''}.\n`;
+      const text = `Write a map of this change for a reviewer: a senior engineer who is new to this codebase and this company, who has to review the change without knowing the code around it.
 
 ${pr}
 Commits:
@@ -499,16 +502,14 @@ Before you write, read around the change; the diff alone is not enough. Use your
 - the history of the main changed files (git log -n 15 --oneline -- <path>, and git show of a relevant commit) for why the code is the way it is.
 Do not read everything: stop when you can explain where the change sits and how the parts around it work.
 
-Then answer through the structured output. Write plainly, as to a colleague: no filler, no praise, no hedging words. Ground every claim in code you read and cite it as path:line; say "I infer" when you infer. The TLDR says what changes and why in words a newcomer follows. The context explains the system around the change, not the change again. The first diagram maps the components and marks this change on them; place parts on the grid so arrows mostly run left to right.
+Then answer through the structured output. Write plainly, as to a colleague: no filler, no praise, no hedging words. Ground every claim in code you read; say "I infer" when you infer. Write prose a person reads, not a list of identifiers: name a function, type or file in backticks the first time, then by its plain name (the batcher, the save step), and never put more than two backticked names in one sentence. Cite sparingly: at most two path:line references in a paragraph, at its end, for the places worth opening; the plan's steps name the file to read instead. The TLDR says what changes and why in words a newcomer follows. The context explains the system around the change, not the change again. The first diagram maps the components and marks this change on them; place parts on the grid so arrows mostly run left to right.
 
 The guide must account for every one of these paths, each in exactly one section:
 ${files.map((f) => f.path).join('\n')}`;
-    const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), 10 * 60 * 1000);
-    const run = { model: pickModel(model, DEFAULTS.briefModel), effort: pickEffort(effort, DEFAULTS.briefEffort) };
-    const append = 'You write review maps: what a change does, the system around it, diagrams of it, and how to review it. Exact, plain, short. Read the code around the change before you write. Answer only through the structured output.';
-    let out = null, cost = 0, ms = 0;
-    try {
+      timer = setTimeout(() => abort.abort(), 10 * 60 * 1000);
+      const run = { model: pickModel(model, DEFAULTS.briefModel), effort: pickEffort(effort, DEFAULTS.briefEffort) };
+      const append = 'You write review maps: what a change does, the system around it, diagrams of it, and how to review it. Exact, plain, short. Read the code around the change before you write. Answer only through the structured output.';
+      let out = null, cost = 0, ms = 0;
       if (modelKind(run.model) === 'codex') {
         // Codex reads around the change with its own read-only commands; it reports neither steps nor cost
         ({ out, ms } = await codex.structured(ws, run, append + '\n\n' + text, BRIEF_SCHEMA, abort.signal));
@@ -535,7 +536,9 @@ ${files.map((f) => f.path).join('\n')}`;
     } finally {
       clearTimeout(timer);
       ws.review.save();
-      ws.emit('brief', { ...ws.review.data.brief, stale: false });
+      const b = ws.review.data.brief;
+      const current = b.key && await ws.files('all').catch(() => null);
+      ws.emit('brief', { ...b, stale: !!b.key && (!current || contentKey(current) !== b.key) });
     }
     return ws.review.data.brief;
   })().finally(() => briefRuns.delete(ws.id));
@@ -578,7 +581,7 @@ export function normalizeGuide(out, files) {
     const seenIds = new Set(), taken = new Set();
     const nodes = (Array.isArray(d.nodes) ? d.nodes : []).slice(0, 16).map((n) => ({ id: str(n.id, 40), label: str(n.label, 40), kind: KINDS.has(n.kind) ? n.kind : 'code', col: grid(n.col), row: grid(n.row), change: CH.has(n.change) ? n.change : 'none', section: Math.max(0, Math.round(Number(n.section) || 0)), ref: str(n.ref, 200) }))
       .filter((n) => n.id && n.label && !seenIds.has(n.id) && seenIds.add(n.id))
-      .map((n) => { while (taken.has(`${n.col},${n.row}`)) n.row = Math.min(9, n.row + 1); taken.add(`${n.col},${n.row}`); return n; }); // two nodes never share a cell
+      .map((n) => { while (taken.has(`${n.col},${n.row}`)) n.row++; taken.add(`${n.col},${n.row}`); return n; }); // two nodes never share a cell
     const edges = (Array.isArray(d.edges) ? d.edges : []).slice(0, 24).map((e) => ({ from: str(e.from, 40), to: str(e.to, 40), label: str(e.label, 30), change: CH.has(e.change) ? e.change : 'none', step: Math.max(0, Math.round(Number(e.step) || 0)) }))
       .filter((e) => seenIds.has(e.from) && seenIds.has(e.to) && e.from !== e.to);
     const groups = (Array.isArray(d.groups) ? d.groups : []).slice(0, 4).map((g) => ({ label: str(g.label, 40), nodes: (Array.isArray(g.nodes) ? g.nodes : []).map(String).filter((id) => seenIds.has(id)) })).filter((g) => g.label && g.nodes.length);

@@ -68,6 +68,7 @@ setInterval(() => {
 
 // The page reloads itself when its own files change (developing loupe).
 let webStamp = 0;
+const modelState = () => ({ models: MODELS.map(([id, label]) => ({ id, label, kind: modelKind(id) })), efforts: EFFORTS, defaults: DEFAULTS });
 function watchWeb() {
   try {
     fs.watch(WEB, { recursive: true }, (_, file) => { if (String(file || '').startsWith('proto')) return; /* design prototypes are not the app */ webStamp = Date.now(); for (const ws of W.all()) ws.emit('page', {}); homeEmit('page', {}); });
@@ -113,7 +114,7 @@ async function route(req, res, url) {
   if (method === 'GET' && p === '/api/state') {
     return send(res, 200, {
       version: VERSION, boot: BOOT, user: USER, host: HOSTNAME, name: NAME, display: DISPLAY,
-      models: MODELS.map(([id, label]) => ({ id, label, kind: modelKind(id) })), efforts: EFFORTS, defaults: DEFAULTS,
+      ...modelState(),
       last: W.registry.data.last,
       workspaces: W.all().map((w) => w.summary()).sort((a, b) => (b.openedAt || 0) - (a.openedAt || 0)),
       tools: { gh: !!BIN.gh, gopls: !!BIN.gopls, claude: BIN.claude || 'bundled' },
@@ -204,7 +205,7 @@ async function route(req, res, url) {
   if (method === 'DELETE' && sub === '') { await W.close(ws.id); homeEmit('workspaces', {}); return send(res, 200, { closed: true }); }
   if (method === 'GET' && sub === '/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(`event: hello\ndata: ${JSON.stringify({ boot: BOOT, status: ws.status, progress: ws.progress })}\n\n`);
+    res.write(`event: hello\ndata: ${JSON.stringify({ boot: BOOT, status: ws.status, progress: ws.progress, ...modelState() })}\n\n`);
     ws.addClient(res);
     req.on('close', () => ws.removeClient(res));
     ws.ready().catch(() => {});
@@ -559,7 +560,7 @@ export async function start() {
   server.keepAliveTimeout = 65000;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(PORT, '127.0.0.1', resolve); });
   console.log(`loupe ${VERSION}: http://127.0.0.1:${PORT}  (state in ${STATE_DIR})`);
-  keepModelsCurrent();
+  keepModelsCurrent(() => { for (const ws of W.all()) ws.emit('models', modelState()); });
   let on80 = false;
   if (!flag('no-80') && process.env.LOUPE_NO_80 !== '1') {
     const s80 = http.createServer(handler);

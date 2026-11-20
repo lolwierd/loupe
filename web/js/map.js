@@ -260,7 +260,19 @@ function placeLabels(routes, at, f, { colX, colW, rowY }) {
     const box = (c) => [c[0] - bw / 2, c[1] - bh / 2, c[0] + bw / 2, c[1] + bh / 2];
     let pick = cands.find((c) => c.fits && !blocks.some((b) => hit(box(c.c), b)) && !placed.some((b) => hit(box(c.c), b)));
     if (!pick) {
-      pick = cands.find((c) => !blocks.some((b) => hit(box(c.c), b))) || cands[0];
+      // a spot clear of every box and label: anywhere along the arrow in 6 px steps, then just beside it; the old
+      // fallback (clear of boxes only, else the first) is the last resort
+      const clear = (c) => !blocks.some((b) => hit(box(c), b)) && !placed.some((b) => hit(box(c), b));
+      let spot = null;
+      for (let i = 1; i < r.pts.length && !spot; i++) {
+        const [x1, y1] = r.pts[i - 1], [x2, y2] = r.pts[i], len = Math.abs(x2 - x1) + Math.abs(y2 - y1), horiz = y1 === y2;
+        for (let t = 0; t <= len && !spot; t += 6) {
+          const c = [x1 + Math.sign(x2 - x1) * t, y1 + Math.sign(y2 - y1) * t];
+          const beside = horiz ? [[c[0], c[1] - bh / 2 - 3], [c[0], c[1] + bh / 2 + 3]] : [[c[0] + bw / 2 + 4, c[1]], [c[0] - bw / 2 - 4, c[1]]];
+          spot = [c, ...beside].find(clear) || null;
+        }
+      }
+      pick = spot ? { c: spot } : cands.find((c) => !blocks.some((b) => hit(box(c.c), b))) || cands[0];
       // ask for a wider gap where the label wanted to sit
       const best = cands.reduce((p, q) => (q.len > p.len ? q : p));
       const mx = (best.seg[0] + best.seg[2]) / 2, my = (best.seg[1] + best.seg[3]) / 2;
@@ -331,12 +343,21 @@ function mapLayout(d, f, dir, narrow) {
 // a map at most `limit` wide: while it is wider, the widest box that can puts its name on two lines
 function mapSVG(d, f, id, dir, limit = 0) {
   const narrow = new Set();
-  let m = mapLayout(d, f, dir, narrow);
-  while (limit && m.w > limit) {
-    const next = [...m.at.values()].filter((n) => !narrow.has(n.id) && part(n, f, 'two').w < n.w).sort((a, b) => b.w - a.w)[0];
-    if (!next) break;
-    narrow.add(next.id); m = mapLayout(d, f, dir, narrow);
+  const tighten = (at) => {
+    const next = [...at.values()].filter((n) => !narrow.has(n.id) && part(n, f, true).w < n.w).sort((a, b) => b.w - a.w)[0];
+    if (!next) return false;
+    narrow.add(next.id);
+    return true;
+  };
+  if (limit) {
+    // The boxes and base gaps set a lower bound. Route only after that fits or no box can shrink.
+    let grid = layout(d, {}, {}, f, dir, narrow);
+    while (grid.colX.at(-1) + grid.colW.at(-1) + PAD * 2 > limit && tighten(grid.at)) {
+      grid = layout(d, {}, {}, f, dir, narrow);
+    }
   }
+  let m = mapLayout(d, f, dir, narrow);
+  while (limit && m.w > limit && tighten(m.at)) m = mapLayout(d, f, dir, narrow);
   const { at, routes, lab, ext } = m;
   const groups = m.boxes.map(({ g, b: [x1, y1, x2, y2] }) => `<g class="gr"><rect x="${x1 + 0.5}" y="${y1 + 0.5}" width="${x2 - x1 - 1}" height="${y2 - y1 - 1}" rx="8"/><text x="${x1 + 12}" y="${y1 + 17}">${esc(g.label.toUpperCase())}</text></g>`).join('');
   const edges = routes.map((r) => `<path class="ed ${r.e.change}" data-e="${r.i}" data-a="${esc(r.e.from)}" data-b="${esc(r.e.to)}" d="${pathOf(r.pts)}" marker-end="url(#${id}-${r.e.change})"/>`).join('');
@@ -497,22 +518,27 @@ function openLarge() {
   requestAnimationFrame(() => scrim.querySelector('[data-mb="close"]')?.focus());
 }
 // the column changes width when a pane opens or closes: turn the drawing when the other way fits better
-let watched = null, rz = 0;
+let watched = null, observer = null, rz = 0;
 function watchWidth() {
   const cards = $('#cards');
-  if (!cards || watched === cards || typeof ResizeObserver === 'undefined') return;
+  if (watched === cards || typeof ResizeObserver === 'undefined') return;
+  observer?.disconnect();
+  clearTimeout(rz);
   watched = cards;
-  new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => {
+  if (!cards) return;
+  observer = new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => {
     const fig = $('#mapcard .dg'), ds = S.review.brief?.diagrams || [], d = ds[Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0))];
     if (!fig || !d) return;
     const dir = pickDir(d), lanes = dir === 'tb' && Math.abs(room() - Number(fig.dataset.room)) >= 8;
     if (fig.dataset.dir !== dir || lanes || !!fig.querySelector('.dgbig') !== bigHelps(d, dir)) hooks.mapChanged?.();
-  }, 120); }).observe(cards);
+  }, 120); });
+  observer.observe(cards);
 }
 
 // ------------------------------------------------------------------ what you can do on it
 function goRef(ref) {
   const m = /^(.*?)(?::(\d+))?$/.exec(ref);
+  if (!m) return;
   hooks.goLoc?.({ path: m[1], line: Number(m[2]) || 0 });
 }
 // pointing at a part lights its arrows and the parts at their other ends; the rest of the sheet recedes
@@ -542,6 +568,6 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
-  const t = e.target.closest?.('#mapcard .nd[data-ref]');
+  const t = e.target.closest?.('#mapcard .nd[data-ref], #mapbig .nd[data-ref]');
   if (t) { e.preventDefault(); t.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
 });

@@ -20,9 +20,37 @@ async function checkouts(gitDir) {
   return map;
 }
 
-// The local branch this checkout was built on: the nearest ref merged into HEAD that the trunk does not have.
+// Which branch a branch was made from, as git's reflog recorded it ("branch: Created from X"), when it still has that
+// record; null when it does not.
+async function createdFrom(root, branch) {
+  const out = await git(root, ['reflog', 'show', '--format=%gs', `refs/heads/${branch}`]).catch(() => '');
+  const first = out.trim().split('\n').filter(Boolean).at(-1) || '';
+  return /^branch: Created from (.+)$/.exec(first)?.[1]?.replace(/^(refs\/heads\/|origin\/)/, '') || null;
+}
+// Other branches at this very commit, off the trunk. A branch with no commits of its own (all its work uncommitted, or
+// just cut) shares its tip with the branch it was cut from; that one is its parent, not a branch built on it.
+async function twinsOf(root, branch, trunk, at = 'HEAD') {
+  const tip = (await git(root, ['rev-parse', '--verify', '--quiet', at]).catch(() => '')).trim();
+  if (!tip) return [];
+  const out = await git(root, ['for-each-ref', '--format=%(refname:short)', '--points-at', tip, '--no-merged', trunk, 'refs/heads']).catch(() => '');
+  return out.split('\n').filter((b) => b && b !== branch);
+}
+// Of those, the one this branch came from: the reflog's word if it has one; else any twin that was not itself made from
+// this branch (the branch you are on is the newer work).
+async function twinParent(root, branch, trunk) {
+  const twins = await twinsOf(root, branch, trunk);
+  if (!twins.length) return null;
+  const from = await createdFrom(root, branch);
+  if (from && twins.includes(from)) return from;
+  for (const t of twins) if ((await createdFrom(root, t)) !== branch) return t;
+  return null;
+}
+
+// The local branch this checkout was built on: a branch at the same commit that it was cut from, else the nearest ref
+// merged into HEAD that the trunk does not have.
 export async function localParent(root, branch, trunk, at = 'HEAD') {
   if (!branch || branch === 'HEAD' || !trunk) return null;
+  if (at === 'HEAD') { const t = await twinParent(root, branch, trunk); if (t) return { ref: t, branch: t, n: 0 }; }
   const out = await git(root, ['for-each-ref', '--format=%(refname:short)', '--merged', at, '--no-merged', trunk, 'refs/heads', 'refs/remotes/origin']).catch(() => '');
   const self = new Set([branch, `origin/${branch}`]);
   const cands = [...new Set(out.split('\n').filter(Boolean).filter((r) => !self.has(r) && !r.endsWith('/HEAD')))].slice(0, 25);
@@ -36,10 +64,14 @@ export async function localParent(root, branch, trunk, at = 'HEAD') {
   }
   return best;
 }
-// The local branches built on this one.
-async function localChildren(root, branch) {
+// The local branches built on this one: they contain this commit and have more; a branch still at this commit counts
+// only when the reflog says it was made from this one.
+async function localChildren(root, branch, trunk) {
   const out = await git(root, ['for-each-ref', '--format=%(refname:short)', '--contains', 'HEAD', 'refs/heads']).catch(() => '');
-  return out.split('\n').filter((r) => r && r !== branch).slice(0, 10);
+  const twins = new Set(await twinsOf(root, branch, trunk));
+  const kids = [];
+  for (const r of out.split('\n').filter((x) => x && x !== branch).slice(0, 10)) if (!twins.has(r) || (await createdFrom(root, r)) === branch) kids.push(r);
+  return kids;
 }
 
 const prItem = (p) => ({ pr: p.number, branch: p.headRefName || p.head?.ref, title: p.title || '', state: String(p.state || '').toLowerCase(), draft: !!(p.isDraft ?? p.draft), merged: !!(p.mergedAt || p.merged_at) });
@@ -107,9 +139,23 @@ async function resolve(ws) {
       chain.unshift({ branch: parent.branch, ref: parent.ref });
       parent = await localParent(root, parent.branch, trunkRef, parent.ref).catch(() => null); // from that branch's own history
     }
-    const kids = await localChildren(root, b);
+    const kids = await localChildren(root, b, trunkRef);
     if (chain.length || kids.length) {
       kind = 'local'; trunk = String(trunkRef).replace(/^origin\//, '');
+      // Below the nearest parent, GitHub knows better than local history: a PR's base can have moved on (a commit the
+      // branch was never rebased onto), so once the parent has an open PR, the stack under it is its chain of PR bases.
+      const near = chain.at(-1);
+      if (near && g?.owner) {
+        const list = await GH.ghJson(['pr', 'list', '--repo', `${g.owner}/${g.repo}`, '--state', 'open', '--limit', '200', '--json', 'number,title,headRefName,baseRefName,isDraft,state']).catch(() => []);
+        const byHead = new Map(list.map((p) => [p.headRefName, p]));
+        if (byHead.has(near.branch)) {
+          const down = [];
+          let at = near.branch, guard2 = 0;
+          while (byHead.has(at) && guard2++ < 10) { const p = byHead.get(at); down.unshift(prItem(p)); at = p.baseRefName; }
+          chain.splice(0, chain.length, ...down);
+          trunk = at;
+        }
+      }
       items = [...chain, { ...here }, ...kids.map((k, i) => ({ branch: k, sibling: i > 0 }))];
       // The branch below may have a PR in a GitHub stack: a PR opened from here can go on top of it.
       const below = chain.at(-1);

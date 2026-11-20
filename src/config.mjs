@@ -78,7 +78,8 @@ export function newestPerLine(list) {
 // models_cache.json under CODEX_HOME (the CLI's own variable) or ~/.codex. The newest of each line (Sol, Astra, Terra,
 // Luna), in Codex's own order; a fixed pair when the file cannot be read.
 export const CODEX_CACHE = path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'models_cache.json');
-export function codexModels() {
+const CODEX_FIXED = [['gpt-6.2-sol', 'GPT-6.2 Sol'], ['gpt-6.2-astra', 'GPT-6.2 Astra']];
+export function codexModels(fallback = CODEX_FIXED) {
   const label = (m) => (m.display_name || m.slug).replace(/^GPT-([\d.]+)[- ]/, 'GPT-$1 ');
   try {
     const listed = JSON.parse(fs.readFileSync(CODEX_CACHE, 'utf8')).models
@@ -87,7 +88,7 @@ export function codexModels() {
     const out = newestPerLine(listed.map((m) => [m.slug, label(m)]));
     if (out.length) return out;
   } catch { /* no Codex here, or an unreadable cache */ }
-  return [['gpt-6.2-sol', 'GPT-6.2 Sol'], ['gpt-6.2-astra', 'GPT-6.2 Astra']];
+  return fallback;
 }
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const DEFAULTS = {
@@ -99,7 +100,7 @@ export function setModels(claude, codex) {
   MODELS.splice(0, MODELS.length, ...claude, ...codex);
   CODEX_MODELS.clear(); for (const [id] of codex) CODEX_MODELS.add(id);
   DEFAULTS.model = claude.find(([id]) => lineOf(id) === 'opus')?.[0] || claude[0]?.[0] || DEFAULTS.model;
-  DEFAULTS.briefModel = claude.find(([id]) => lineOf(id) === 'sonnet')?.[0] || DEFAULTS.briefModel;
+  DEFAULTS.briefModel = claude.find(([id]) => lineOf(id) === 'sonnet')?.[0] || DEFAULTS.model;
 }
 export const claudeFixed = () => CLAUDE_FIXED;
 setModels(CLAUDE_FIXED, codexModels());
