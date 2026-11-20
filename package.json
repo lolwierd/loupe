@@ -1,0 +1,24 @@
+{
+  "name": "loupe",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local review desk: PRs, branches and uncommitted work, with Claude beside the diff.",
+  "bin": {
+    "loupe": "bin/loupe.mjs"
+  },
+  "scripts": {
+    "start": "node bin/loupe.mjs serve",
+    "dev": "node bin/loupe.mjs serve --dev",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.325",
+    "marked": "^18.2.1",
+    "shiki": "^3.23.0",
+    "zod": "^4.6.7"
+  }
+}
