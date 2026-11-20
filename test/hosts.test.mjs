@@ -22,7 +22,7 @@ const req = (method, p, { host = 'loupe.local', headers = {}, body } = {}) => ne
 
 before(async () => {
   port = await freePort();
-  const env = { ...process.env, LOUPE_HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-test-')), LOUPE_PORT: String(port), LOUPE_GH: '/usr/bin/false' };
+  const env = { ...process.env, LOUPE_MODELS: 'fixed', LOUPE_HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-test-')), LOUPE_PORT: String(port), LOUPE_GH: '/usr/bin/false' };
   child = spawn(process.execPath, [path.join(ROOT, 'bin/loupe.mjs'), 'serve', '--no-80', '--no-mdns'], { env, stdio: 'ignore' });
   for (let i = 0; i < 60; i++) { try { if ((await req('GET', '/api/state', { host: `127.0.0.1:${port}` })).status === 200) return; } catch { /* not up yet */ } await new Promise((r) => setTimeout(r, 100)); }
   throw new Error('the daemon did not come up');

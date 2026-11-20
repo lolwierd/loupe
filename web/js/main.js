@@ -1,22 +1,23 @@
 // The page: which change this URL is, the frame around it (top bar; bin | diff | inspector), live
 // updates from the daemon, keys, the palette and home. One URL per change; "/" goes back to the last one.
-import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, convOf, plural, ago } from './core.js';
+import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, briefRun } from './core.js';
 import { renderCards, renderBody, renderAllBodies, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment } from './cards.js';
 import { renderTree, markCurrent, nextUnviewed } from './tree.js';
 import { renderPanel, setTab, renderTabs, openChat, paintMessage } from './panel.js';
 import { goLoc, goThread, openViewer, closeViewer, hideTip } from './nav.js';
-import { renderProgress, paintProgress, renderGo, renderStack, doAct, liveConv } from './acts.js';
+import { renderProgress, paintProgress, renderGo, renderStack, doAct } from './acts.js';
 import { menu, closeMenu, shimmerSync } from './ui.js';
 import { hooks } from './hooks.js';
 import './actions.js';
 import { loadShip, sheetOpen, closeSheet } from './sheets.js';
 import './eggs.js';
+import { moteHTML, wakeMotes } from './mote.js';
 import { spark, icon, avatar } from './pixel.js';
 
 // Every part that shows the review's state, redrawn together, so no part ever disagrees with another. The inspector is
 // not one of them: the Overview says nothing about what is viewed, and redrawing it (the PR's description and its
 // conversation, as markdown) on every v and ] was the biggest cost of a keypress on a PR.
-function progress() { renderTree(); paintProgress(); renderGo(); }
+function progress() { renderTree(); paintProgress(); renderGo(); hooks.mote?.progress(S.files.length > 0 && !nextUnviewed()); }
 Object.assign(hooks, {
   goLoc, goThread, openViewer, renderTree, renderPanel, openChat, progress,
   loadStack: () => loadStack(), setScope: (s) => setScope(s), setOrder: (o) => setOrder(o),
@@ -33,7 +34,7 @@ Object.assign(hooks, {
     if (review) S.review = review;
     if (github) S.github = github;
     for (const f of S.files) updateCard(f.path);
-    renderAllBodies(); renderTree(); renderTabs(); renderProgress(); renderGo(); renderChip();
+    renderAllBodies(); renderTree(); renderTabs(); renderProgress(); renderGo();
     if (S.tab !== 'chat') renderPanel();
   },
   threadsChanged: (p) => { updateCard(p); renderTree(); renderTabs(); renderGo(); if (S.tab === 'review') renderPanel(); },
@@ -81,20 +82,20 @@ async function openTarget(target) {
 function frame() {
   $('#root').innerHTML = `<div class="app">
   <header class="top">
-    <a class="mark" href="/home" title="Home: everything open here, and whose move it is">${icon('loupe', '--pencil')}<span>loupe</span></a>
+    <a class="btn ghost mark" href="/home" title="Home: everything open here, and whose move it is">${icon('loupe', '--pencil')}<span>loupe</span></a>
     <span class="crumb-sep">/</span>
-    <button class="wsbtn" data-act="palette" title="Switch, open, or do anything (⌘K)" id="wsbtn"><span class="t">…</span></button>
+    <button class="btn ghost wsbtn" data-act="palette" title="Switch, open, or do anything (⌘K)" id="wsbtn"><span class="t">…</span></button>
     <span class="sp"></span>
     <span class="lsp" id="lsp"></span>
-    <button class="tally" id="tally" data-act="nextleft"></button>
+    <button class="btn ghost tally" id="tally" data-act="nextleft"></button>
     <span class="go" id="go"></span>
     <span class="tools"><a class="icon" id="ghlink" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open on GitHub" hidden>${I.github}</a><button class="icon" data-act="refresh" title="Read the change again (r)">${I.refresh}</button><button class="icon" data-act="theme" title="View: theme, layout, settings">${document.documentElement.dataset.theme === 'dark' ? I.moon : I.sun}</button>
     <span class="layout-toggles"><button class="icon" data-act="togglebin" title="Files (t)">${I.sidebarL}</button><button class="icon" data-act="togglepanel" title="Inspector (p)">${I.sidebarR}</button></span></span>
   </header>
   <div class="main" id="main">
-    <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd title="Focus it">/</kbd></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="resizer" data-resize="bin"></div></aside>
+    <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd title="Focus it">/</kbd></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="motedock" id="motedock"></div><div class="resizer" data-resize="bin"></div></aside>
     <main class="viewer-col"><div class="scroller" id="center"><div class="cards" id="cards"><div class="loadd">Loading…</div></div></div>
-      <button class="aifab" id="aifab" data-act="askai" title="Ask Claude: about the selected lines, or the whole change (a)"><span class="aispark">${spark(32, true)}</span><span class="ail">Ask Claude</span></button></main>
+      <button class="aifab" id="aifab" data-act="askai" title="Ask about the selected lines or the whole change (a)"><span class="aispark">${spark(32, true)}</span><span class="ail">Ask</span></button></main>
     <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon sm" data-act="keys" title="Keys (?)"><kbd>?</kbd></button></div><div class="pbody" id="pbody"></div></aside>
   </div></div>`;
   applyMode(S.mode, true);
@@ -129,7 +130,8 @@ async function loadWorkspace(reason) {
   await loadFiles(reason);
 }
 function showState(title, text, error) {
-  $('#cards').innerHTML = `<div class="state"><div class="box"><div class="big">${esc(title)}</div>${error ? `<div class="err">${esc(text)}</div><button class="btn" data-act="retry">Try again</button>` : `<div class="working"><span class="shimmer" style="${shimmerSync()}">${esc(text || 'Reading the change…')}</span></div>`}</div></div>`;
+  $('#cards').innerHTML = `<div class="state"><div class="box">${error ? moteHTML('failed') : ''}<div class="big">${esc(title)}</div>${error ? `<div class="err">${esc(text)}</div><button class="link" data-act="retry">Try again</button>` : `<div class="working"><span class="shimmer" style="${shimmerSync()}">${esc(text || 'Reading the change…')}</span></div>`}</div></div>`;
+  wakeMotes($('#cards'));
 }
 
 let fileRequest = 0;
@@ -158,8 +160,8 @@ async function loadFiles(reason) {
   if (S.order === 'guide' && !S.review.brief?.sections?.length) S.order = 'tree';
   if (S.mode === 'guide' && S.review.brief?.sections?.length) S.order = 'guide';
   if (!S.current || !fileOf(S.current)) S.current = orderedFiles()[0]?.f.path || null;
-  renderScopebar(); renderTree(); renderCards(); renderPanel(); renderChip(); renderLsp(); renderFab(); renderGhLink();
-  renderProgress(); renderGo(); renderStack();
+  renderScopebar(); renderTree(); renderCards(); renderPanel(); renderLsp(); renderFab(); renderGhLink();
+  renderProgress(); renderGo(); renderStack(); hooks.moteMount?.(S.files.length > 0 && !nextUnviewed());
   requestAnimationFrame(spyNow);
   if (spot) requestAnimationFrame(() => restoreSpot(spot));
   else if (location.hash.length > 1) {
@@ -194,7 +196,7 @@ function maybeAutoBrief() {
   const id = S.id;
   const pending = S.review.brief = { pending: true };
   renderTabs(); if (S.tab === 'overview') renderPanel();
-  return api(wsApi('/brief'), { method: 'POST', body: { model: pref.get('briefModel', S.app.defaults.briefModel), effort: pref.get('briefEffort', S.app.defaults.briefEffort) } }).catch((e) => {
+  return api(wsApi('/brief'), { method: 'POST', body: briefRun() }).catch((e) => {
     if (S.id !== id || S.review.brief !== pending) return;
     S.review.brief = { pending: false, error: e.message };
     renderTabs(); if (S.tab === 'overview') renderPanel();
@@ -220,32 +222,23 @@ function renderScopebar() {
   $('#scopebar').innerHTML = `<button class="scopebtn" data-act="scopemenu" title="What to compare: ${esc(scopeLabel())}"><span class="l">${esc(scopeLabel())}</span>${I.chev}</button>${step}` +
     `<span class="what"><span class="num">${plural(S.files.length, 'file')}</span><span class="delta"><span class="add num">+${t.add.toLocaleString()}</span><span class="del num">−${t.del.toLocaleString()}</span></span></span>`;
 }
-// The floating spark: still while Claude is idle, turning while it answers anything in this change.
+// Animate the floating spark while Claude is answering.
 function renderFab() {
   const cv = $('#aifab canvas.spark');
   if (!cv) return;
   const busy = Object.values(S.review?.convs || {}).some((c) => c.busy || c.messages?.some((m) => m.pending)) || !!S.review?.brief?.pending;
-  cv.classList.toggle('still', !busy);
+  const claudeBusy = Object.values(S.review?.convs || {}).some((c) => c.messages?.some((m) => m.role === 'claude' && m.pending));
+  cv.classList.toggle('still', !claudeBusy);
   $('#aifab').classList.toggle('busy', busy);
-  $('#aifab').title = busy ? 'Claude is working. Click to ask something else (a)' : 'Ask Claude: about the selected lines, or the whole change (a)';
-  if (busy) cv.dispatchEvent(new Event('spark-wake', { bubbles: true }));
+  $('#aifab').title = busy ? 'An answer is in progress. Click to ask something else (a)' : 'Ask about the selected lines or the whole change (a)';
+  hooks.mote?.sync();
+  if (claudeBusy) cv.dispatchEvent(new Event('spark-wake', { bubbles: true }));
 }
 hooks.renderFab = renderFab;
 function askAi() {
   if (S.sel && !S.draft) return openDraft('ask');
   setPane('panel', true);
   openChat();
-}
-// The Claude Code session this change is linked to, if any: the live one first, else a fork.
-function renderChip() {
-  return; // the linked session is shown in Chat (its picker), not in the top bar
-  const el = $('#schip');
-  if (!el || !S.review) return;
-  const linked = S.review.chats.map(convOf).filter((c) => c?.linked);
-  const c = liveConv() || linked.find((x) => x.linked.live) || linked.at(-1);
-  if (!c) { el.innerHTML = ''; return; }
-  const l = c.linked, busy = c.messages.some((m) => m.pending);
-  el.innerHTML = `<button class="schip${l.live ? '' : ' fork'}${l.offline ? ' offline' : ''}" data-act="gochat" data-conv="${esc(c.id)}" title="${esc((l.title || l.sessionId?.slice(0, 8) || 'session') + ': ' + (l.live ? (l.offline ? 'the live session stopped answering; run /loupe live in it again' : 'live, questions and fixes go into this Claude Code session') : 'a read-only fork of this Claude Code session; the session itself is untouched'))}"><i></i><span>${esc(l.title || l.sessionId?.slice(0, 8) || 'session')}</span>${busy ? spark(16, false, 'working') : ''}</button>`;
 }
 // The GitHub icon: the PR when there is one, else the branch once it is on GitHub, else nothing.
 function renderGhLink() {
@@ -422,29 +415,32 @@ function listenWs() {
     const conv = S.review.convs[d.conv] || (S.review.convs[d.conv] = { id: d.conv, messages: [] });
     const i = conv.messages.findIndex((m) => m.id === d.msg.id);
     if (i >= 0) conv.messages[i] = d.msg; else conv.messages.push(d.msg);
-    if (d.msg.model && d.msg.role === 'claude') { conv.model = d.msg.model; conv.effort = d.msg.effort; }
+    if (d.msg.model && d.msg.role !== 'user') { conv.modelKind = d.msg.role; conv.model = d.msg.model; conv.effort = d.msg.effort; }
     conv.busy = !!d.busy;
     const th = S.review.threads.find((t) => t.conv === d.conv);
     if (!document.querySelector(`[data-conv="${d.conv}"]`)) {
       if (S.tab === 'chat' && S.chat === d.conv) renderPanel();
     } else paintMessage(d.conv, d.msg);
     if (th) {
-      if (!d.busy && d.msg.role === 'claude' && !d.msg.pending && S.mark !== th.id) { S.unreadAns.add(th.id); renderTree(); }
+      if (!d.busy && d.msg.role !== 'user' && !d.msg.pending && S.mark !== th.id) { S.unreadAns.add(th.id); renderTree(); }
       updateMark(th); if (!d.busy && S.tab === 'review' && S.mark !== th.id) renderPanel();
     }
-    renderTabs(); renderChip(); renderFab();
+    renderTabs(); renderFab();
   });
   on('chat', (d) => {
     if (d.deleted) { delete S.review.convs[d.deleted]; S.review.chats = S.review.chats.filter((x) => x !== d.deleted); if (S.chat === d.deleted) S.chat = null; }
     else { S.review.convs[d.conv.id] = { ...d.conv, messages: mergeMsgs(S.review.convs[d.conv.id]?.messages, d.conv.messages) }; if (!S.review.chats.includes(d.conv.id)) S.review.chats.push(d.conv.id); }
     if (S.tab === 'chat' && !document.activeElement?.closest?.('#chatbox')) renderPanel(); else renderTabs();
-    renderChip(); renderGo(); renderFab();
+    renderGo(); renderFab();
   });
   on('brief', (d) => {
+    const was = S.review.brief;
     S.review.brief = d;
+    // while it is being written, only the line that says what it is reading changes
+    if (d.pending && was?.pending) { hooks.briefStep?.(); hooks.mapStep?.(); return; }
     renderFab();
     if (S.tab === 'overview') renderPanel(); else renderTabs();
-    if (S.order === 'guide') { renderTree(); renderCards(); renderProgress(); }
+    if (S.order === 'guide') { renderTree(); renderCards(); renderProgress(); } else hooks.mapChanged?.();
   });
   on('github', async () => { S.github = await api(`/api/w/${S.id}/github`).catch(() => S.github); hooks.githubChanged(); if (S.ws) $('#wsbtn').innerHTML = wsTitle(); });
   on('page', () => location.reload());
@@ -507,9 +503,9 @@ function commands() {
     ...scopes.map(([k, label]) => ({ group: 'COMPARE', label, run: () => setScope(k) })),
     local && { group: 'COMPARE', label: `Compare with another base (now ${m.base})`, run: () => { const b = $('[data-act="scopemenu"]'); if (b) baseMenu(b); } },
     ...m.commits.filter((x) => x.sha !== S.rangeKey).map((x) => ({ group: 'COMPARE', label: `Commit ${x.short.slice(0, 7)} ${x.subject}`, sub: ago(x.at), typed: true, run: () => setScope(x.sha) })),
-    { group: 'CLAUDE', label: 'Ask about the whole change', key: 'a', run: () => { setPane('panel', true); openChat(); } },
-    { group: 'CLAUDE', label: S.review.brief?.tldr ? 'Write the brief again' : 'Write the brief', run: () => { setPane('panel', true); setTab('overview'); requestAnimationFrame(() => $('[data-act="brief"]')?.click()); } },
-    { group: 'CLAUDE', label: 'New chat', run: () => hooks.newChat?.() },
+    { group: 'REVIEW', label: 'Ask about the whole change', key: 'a', run: () => { setPane('panel', true); openChat(); } },
+    { group: 'REVIEW', label: S.review.brief?.tldr ? 'Regenerate the guide and map' : 'Write the guide and map', run: () => { setPane('panel', true); setTab('overview'); hooks.rebrief?.(); } },
+    { group: 'REVIEW', label: 'New chat', run: () => hooks.newChat?.() },
     { group: 'CLAUDE', label: 'Link a Claude Code session…', run: () => hooks.linkSession?.() },
     { group: 'INSPECTOR', label: 'Overview', key: '1', run: panel('overview') },
     { group: 'INSPECTOR', label: 'Chat', key: '2', run: panel('chat') },
@@ -595,7 +591,7 @@ function openPalette() {
     const anyCur = shown.some((x) => x.ws?.id === S.id);
     const mc = (on) => (anyCur ? `<span class="mc">${on ? I.check : ''}</span>` : '');
     list.innerHTML = shown.map((x, i) => {
-      const head = x.group && x.group !== last ? `<div class="mh">${x.group}</div>` : '';
+      const head = x.group && x.group !== last ? `<div class="sh">${x.group}</div>` : '';
       last = x.group || last;
       if (x.target) return `<button class="mi" data-i="${i}" aria-selected="${i === cur}">${I.plus}<span class="two"><span>Open “${esc(x.target)}”</span><span>a PR link, owner/repo#123, #123 or a path</span></span>${mc(false)}</button>`;
       if (x.cmd?.file) { const k = x.cmd.label.lastIndexOf('/'); return head + `<button class="mi" data-i="${i}" aria-selected="${i === cur}">${I.file}<span class="fp ml" title="${esc(x.cmd.label)}"><span class="d">${esc(x.cmd.label.slice(0, k + 1))}</span>${esc(x.cmd.label.slice(k + 1))}</span><span class="sub">${esc(x.cmd.sub)}</span>${mc(false)}</button>`; }
@@ -663,11 +659,11 @@ async function renderHome(error) {
     const w = here.get(`${p.repo}#${p.number}`), [stage, tone] = stageOf(p);
     return `<div class="hrow${rail ? ` rail ${rail}` : ''}" data-owner="${esc(ownerOf(p.repo))}" data-gh="${esc(p.url)}"${w ? ` data-ws="${esc(w.id)}"` : ''}><a class="hl" href="${esc(w ? w.url : `/${p.repo}/pull/${p.number}`)}">` +
       `<span class="hc who">${p.author ? avatar(p.author) : I.pr}</span><span class="hc ti"><b title="${esc(p.title)}"><span class="no">#${p.number}</span> ${esc(p.title)}</b><small title="${esc(p.repo)}">${esc(short(p.repo))}${p.author ? ` · ${esc(p.author)}` : ''}${p.head ? ` · <span class="br">${esc(p.head)}</span>` : ''}</small></span>` +
-      `${stageCell(stage, tone, w)}${size(p)}<span class="hc age">${esc(ago(Date.parse(p.updatedAt)))}</span></a><button class="hm" data-hm aria-label="More">${I.more}</button></div>`;
+      `${stageCell(stage, tone, w)}${size(p)}<span class="hc age">${esc(ago(Date.parse(p.updatedAt)))}</span></a><button class="icon hm" data-hm aria-label="More">${I.more}</button></div>`;
   };
   const wsRow = (w) => `<div class="hrow" data-ws="${esc(w.id)}"><a class="hl" href="${esc(w.url)}">` +
     `<span class="hc who">${w.kind === 'pr' && w.author ? avatar(w.author) : w.kind === 'pr' ? I.pr : I.branch}</span><span class="hc ti"><b title="${esc(w.title)}">${w.kind === 'pr' ? `<span class="no">#${w.number}</span> ` : ''}${esc(w.title)}</b><small>${esc(w.kind === 'pr' ? short(w.repo) : w.repo)}${w.kind === 'pr' && w.author ? ` · ${esc(w.author)}` : ''}${w.session ? ` · <span class="sess" title="${esc(w.session.live ? 'A live Claude Code session' : 'The Claude Code session working on it')}: ${esc(w.session.title)}">${spark(12, !w.session.live)}${esc(w.session.title)}</span>` : ''}</small></span>` +
-    `${stageCell(w.dirty ? plural(w.dirty, 'uncommitted file') : w.kind === 'pr' ? '' : 'Checkout', w.dirty ? 'warn' : 'quiet', w)}<span class="hc sz"></span><span class="hc age">${w.openedAt ? esc(ago(w.openedAt)) : ''}</span></a><button class="hm" data-hm aria-label="More">${I.more}</button></div>`;
+    `${stageCell(w.dirty ? plural(w.dirty, 'uncommitted file') : w.kind === 'pr' ? '' : 'Checkout', w.dirty ? 'warn' : 'quiet', w)}<span class="hc sz"></span><span class="hc age">${w.openedAt ? esc(ago(w.openedAt)) : ''}</span></a><button class="icon hm" data-hm aria-label="More">${I.more}</button></div>`;
   // PRs whose base is another's head in the same repo are one stack: drawn together, base first, joined by a rail
   const stacked = (rows) => {
     const key = (p) => `${p.repo}:${p.head}`, byHead = new Map(rows.filter((p) => p.head).map((p) => [key(p), p]));
@@ -682,7 +678,7 @@ async function renderHome(error) {
     }
     return out.map((c) => c.length < 2 ? prRow(c[0]) : c.map((p, i) => prRow(p, i === 0 ? 'first' : i === c.length - 1 ? 'last' : 'mid')).join('')).join('');
   };
-  const section = (id, title, n, rows, empty) => `<section class="hsect" id="${id}"><h2 class="hh">${title}${n ? `<span class="n">${n}</span>` : ''}</h2>${rows ? `<div class="hlist">${rows}</div>` : `<div class="hempty">${empty}</div>`}</section>`;
+  const section = (id, title, n, rows, empty) => `<section class="hsect" id="${id}"><h2 class="sh">${title}${n ? `<span class="n">${n}</span>` : ''}</h2>${rows ? `<div class="hlist">${rows}</div>` : `<div class="hempty">${empty}</div>`}</section>`;
   const draw = (ib) => {
     const rows = ib ? (ib.prs || []) : [];
     const shown = rows.filter((p) => !hidden.has(ownerOf(p.repo).toLowerCase()));
@@ -697,10 +693,10 @@ async function renderHome(error) {
     const counts = bots ? plural(bots, 'bot PR') + ' not shown' : '';
     return `<div class="home"><div class="homein">
       <div class="brand">${icon('loupe', '--pencil', 2)}<span class="nm">loupe</span><span class="host">${esc(st.display)}</span></div>
-      <form class="go" id="go"><input class="field" name="t" placeholder="Paste a PR link, owner/repo#123, or a local path" autocomplete="off" autofocus><button class="btn primary">Open</button></form>
-      ${error ? `<div class="lost">${icon('loupe', '--ink-3', 3)}<div><b>Nothing under the loupe.</b><div class="faint">${esc(error)}</div></div></div>` : ''}
+      <form class="openbox" id="go"><input class="field lg" name="t" placeholder="Paste a PR link, owner/repo#123, or a local path" autocomplete="off" autofocus><button class="btn primary">Open</button></form>
+      ${error ? `<div class="lost">${moteHTML('failed')}<div><b>Nothing under the loupe.</b><div class="faint">${esc(error)}</div></div></div>` : ''}
       ${ib?.error ? `<div class="err">${esc(ib.error)}</div>` : ''}
-      ${section('h-review', 'Review', review.length, ib ? stacked(review) : '', ib ? `<span class="calm">${icon('loupe', '--ink-3', 2)}<span>Nothing is waiting on your review.</span></span>` : '<span class="calm">Asking GitHub…</span>')}
+      ${section('h-review', 'Review', review.length, ib ? stacked(review) : '', ib ? `<span class="calm">${moteHTML('idle')}<span>Nothing is waiting on your review.</span></span>` : '<span class="calm">Asking GitHub…</span>')}
       ${section('h-yours', 'Yours', yours.length, ib ? stacked(yours) : '', ib ? '<span class="calm">No open pull requests of yours.</span>' : '<span class="calm">Asking GitHub…</span>')}
       ${section('h-open', 'Open here', open.length, open.map(wsRow).join(''), '<span class="calm">Nothing else open. Paste a pull request above, or run <code>loupe</code> in a repository.</span>')}
       <footer class="homefoot">${counts || hidden.size ? `<p>${counts}${hidden.size ? `${counts ? ' · ' : ''}Hiding ${[...hidden].map((o) => `<button class="link unhide" data-unhide="${esc(o)}" title="Show ${esc(o)}'s pull requests again">${esc(o)} ×</button>`).join(' ')}${hiddenN ? ` (${hiddenN})` : ''}` : ''}</p>` : ''}
@@ -710,6 +706,7 @@ async function renderHome(error) {
   const paint = (ib) => {
     const v = $('#go')?.t?.value || '', focused = document.activeElement?.closest?.('.hrow')?.querySelector('.hl')?.getAttribute('href');
     $('#root').innerHTML = draw(ib);
+    wakeMotes();
     if (v) $('#go').t.value = v;
     if (focused) $(`.hl[href="${CSS.escape(focused)}"]`)?.focus();
     $('#go').addEventListener('submit', async (e) => {
@@ -761,11 +758,11 @@ function keySheet() {
   // a mouse action is not a key: the modifier is a key, the click or hover is a word
   const m = (mods, action, what) => `<span class="k">${mods.map((x) => `<kbd>${x}</kbd>`).join('')}<span class="mouse">${action}</span></span><span>${what}</span>`;
   const scrim = h(`<div class="scrim"><div class="palette keysheet"><div class="keys">
-    <h3>MOVING</h3>${k(['j'], 'next file')}${k(['k'], 'previous file')}${k([']'], 'done with this file: mark it viewed, go to the next left')}${k(['/'], 'find a file')}${k(['⌘', 'K'], 'open or do anything')}
-    <h3>REVIEWING</h3>${k(['v'], 'mark the file viewed, or not viewed again')}${k(['o'], 'fold or unfold the file')}${k(['s'], 'unified or split')}${k(['g'], 'guide order or file order')}${k(['m'], 'hide or show the marks in the code')}
-    <h3>ON SELECTED LINES</h3>${k(['a'], 'ask Claude there')}${k(['c'], 'comment for your GitHub review (pending until you submit)')}${k(['l'], 'add them to the chat')}${k(['⌘', '↵'], 'send')}${k(['esc'], 'cancel')}
-    <h3>PANELS</h3>${k(['1'], 'overview')}${k(['2'], 'chat')}${k(['3'], 'marks')}${k(['t'], 'files')}${k(['p'], 'inspector')}${k(['r'], 'read the change again')}
-    <h3>GO</h3>${m([], 'hover', 'Go docs')}${m(['⌘'], 'click', 'definition')}${m(['⇧', '⌘'], 'click', 'references')}${k(['⌥'], 'hold over code for the loupe')}
+    <h3 class="sh">MOVING</h3>${k(['j'], 'next file')}${k(['k'], 'previous file')}${k([']'], 'done with this file: mark it viewed, go to the next left')}${k(['/'], 'find a file')}${k(['⌘', 'K'], 'open or do anything')}
+    <h3 class="sh">REVIEWING</h3>${k(['v'], 'mark the file viewed, or not viewed again')}${k(['o'], 'fold or unfold the file')}${k(['s'], 'unified or split')}${k(['g'], 'guide order or file order')}${k(['m'], 'hide or show the marks in the code')}
+    <h3 class="sh">ON SELECTED LINES</h3>${k(['a'], 'ask Claude there')}${k(['c'], 'comment for your GitHub review (pending until you submit)')}${k(['l'], 'add them to the chat')}${k(['⌘', '↵'], 'send')}${k(['esc'], 'cancel')}
+    <h3 class="sh">PANELS</h3>${k(['1'], 'overview')}${k(['2'], 'chat')}${k(['3'], 'marks')}${k(['t'], 'files')}${k(['p'], 'inspector')}${k(['r'], 'read the change again')}
+    <h3 class="sh">GO</h3>${m([], 'hover', 'Go docs')}${m(['⌘'], 'click', 'definition')}${m(['⇧', '⌘'], 'click', 'references')}${k(['⌥'], 'hold over code for the loupe')}
   </div><div class="foot"><span><kbd>esc</kbd> close</span></div></div></div>`);
   document.body.append(scrim);
   // The palette closes this sheet through keysClose, so its capture listener never outlives it.
@@ -843,7 +840,7 @@ document.addEventListener('click', async (e) => {
   const gs = e.target.closest?.('#tlist [data-act="gosec"]');
   if (gs) { const g = document.getElementById('g-' + gs.dataset.k); const first = S.review.brief?.sections?.[Number(gs.dataset.k)]?.files?.[0]; return first ? goLoc({ path: first, line: 0 }) : g?.scrollIntoView({ block: 'start' }); }
   const wb = e.target.closest?.('#tlist [data-act="writebrief"]');
-  if (wb) { setPane('panel', true); setTab('overview'); return requestAnimationFrame(() => $('[data-act="brief"]')?.click()); }
+  if (wb) { setPane('panel', true); setTab('overview'); return hooks.rebrief?.(); }
   const tr = e.target.closest?.('.trow');
   if (tr) {
     if (tr.dataset.d !== undefined) { S.dirShut.has(tr.dataset.d) ? S.dirShut.delete(tr.dataset.d) : S.dirShut.add(tr.dataset.d); return renderTree(); }

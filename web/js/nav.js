@@ -1,6 +1,6 @@
 // Getting around: going to a path:line (in the diff when it is there, else the whole-file viewer), the viewer
 // itself, and gopls: hover for docs, ⌘-click for the definition, ⇧⌘-click for references.
-import { S, $, esc, h, api, wsApi, toast, fileOf } from './core.js';
+import { S, $, esc, h, api, wsApi, toast, fileOf, I } from './core.js';
 import { loadTokens, tokHTML, findRow, revealAround } from './diff.js';
 import { cardEl, loadFile, renderBody, toggleFold } from './cards.js';
 import { md } from './md.js';
@@ -59,7 +59,7 @@ export async function goThread(id) {
 export async function openViewer(v, push = true) {
   let el = $('#viewer');
   if (!el) {
-    el = h(`<div class="viewer" id="viewer" role="dialog" aria-label="File"><div class="vhead"><button class="icon sm" id="vback" title="Back" hidden>←</button><span class="vpath" id="vpath"></span><span class="faint" id="vnote"></span><span class="sp"></span><button class="btn sm" id="vclose">Close <kbd>esc</kbd></button></div><div class="vbody" id="vbody"></div></div>`);
+    el = h(`<div class="viewer" id="viewer" role="dialog" aria-label="File"><div class="vhead"><button class="icon sm" id="vback" title="Back" aria-label="Back" hidden>${I.chevL}</button><span class="vpath" id="vpath"></span><span class="faint" id="vnote"></span><span class="sp"></span><button class="btn sm" id="vclose">Close <kbd>esc</kbd></button></div><div class="vbody" id="vbody"></div></div>`);
     document.body.append(el);
     $('#vclose').onclick = closeViewer;
     $('#vback').onclick = () => { const prev = S.vstack.pop(); if (prev) openViewer(prev, false); };
@@ -135,7 +135,7 @@ document.addEventListener('click', async (e) => {
     if (e.shiftKey) {
       const r = await lspQ('refs', t);
       $('#refs')?.remove();
-      const box = h(`<div class="menu" id="refs"><div class="mh">${r.total} reference${r.total === 1 ? '' : 's'}</div>${r.locations.map((l, i) => `<button class="mi" data-i="${i}"><span class="two"><span class="mono">${esc(l.path)}:${l.line}</span><span class="mono">${esc(l.text || '')}</span></span></button>`).join('') || '<div class="none">None outside its declaration.</div>'}</div>`);
+      const box = h(`<div class="menu" id="refs"><div class="sh">${r.total} reference${r.total === 1 ? '' : 's'}</div>${r.locations.map((l, i) => `<button class="mi" data-i="${i}"><span class="two"><span class="mono">${esc(l.path)}:${l.line}</span><span class="mono">${esc(l.text || '')}</span></span></button>`).join('') || '<div class="none">None outside its declaration.</div>'}</div>`);
       document.body.append(box);
       const rect = t.span.getBoundingClientRect();
       box.style.width = '560px';

@@ -8,6 +8,7 @@ import { icon, spark } from './pixel.js';
 import { md } from './md.js';
 import { preview, run } from './actions.js';
 import { hooks } from './hooks.js';
+import { modelKind, runBtn, runOf } from './ui.js';
 
 // ------------------------------------------------------------------ the branch, read from git (checkouts only)
 let loading = null;
@@ -32,21 +33,22 @@ const splitMsg = (m = '') => { const i = m.indexOf('\n'); return i < 0 ? [m, '']
 const joinMsg = (subj, body) => (body.trim() ? `${subj}\n\n${body}` : subj);
 // the subject against git's 72 columns: the first line is what every log and PR list shows
 const countText = (subj) => `${subj.length}/72`;
-const pxbox = (attrs, on) => `<input type="checkbox" class="pxcb" ${attrs}${on ? ' checked' : ''}><span class="pxbox" aria-hidden="true">${icon('check', '--on-fill')}</span>`;
+const pxbox = (attrs, on) => `<input type="checkbox" class="pxcb" ${attrs}${on ? ' checked' : ''}><span class="pxbox" aria-hidden="true">${icon('check', '--on-act')}</span>`;
 const pxcheck = (id, on, label) => `<label class="pxl">${pxbox(`id="${id}"`, on)}<span>${esc(label)}</span></label>`;
-const writeBtn = (what) => `<button class="btn ghost wbtn" data-sh="draft" data-what="${what}" title="Claude drafts it from the change, in this repository's style">${spark(16, true)}<span>Write it</span></button>`;
+const draftRun = () => ({ model: pref.get('draftModel', S.app.defaults.briefModel), effort: pref.get('draftEffort', 'low') });
+const writeBtn = (what) => `<button class="btn ghost wbtn" data-sh="draft" data-what="${what}" title="Draft from the change, in this repository's style"><span>Write it</span></button>${runBtn(draftRun(), { purpose: 'draft' })}`;
 // the isolate keeps a leading dot or slash where it is when the list cuts a long path at its left (a .github path would otherwise
 // show its dot at the end), and unlike an invisible mark in the text it leaves a copied path clean
 const splitPath = (p) => { const k = p.lastIndexOf('/'); return `<bdi dir="ltr"><span class="d">${esc(p.slice(0, k + 1))}</span>${esc(p.slice(k + 1))}</bdi>`; };
 function filesHTML() {
   const st = S.ship;
-  return `<section class="part"><div class="ph"><span class="lbl">Files</span><span class="n" id="shn">${picked().length} of ${st.wip.length}</span><span class="sp"></span><button class="link" data-sh="all">All</button><button class="link" data-sh="none">None</button></div>` +
+  return `<section class="part"><div class="sh"><span>Files</span><span class="n" id="shn">${picked().length} of ${st.wip.length}</span><span class="sp"></span><button class="link" data-sh="all">All</button><button class="link" data-sh="none">None</button></div>` +
     `<div class="flist">${st.wip.map((f) => `<label class="frow">${pxbox(`data-sp="${esc(f.path)}"`, S.shipSel.has(f.path))}${statusGlyph(f)}<span class="p" title="${esc(f.path)}">${splitPath(f.path)}</span><span class="num"><span class="add">+${f.added}</span><span class="del">−${f.deleted}</span></span></label>`).join('')}</div></section>`;
 }
 function commitsHTML() {
   const cs = S.ws?.commits || [];
   if (!cs.length) return '';
-  return `<section class="part"><div class="ph"><span class="lbl">Commits</span><span class="n">${cs.length}</span></div>` +
+  return `<section class="part"><div class="sh"><span>Commits</span><span class="n">${cs.length}</span></div>` +
     `<div class="clist">${cs.slice(0, 12).map((c) => `<div class="crow"><span class="sha">${esc(c.short.slice(0, 7))}</span><span class="s" title="${esc(c.subject)}">${esc(c.subject)}</span></div>`).join('')}${cs.length > 12 ? `<div class="crow more"><span></span><span>and ${cs.length - 12} more</span></div>` : ''}</div></section>`;
 }
 
@@ -79,7 +81,7 @@ const SHEETS = {
     idle: () => (S.shipAmend ? 'Amend' : `Commit ${plural(picked().length, 'file')}`),
     form() {
       const st = S.ship, [subj, body] = splitMsg(S.shipMsg || '');
-      return (st.onDefault ? `<label class="field"><span class="lbl">New branch</span><input class="in mono" data-f="shipBranch" placeholder="You are on ${esc(st.branch)}: name a branch to commit on" value="${esc(S.shipBranch || '')}" autocomplete="off" spellcheck="false"></label>` : '') +
+      return (st.onDefault ? `<label class="labeled"><span class="sh">New branch</span><input class="field mono" data-f="shipBranch" placeholder="You are on ${esc(st.branch)}: name a branch to commit on" value="${esc(S.shipBranch || '')}" autocomplete="off" spellcheck="false"></label>` : '') +
         `<div class="box msg"><div class="subjrow"><input class="subj" data-m="subj" placeholder="Subject: what this commit does" value="${esc(subj)}" autocomplete="off" aria-label="Subject"><span class="cnt${subj.length > 72 ? ' over' : ''}" id="shcnt" title="The subject line against git's 72 columns">${countText(subj)}</span></div>` +
         `<textarea class="body" data-m="body" rows="5" placeholder="Why, if the subject does not say it" aria-label="Body">${esc(body)}</textarea></div>` +
         `<div class="tools">${writeBtn('commit')}<span class="sp"></span>${pxcheck('shamend', S.shipAmend, 'Amend the last commit')}</div>` +
@@ -105,9 +107,9 @@ const SHEETS = {
     idle: () => (pref.get('prDraft', true) ? 'Open draft' : 'Open'),
     form() {
       const st = S.ship, base = S.prBase || st.base || '';
-      return `<div class="route"><code title="This branch">${esc(st.branch)}</code><span class="arr" aria-hidden="true">→</span><input class="in mono base" data-f="prBase" value="${esc(base)}" style="width:${Math.max(8, base.length + 3)}ch" aria-label="Into (base branch)" spellcheck="false" title="Into: the base branch"></div>` +
-        `<input class="in ttl" data-f="prTitle" placeholder="Title" value="${esc(S.prTitle || '')}" autocomplete="off" aria-label="Title">` +
-        `<div class="box"><div class="mdtabs" role="tablist" aria-label="Description"><button role="tab" data-mdv="write" aria-selected="true">Write</button><button role="tab" data-mdv="preview" aria-selected="false">Preview</button><span class="sp"></span><span class="hint">GitHub markdown</span></div>` +
+      return `<div class="route"><code class="chip" title="This branch">${esc(st.branch)}</code><span class="arr" aria-hidden="true">→</span><input class="field mono base" data-f="prBase" value="${esc(base)}" style="width:${Math.max(8, base.length + 3)}ch" aria-label="Into (base branch)" spellcheck="false" title="Into: the base branch"></div>` +
+        `<input class="field lg" data-f="prTitle" placeholder="Title" value="${esc(S.prTitle || '')}" autocomplete="off" aria-label="Title">` +
+        `<div class="box"><div class="mdtabs" role="tablist" aria-label="Description"><button class="tab" role="tab" data-mdv="write" aria-selected="true">Write</button><button class="tab" role="tab" data-mdv="preview" aria-selected="false">Preview</button><span class="sp"></span><span class="hint">GitHub markdown</span></div>` +
         `<textarea class="body prose" rows="10" data-f="prBody" placeholder="Why, what changed, how it was tested" aria-label="Description">${esc(S.prBody ?? st.template ?? '')}</textarea><div class="mdpv md" hidden></div></div>` +
         `<div class="tools">${writeBtn('pr')}<span class="sp"></span>${pxcheck('shdraft', pref.get('prDraft', true), 'Open as a draft')}</div>` +
         commitsHTML();
@@ -147,12 +149,13 @@ export function openSheet(kind, opts = {}) {
     `<header class="shh"><h2 class="t" id="sht">${esc(def.title)}</h2><button class="icon" data-sh="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
     `<div class="shb">${def.form ? def.form(c) : ''}<ul class="items" id="shitems"${def.form ? ' hidden' : ''}></ul></div>` +
     `<div class="shwarn" id="shwarn" hidden></div>` +
-    `<footer class="shf"><span class="what" id="shpv"></span><button class="btn ghost" data-sh="close">Cancel</button><button class="btn primary go" data-sh="go" disabled><span class="gl">${esc(def.idle?.(c) || 'Go')}</span><kbd>⌘↵</kbd></button></footer></div>`);
+    `<footer class="shf"><span class="what" id="shpv"></span><button class="btn ghost lg" data-sh="close">Cancel</button><button class="btn primary lg go" data-sh="go" disabled><span class="gl">${esc(def.idle?.(c) || 'Go')}</span><kbd>⌘↵</kbd></button></footer></div>`);
   const scrim = c.scrim = h('<div class="sheetscrim"></div>');
   scrim.append(el);
   // a click on the dim around it closes it; what you typed is kept for the next time it opens
   scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) closeSheet(); });
   document.body.append(scrim);
+  hooks.mote?.sync();
   def.bind?.(c, el);
   for (const ta of $$('textarea', el)) fit(ta);
   refresh();
@@ -161,6 +164,7 @@ export function openSheet(kind, opts = {}) {
 export function closeSheet() {
   if (!cur) return;
   cur.scrim.remove(); cur = null; clearTimeout(rt);
+  hooks.mote?.sync();
   if (opener?.isConnected) opener.focus();
   opener = null;
 }
@@ -178,7 +182,7 @@ function goBtn(label, tone, disabled) {
   const b = cur?.el.querySelector('[data-sh="go"]');
   if (!b) return;
   b.querySelector('.gl').textContent = label; b.disabled = !!disabled;
-  b.classList.toggle('danger', tone === 'danger'); b.classList.toggle('primary', tone !== 'danger');
+  b.classList.toggle('danger', tone === 'danger');
 }
 function refreshSoon() { if (cur?.sending) return; clearTimeout(rt); if (cur) { cur.key = null; cur.seq++; cur.el.querySelector('[data-sh="go"]').disabled = true; } rt = setTimeout(refresh, 260); }
 async function refresh() {
@@ -216,7 +220,7 @@ async function go() {
   if (JSON.stringify(payload) !== c.key) return refresh(); // changed since its preview: read it again, then you decide
   const gb = c.el.querySelector('[data-sh="go"]');
   gb.disabled = true; gb.classList.add('sending');
-  gb.querySelector('.gl').innerHTML = `<span class="launch">${icon('arrow', '--on-fill')}</span>Sending…`;
+  gb.querySelector('.gl').innerHTML = `<span class="launch">${icon('arrow', '--on-act')}</span>Sending…`;
   c.sending = true;
   try {
     const r = await run(c.kind, payload, c.pv.guard);
@@ -225,37 +229,40 @@ async function go() {
     if (cur === c) closeSheet();
     if (!cur) await c.def.after?.(r, c, payload);
     if (S.id === c.id) hooks.afterAct?.(c.kind, r);
+    hooks.mote?.acted(true);
   } catch (e) {
     toast(e.message); c.sending = false;
+    hooks.mote?.acted(false);
     if (cur === c) { gb.classList.remove('sending'); gb.classList.add('failed'); setTimeout(() => gb.classList.remove('failed'), 400); refresh(); }
   }
 }
 
-// Claude drafts the commit message or the PR's title and description; what you typed meanwhile is kept.
+// Keep any edits the reviewer makes while the draft runs.
 async function draft(b) {
   const what = b.dataset.what;
   if (what === 'commit' && !picked().length) return toast('Pick the files first.');
   const c = cur, label = b.innerHTML;
-  b.disabled = true; b.innerHTML = `${spark(16, false, 'writing')}<span>Writing…</span>`;
+  const selection = runOf(b.parentElement);
+  b.disabled = true; b.innerHTML = `${modelKind(selection.model) === 'claude' ? spark(16, false, 'writing') : ''}<span>Writing…</span>`;
   const box = c.el.querySelector(what === 'commit' ? '.box.msg' : '.box');
   box?.classList.add('drafting'); if (what === 'pr') c.el.querySelector('[data-f="prTitle"]')?.classList.add('drafting');
   const before = { msg: S.shipMsg, title: S.prTitle, body: S.prBody, branch: S.ship?.branch, ws: S.id };
   try {
-    const d = await api(wsApi('/draft'), { method: 'POST', body: { what, paths: picked() } });
+    const d = await api(wsApi('/draft'), { method: 'POST', body: { what, paths: picked(), ...selection } });
     if (S.id !== before.ws || S.ship?.branch !== before.branch || cur !== c) return;
     const same = (now, then) => (now || '') === (then || '');
     const put = (sel, v) => { const el = c.el.querySelector(sel); if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); } };
     if (what === 'commit') {
       if (same(S.shipMsg, before.msg)) { put('[data-m="subj"]', d.subject || ''); put('[data-m="body"]', (d.body || '').trim()); }
-      else toast('You edited the message while Claude wrote: kept yours.');
+      else toast('You edited the message while the draft was running: kept yours.');
     } else {
       if (same(S.prTitle, before.title)) put('[data-f="prTitle"]', d.title);
-      if (same(S.prBody, before.body)) put('[data-f="prBody"]', d.body); else toast('You edited the description while Claude wrote: kept yours.');
+      if (same(S.prBody, before.body)) put('[data-f="prBody"]', d.body); else toast('You edited the description while the draft was running: kept yours.');
     }
     box?.classList.add('drafted'); setTimeout(() => box?.classList.remove('drafted'), 700);
   } catch (err) { toast(err.message); }
   finally {
-    box?.classList.remove('drafting'); c.el.querySelector('.in.ttl')?.classList.remove('drafting');
+    box?.classList.remove('drafting'); c.el.querySelector('.field.lg')?.classList.remove('drafting');
     if (b.isConnected) { b.disabled = false; b.innerHTML = label; }
   }
 }

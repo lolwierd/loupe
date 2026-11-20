@@ -52,15 +52,54 @@ export const GO_ROOTS = (() => {
 export const SEARCH_ROOTS = (process.env.LOUPE_SEARCH || [path.join(HOME, 'Projects'), path.join(HOME, 'code'), path.join(HOME, 'src'), path.join(HOME, 'dev')].join(':'))
   .split(':').filter((d) => fs.existsSync(d));
 
-// The models a question may name; the page shows them in this order.
-export const MODELS = [
-  ['claude-opus-5-5', 'Opus 5.5'],
-  ['claude-sonnet-5-5', 'Sonnet 5.5'],
-  ['claude-haiku-5-5', 'Haiku 5.5'],
-  ['claude-fable-5-2', 'Fable 5.2'],
-];
+// The models a question may name, in the order the page shows them: the newest of each line, Claude's then Codex's.
+// models.mjs keeps the list current from each provider's own list (models.mjs says how); these are where it starts, and
+// what stands when a provider cannot be asked.
+const CLAUDE_FIXED = [['claude-opus-5-5', 'Opus 5.5'], ['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-haiku-5-5', 'Haiku 5.5'], ['claude-fable-5-2', 'Fable 5.2']];
+export const MODELS = [];
+const CODEX_MODELS = new Set();
+export const codexDefault = () => [...CODEX_MODELS][0] || 'gpt-6.2-sol';
+export const modelKind = (model) => CODEX_MODELS.has(model) || /^gpt-/.test(model || '') ? 'codex' : 'claude';
+// a line is what stays the same from one version to the next: opus, sonnet; gpt:astra, gpt:terra
+export const lineOf = (id = '') => { const c = /^claude-([a-z]+)-/.exec(id), g = /^gpt-[\d.]+-([a-z]+)$/.exec(id); return c ? c[1] : g ? 'gpt:' + g[1] : null; };
+// a model still offered, or the newest of its line when it is not (a choice remembered from before an update)
+export const currentModel = (id) => (MODELS.some(([m]) => m === id) ? id : MODELS.find(([m]) => lineOf(id) && lineOf(m) === lineOf(id))?.[0] || null);
+// the newest of each line in a list of [id, label], keeping the list's order
+export function newestPerLine(list) {
+  const ver = (id) => (/^claude-[a-z]+-([\d-]+)/.exec(id)?.[1] || /^gpt-([\d.]+)-/.exec(id)?.[1] || '0').split(/[-.]/).map(Number);
+  const newer = (a, b) => { const x = ver(a), y = ver(b); for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+  const best = new Map();
+  for (const [id] of list) { const l = lineOf(id) || id; if (!best.has(l) || newer(id, best.get(l))) best.set(l, id); }
+  const keep = new Set(best.values());
+  return list.filter(([id]) => keep.has(id));
+}
+
+// Codex's models are the ones Codex itself lists for this account: its CLI keeps them, refreshed as it runs, in
+// models_cache.json under CODEX_HOME (the CLI's own variable) or ~/.codex. The newest of each line (Sol, Astra, Terra,
+// Luna), in Codex's own order; a fixed pair when the file cannot be read.
+export const CODEX_CACHE = path.join(process.env.CODEX_HOME || path.join(HOME, '.codex'), 'models_cache.json');
+export function codexModels() {
+  const label = (m) => (m.display_name || m.slug).replace(/^GPT-([\d.]+)[- ]/, 'GPT-$1 ');
+  try {
+    const listed = JSON.parse(fs.readFileSync(CODEX_CACHE, 'utf8')).models
+      .filter((m) => m.visibility === 'list' && m.supported_in_api !== false && /^gpt-[\d.]+-[a-z]+$/.test(m.slug))
+      .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+    const out = newestPerLine(listed.map((m) => [m.slug, label(m)]));
+    if (out.length) return out;
+  } catch { /* no Codex here, or an unreadable cache */ }
+  return [['gpt-6.2-sol', 'GPT-6.2 Sol'], ['gpt-6.2-astra', 'GPT-6.2 Astra']];
+}
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const DEFAULTS = {
   model: 'claude-opus-5-5', effort: 'xhigh', // a question, until the page remembers what you last picked
-  briefModel: 'claude-sonnet-5-5', briefEffort: 'medium', // the TLDR and the guide: fast, and they read the whole diff
+  briefModel: 'claude-sonnet-5-5', briefEffort: 'high', // the map of a change: it reads around the change, so it gets room to think
 };
+// put a new list in place; the defaults follow their lines (a question on the newest Opus, the map on the newest Sonnet)
+export function setModels(claude, codex) {
+  MODELS.splice(0, MODELS.length, ...claude, ...codex);
+  CODEX_MODELS.clear(); for (const [id] of codex) CODEX_MODELS.add(id);
+  DEFAULTS.model = claude.find(([id]) => lineOf(id) === 'opus')?.[0] || claude[0]?.[0] || DEFAULTS.model;
+  DEFAULTS.briefModel = claude.find(([id]) => lineOf(id) === 'sonnet')?.[0] || DEFAULTS.briefModel;
+}
+export const claudeFixed = () => CLAUDE_FIXED;
+setModels(CLAUDE_FIXED, codexModels());

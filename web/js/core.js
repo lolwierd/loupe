@@ -58,7 +58,11 @@ export const wsApi = (sub, q = {}) => {
 
 export const modelName = (id) => S.app?.models.find((m) => m.id === String(id || '').replace(/\[.*\]$/, ''))?.label || id || 'Claude';
 // The model and effort a new question starts with: what you picked last, in this browser.
-export const lastRun = () => ({ model: pref.get('model', S.app?.defaults.model), effort: pref.get('effort', S.app?.defaults.effort) });
+// a remembered model that the list has moved past becomes the newest of its line (opus, gpt:astra), else the default
+const lineOf = (id = '') => { const c = /^claude-([a-z]+)-/.exec(id), g = /^gpt-[\d.]+-([a-z]+)$/.exec(id); return c ? c[1] : g ? 'gpt:' + g[1] : null; };
+export const freshModel = (id, d) => { const ms = S.app?.models || []; return ms.some((m) => m.id === id) ? id : ms.find((m) => lineOf(id) && lineOf(m.id) === lineOf(id))?.id || d; };
+export const lastRun = () => ({ model: freshModel(pref.get('model', S.app?.defaults.model), S.app?.defaults.model), effort: pref.get('effort', S.app?.defaults.effort) });
+export const briefRun = () => ({ model: freshModel(pref.get('briefModel', S.app?.defaults.briefModel), S.app?.defaults.briefModel), effort: pref.get('briefEffort', S.app?.defaults.briefEffort) });
 export const rememberRun = (r) => { if (r.model) pref.set('model', r.model); if (r.effort) pref.set('effort', r.effort); };
 
 export const ago = (t) => {
@@ -93,8 +97,8 @@ export const I = {
   up: P('<path d="m4 10 4-4 4 4"/>'),
   down: P('<path d="m4 6 4 4 4-4"/>'),
   updown: P('<path d="m5 6 3-3 3 3M5 10l3 3 3-3"/>'),
-  check: P('<path d="m3.5 8.5 3 3 6-7"/>', 'stroke-width="2"'),
-  plus: P('<path d="M8 3v10M3 8h10"/>', 'stroke-width="2"'),
+  check: P('<path d="m3.5 8.5 3 3 6-7"/>'),
+  plus: P('<path d="M8 3v10M3 8h10"/>'),
   x: P('<path d="m4 4 8 8M12 4l-8 8"/>'),
   dir: P('<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>'),
   file: P('<path d="M4 1.75h5l3 3v9.5H4z"/><path d="M9 1.75v3h3"/>'),
@@ -113,7 +117,7 @@ export const I = {
   sun: P('<circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1 1M11.6 11.6l1 1M3.4 12.6l1-1M11.6 4.4l1-1"/>'),
   moon: P('<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z"/>'),
   stop: '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>',
-  send: P('<path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/>', 'stroke-width="2"'),
+  send: P('<path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/>'),
   spark: P('<path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l1.8 1.8M10.2 10.2 12 12M4 12l1.8-1.8M10.2 5.8 12 4"/>'),
   ext: P('<path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M12 9.5v4H2.5V4h4"/>'),
   guide: P('<path d="M2.5 3.5h4l1.5 1 1.5-1h4v9h-4l-1.5 1-1.5-1h-4z"/><path d="M8 4.5v9"/>'),

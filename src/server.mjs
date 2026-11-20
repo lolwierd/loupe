@@ -8,8 +8,9 @@ import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
+import { keepModelsCurrent } from './models.mjs';
 import { spawn, execFileSync } from 'node:child_process';
-import { WEB, ROOT, PORT, HOSTNAME, SHORT_HOSTNAME, TLS_DIR, NAME, VERSION, MODELS, EFFORTS, DEFAULTS, BIN, STATE_DIR } from './config.mjs';
+import { WEB, ROOT, PORT, HOSTNAME, SHORT_HOSTNAME, TLS_DIR, NAME, VERSION, MODELS, EFFORTS, DEFAULTS, BIN, STATE_DIR, modelKind } from './config.mjs';
 import * as W from './workspaces.mjs';
 import * as C from './claude.mjs';
 import * as L from './live.mjs';
@@ -112,7 +113,7 @@ async function route(req, res, url) {
   if (method === 'GET' && p === '/api/state') {
     return send(res, 200, {
       version: VERSION, boot: BOOT, user: USER, host: HOSTNAME, name: NAME, display: DISPLAY,
-      models: MODELS.map(([id, label]) => ({ id, label })), efforts: EFFORTS, defaults: DEFAULTS,
+      models: MODELS.map(([id, label]) => ({ id, label, kind: modelKind(id) })), efforts: EFFORTS, defaults: DEFAULTS,
       last: W.registry.data.last,
       workspaces: W.all().map((w) => w.summary()).sort((a, b) => (b.openedAt || 0) - (a.openedAt || 0)),
       tools: { gh: !!BIN.gh, gopls: !!BIN.gopls, claude: BIN.claude || 'bundled' },
@@ -300,7 +301,7 @@ async function route(req, res, url) {
   if (method === 'POST' && sub === '/threads') {
     const b = await readBody(req);
     if (!safeRel(b.path) || typeof b.text !== 'string' || !b.text.trim()) return send(res, 400, { error: 'path and text are required' });
-    const kind = 'ask'; // a mark is a question for Claude (notes were removed on 20 Nov 2026)
+    const kind = 'ask'; // New marks are questions. Old notes can still exist in saved reviews.
     const conv = C.newConv(ws, 'thread');
     const th = {
       id: uid(), kind, conv: conv.id, path: b.path, side: b.side === 'old' ? 'old' : 'new', line: Number(b.line) || 1, startLine: Number(b.startLine) || undefined,
@@ -355,6 +356,10 @@ async function route(req, res, url) {
     if (method === 'POST' && t[2] === '/messages') {
       const b = await readBody(req);
       if (typeof b.text !== 'string' || !b.text.trim()) return send(res, 400, { error: 'text is required' });
+      if (b.ask !== false || conv.linked?.live) {
+        const problem = C.modelSwitchError(conv, b.model);
+        if (problem) return send(res, 400, { error: problem });
+      }
       const atts = (Array.isArray(b.attachments) ? b.attachments : []).slice(0, 12).filter((a) => a && safeRel(a.path)).map((a) => ({ path: a.path, label: String(a.label || '').slice(0, 120), text: String(a.text || '').slice(0, 20000), line: Number(a.line) || undefined, side: a.side === 'old' ? 'old' : 'new' }));
       const msg = { id: uid(), role: 'user', text: b.text.trim(), at: Date.now(), attachments: atts.length ? atts : undefined };
       conv.messages.push(msg);
@@ -462,6 +467,7 @@ function linkChat(ws, link) {
   // a session registering again says it is still working here
   if (existing) { existing.linked.at = Date.now(); ws.review.save(); return existing; }
   const conv = C.newConv(ws, 'chat', {
+    modelKind: 'claude',
     title: String(link.title || (live ? 'Live session' : 'Linked session')).slice(0, 120),
     linked: { sessionId: link.sessionId, cwd: typeof link.cwd === 'string' ? link.cwd : null, title: String(link.title || '').slice(0, 200), branch: link.branch || null, tokens: link.tokens || null, live, at: Date.now() },
   });
@@ -553,6 +559,7 @@ export async function start() {
   server.keepAliveTimeout = 65000;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(PORT, '127.0.0.1', resolve); });
   console.log(`loupe ${VERSION}: http://127.0.0.1:${PORT}  (state in ${STATE_DIR})`);
+  keepModelsCurrent();
   let on80 = false;
   if (!flag('no-80') && process.env.LOUPE_NO_80 !== '1') {
     const s80 = http.createServer(handler);

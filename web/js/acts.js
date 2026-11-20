@@ -95,29 +95,18 @@ export function renderGo() {
   S.acts = acts;
   const a = acts[0];
   if (!a) { el.innerHTML = ''; return; }
-  const tone = a.tone === 'danger' ? 'danger' : a.tone === 'claude' ? 'claude' : 'primary';
-  el.innerHTML = `<button class="btn sm ${tone}${acts.length > 1 ? ' l' : ''}" data-act="next"${a.disabled ? ` disabled title="${esc(a.disabled)}"` : ''}>${esc(a.label)}</button>` +
-    (acts.length > 1 ? `<button class="btn sm ${tone} r" data-act="nextmenu" aria-label="Everything you can do next" title="Everything you can do next">${I.chev}</button>` : '');
+  const tone = a.tone === 'danger' ? 'danger' : 'primary';
+  el.innerHTML = `<button class="btn ${tone}${acts.length > 1 ? ' l' : ''}" data-act="next"${a.disabled ? ` disabled title="${esc(a.disabled)}"` : ''}>${esc(a.label)}</button>` +
+    (acts.length > 1 ? `<button class="btn ${tone} r" data-act="nextmenu" aria-label="Everything you can do next" title="Everything you can do next">${I.chev}</button>` : '');
 }
 
 export function renderStack() {
-  const el = $('#stackbar');
   if (S.tab === 'overview') hooks.renderPanel?.(); // the stack is drawn in Overview
-  if (!el) return;
-  const s = S.stack;
-  if (!s?.items?.length) { el.hidden = true; return; }
-  const dot = (it) => (it.merged ? 'merged' : it.state === 'closed' ? 'closed' : it.draft ? 'draft' : it.pr ? '' : 'local');
-  const short = (b) => String(b || '').split('/').pop();
-  el.hidden = false;
-  // each chip travels with the mark before it, so a chip that does not fit takes its arrow along
-  el.innerHTML = s.items.map((it, i) => `<span class="sq">${i ? `<span class="arrow">${it.sibling ? '·' : '›'}</span>` : ''}<button class="seq ${dot(it)}${it.here ? ' here' : ''}" data-si="${i}" title="${esc([s.kind === 'github' ? `GitHub stack #${s.stackNumber}` : s.kind === 'chain' ? 'PRs based on each other' : 'local branches built on each other', it.pr ? `#${it.pr}` : '', it.branch, it.title, it.here ? 'you are here' : it.checkout ? `checked out at ${it.checkout}` : 'not checked out: opens the PR'].filter(Boolean).join(' · '))}"><i></i><span>${it.pr ? `#${it.pr}` : esc(short(it.branch))}</span></button></span>`).join('') +
-    (S.ws.trunkMergeBase ? `<button class="sw${S.rangeKey === 'stack' ? ' on' : ''}" data-act="scope" data-scope="${S.rangeKey === 'stack' ? 'all' : 'stack'}" title="${S.rangeKey === 'stack' ? 'Back to this change alone' : 'Read this change together with everything under it, from the trunk'}">${S.rangeKey === 'stack' ? 'this one' : 'whole stack'}</button>` : '');
 }
 
 document.addEventListener('click', (e) => {
-  const b = e.target.closest?.('.top [data-act], .top .seq[data-si]');
+  const b = e.target.closest?.('.top [data-act]');
   if (!b) return;
-  if (b.dataset.si !== undefined) return hooks.openStackItem?.(Number(b.dataset.si));
   const act = b.dataset.act;
   if (act === 'next') { const a = S.acts?.[0]; if (a && !a.disabled) doAct(a); }
   if (act === 'nextmenu') menu(b, [{ header: 'NEXT' }, ...S.acts.map((a, i) => ({ label: a.label, value: i, disabled: !!a.disabled, danger: a.tone === 'danger', sub: a.disabled || '' }))], (it) => doAct(S.acts[it.value]), { align: 'right', width: 300 });

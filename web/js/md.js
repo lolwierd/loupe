@@ -33,13 +33,15 @@ mk.use({
 const KEEP = new Set(['a', 'abbr', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'details', 'div', 'dl', 'dt', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'input', 'ins', 'kbd', 'li', 'mark', 'ol', 'p', 'picture', 'pre', 'q', 's', 'samp', 'source', 'span', 'strike', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'tt', 'u', 'ul', 'var']);
 const DROP = new Set(['script', 'style', 'iframe', 'object', 'embed', 'form', 'link', 'meta', 'svg', 'math', 'template', 'noscript', 'textarea', 'select', 'button', 'video', 'audio']);
 const ATTRS = { a: ['href', 'title', 'class', 'data-p', 'data-l'], img: ['src', 'alt', 'title', 'width', 'height'], source: ['srcset', 'media'], details: ['open'], td: ['align', 'colspan', 'rowspan'], th: ['align', 'colspan', 'rowspan'], input: ['type', 'checked', 'disabled'], code: ['data-lang'], ol: ['start'], div: ['align'], p: ['align'], span: [] };
-function clean(html) {
+function clean(html, images) {
   const t = document.createElement('template');
   t.innerHTML = html;
   for (const c of t.content.querySelectorAll('*')) void c; // (parse once)
   const walk = (parent) => {
     for (const el of [...parent.children]) {
       const tag = el.tagName.toLowerCase();
+      if (!images && tag === 'img') { el.replaceWith(document.createTextNode(el.getAttribute('alt') || '')); continue; }
+      if (!images && tag === 'source') { el.remove(); continue; }
       if (DROP.has(tag)) { el.remove(); continue; }
       if (!KEEP.has(tag)) { walk(el); el.replaceWith(...el.childNodes); continue; }
       for (const a of [...el.attributes]) if (!(ATTRS[tag] || []).includes(a.name)) el.removeAttribute(a.name);
@@ -87,10 +89,10 @@ function github(html) {
     .replace(/^<div>|<\/div>$/g, '');
 }
 
-export function md(src, { links = true } = {}) {
+export function md(src, { links = true, images = true } = {}) {
   let html;
   const text = String(src || '').replace(/<!--[\s\S]*?-->/g, '');
-  try { html = github(clean(mk.parse(text))); } catch { html = `<p>${esc(text)}</p>`; }
+  try { html = github(clean(mk.parse(text), images)); } catch { html = `<p>${esc(text)}</p>`; }
   if (!links) return html;
   // Linkify text outside of <pre> (code blocks are linkified above), including inline code.
   return html.split(/(<pre>[\s\S]*?<\/pre>|<a [^>]*>[\s\S]*?<\/a>)/).map((part, i) => (i % 2 ? part : part.replace(/>([^<]+)</g, (m, t) => '>' + t.replace(LOC, (mm, p, a) => (a ? `<a class="loc" data-p="${esc(p)}" data-l="${a}">${mm}</a>` : mm)) + '<'))).join('');

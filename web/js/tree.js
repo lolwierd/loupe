@@ -53,7 +53,8 @@ function guideSideHTML(match) {
       (open ? `<div class="gfiles">${fs.map((f) => fileRow(f, 0, f.path.split('/').pop())).join('')}</div>${checks.length ? `<div class="gsum">${ticked} of ${plural(checks.length, 'check')} ticked</div>` : ''}` : '') + '</section>';
   };
   return `<nav class="gtoc" aria-label="The guide">${secs.map((sec, k) => row(k, sec.title, sec.files.map(fileOf).filter((f) => f && match(f)), sec.check || [])).join('')}` +
-    (rest.length ? row(secs.length, 'Not in the guide', rest, []) : '') + '</nav>';
+    (rest.length ? row(secs.length, 'Not in the guide', rest, []) : '') +
+    `<div class="gfoot">${S.review.brief.pending ? `<span class="shimmer">Regenerating</span>` : `<button class="link" data-act="writebrief">Regenerate the guide</button>`}</div></nav>`;
 }
 export function renderTree() {
   const q = S.filter.toLowerCase();
@@ -70,7 +71,7 @@ export function renderTree() {
       const fs = sec.files.map(fileOf).filter((f) => f && match(f));
       if (!fs.length) return;
       const left = leftIn(fs);
-      html += `<div class="tsection"><span>${k + 1} · ${esc(sec.title)}</span><span class="sp"></span><span class="num">${left ? left.toLocaleString() : ''}</span></div>` + fs.map((f) => fileRow(f, 0, f.path.split('/').pop())).join('');
+      html += `<div class="sh tsection"><span>${k + 1} · ${esc(sec.title)}</span><span class="sp"></span><span class="n">${left ? left.toLocaleString() : ''}</span></div>` + fs.map((f) => fileRow(f, 0, f.path.split('/').pop())).join('');
     });
   } else {
     const node = (n, depth) => [...n.dirs.values()].sort((a, b) => a.name.localeCompare(b.name)).map((d) => {

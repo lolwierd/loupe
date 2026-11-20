@@ -9,13 +9,14 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { query, createSdkMcpServer, tool, listSessions } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { BIN, GO_ROOTS, MODELS, EFFORTS, DEFAULTS, STATE_DIR, HOME as HOME_DIR } from './config.mjs';
+import * as codex from './codex.mjs';
+import { BIN, GO_ROOTS, MODELS, EFFORTS, DEFAULTS, STATE_DIR, HOME as HOME_DIR, modelKind, codexDefault, currentModel } from './config.mjs';
 import { registry, contentKey, totalsOf } from './workspaces.mjs';
 import { uid } from './util.mjs';
 import { WORKTREE, readWorktree } from './git.mjs';
 
-const MODEL_IDS = new Set(MODELS.map(([id]) => id));
-const pickModel = (m, d = DEFAULTS.model) => (MODEL_IDS.has(m) ? m : d);
+// a model still offered, or the newest of its line (the list moves on as providers ship); else the default
+const pickModel = (m, d = DEFAULTS.model) => currentModel(m) || d;
 const pickEffort = (e, d = DEFAULTS.effort) => (EFFORTS.includes(e) ? e : d);
 const ENV = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: 'false', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' };
 
@@ -103,7 +104,7 @@ function scopeText(ws, scope) {
   return { r, label, newSide };
 }
 
-async function systemText(ws, scope, linked) {
+async function systemText(ws, scope, linked, forCodex = false) {
   const m = ws.meta;
   const { r, label, newSide } = scopeText(ws, scope);
   const files = await ws.files(scope);
@@ -124,11 +125,11 @@ ${m.commits.slice(0, 60).map((c) => `${c.short} ${c.subject}`).join('\n')}
 Files this view changes (${files.length}${files.length > 400 ? ', first 400' : ''}; status, lines added and removed):
 ${list}
 
-Tools: Read, Grep and Glob inside the workspace; \`git\` for read-only git (diff, show, log, blame, grep, ls-files, ...: pass the arguments as a list); list_threads and read_thread for the reviewer's other questions and chats on this change. Use them when the reviewer refers to another thread, or when one bears on the question.
+${forCodex ? 'Use read-only commands to inspect the workspace. Stay inside the checkout and do not write files.' : `Tools: Read, Grep and Glob inside the workspace; \`git\` for read-only git (diff, show, log, blame, grep, ls-files, ...: pass the arguments as a list); list_threads and read_thread for the reviewer's other questions and chats on this change. Use them when the reviewer refers to another thread, or when one bears on the question.`}
 Look at surrounding code (callers, callees, the rest of the package, its tests) whenever that makes the answer more accurate.
 
 The reviewer is a senior systems engineer who is new to this codebase. Answer the question first in one to three plain lines, then give the detail. Cite code as path:line (repository-relative), so the viewer can link it. Say so when something is your inference rather than something you read.
-${claudeMd(ws.root)}`.trim();
+${forCodex ? '' : claudeMd(ws.root)}`.trim();
 }
 
 function threadTools(ws) {
@@ -146,7 +147,7 @@ function threadTools(ws) {
       return text(rows.map((x) => {
         const msgs = x.conv.messages.filter((m) => m.text);
         const first = msgs.find((m) => m.role === 'user')?.text || '';
-        const last = msgs.filter((m) => m.role === 'claude').at(-1)?.text || '';
+        const last = msgs.findLast((m) => m.role !== 'user')?.text || '';
         return `${x.id} · ${x.kind} · ${x.where}${x.resolved ? ' · resolved' : ''}\n  asked: ${first.slice(0, 200).replace(/\s+/g, ' ')}` + (last ? `\n  latest answer: ${last.slice(0, 240).replace(/\s+/g, ' ')}` : '');
       }).join('\n'));
     }),
@@ -156,7 +157,7 @@ function threadTools(ws) {
       const conv = convOf(th ? th.conv : id);
       if (!conv) return text(`No thread ${id}; list_threads gives the ids.`);
       const code = th?.snippet ? `\nThe lines it is on:\n\`\`\`\n${th.snippet.slice(0, 4000)}\n\`\`\`\n` : '';
-      return text(`${th ? `Thread on ${where(th)}` : 'Chat'}${th?.resolved ? ' (resolved)' : ''}.${code}\n` + conv.messages.filter((m) => m.text).map((m) => `${m.role === 'user' ? 'Reviewer' : 'Claude'}: ${m.text.slice(0, 8000)}`).join('\n\n'));
+      return text(`${th ? `Thread on ${where(th)}` : 'Chat'}${th?.resolved ? ' (resolved)' : ''}.${code}\n` + conv.messages.filter((m) => m.text).map((m) => `${{ user: 'Reviewer', codex: 'Codex', claude: 'Claude' }[m.role]}: ${m.text.slice(0, 8000)}`).join('\n\n'));
     }),
   ];
 }
@@ -219,26 +220,49 @@ export const isBusy = (convId) => !!running.get(convId)?.busy;
 
 function prompt(ws, conv, msg, thread) {
   const parts = [];
-  const first = !conv.messages.some((m) => m.role === 'claude' && m.text && m !== msg);
+  const first = !conv.messages.some((m) => m.role !== 'user' && m.text);
   if (thread && first) {
     const side = thread.side === 'old' ? 'the old side' : 'the new side';
     parts.push(`The reviewer left a comment on ${thread.path} ${thread.label || ''} (${thread.view === 'file' ? `the whole file, ${side}` : `a slice of the diff: "+" added, "-" removed, " " unchanged; numbers are old | new`}):\n\n\`\`\`\n${String(thread.snippet || '').slice(0, 12000)}\n\`\`\`\n\nTheir comment:`);
   }
   if (thread && !first && conv.messages.filter((m) => m.role === 'user').length > 1) {
-    // Earlier notes in a thread that only now asks Claude: hand them over.
+    // Include earlier notes when there is no session to resume.
     const earlier = conv.messages.filter((m) => m.role === 'user' && m !== msg && m.text).map((m) => m.text);
-    if (!conv.sessionId && earlier.length) parts.push(`Earlier notes in this thread:\n${earlier.map((t) => `- ${t}`).join('\n')}\n`);
+    if (!conv.sessionId && !conv.codexThreadId && earlier.length) parts.push(`Earlier notes in this thread:\n${earlier.map((t) => `- ${t}`).join('\n')}\n`);
   }
   for (const a of msg.attachments || []) parts.push(`${String(a.label || 'Lines')[0].toUpperCase()}${String(a.label || 'Lines').slice(1)} of ${a.path}:\n\`\`\`\n${String(a.text || '').slice(0, 12000)}\n\`\`\``);
   parts.push(msg.text);
   return parts.join('\n\n');
 }
 
-// Ask Claude: msg is the reviewer's message, already in conv.messages. Resolves when the answer is complete.
+function conversationKind(conv) {
+  if (conv.linked || conv.sessionId) return 'claude';
+  return conv.modelKind || conv.messages.find((m) => m.role !== 'user')?.role || null;
+}
+
+function conversationModel(conv, model) {
+  const fallback = conversationKind(conv) === 'codex' ? pickModel(conv.model, codexDefault()) : DEFAULTS.model;
+  return pickModel(model, fallback);
+}
+
+export function modelSwitchError(conv, model) {
+  const kind = conversationKind(conv);
+  if (kind && kind !== modelKind(conversationModel(conv, model))) {
+    return `This conversation uses ${kind === 'codex' ? 'Codex' : 'Claude'}. Start a new chat to switch.`;
+  }
+  return null;
+}
+
+// The reviewer's message is already in conv.messages. Resolves when the answer is complete.
 export function ask(ws, conv, msg, { model, effort, scope = 'all', thread = null }) {
+  const problem = modelSwitchError(conv, model);
+  if (problem) throw new Error(problem);
+  const selected = conversationModel(conv, model);
+  conv.modelKind = modelKind(selected);
   const r = running.get(conv.id) || { busy: false, chain: Promise.resolve() };
   running.set(conv.id, r);
-  const answer = { id: uid(), role: 'claude', text: '', tools: [], notes: [], at: Date.now(), pending: true, queued: r.busy, model: pickModel(model), effort: pickEffort(effort) };
+  const effortDefault = conv.modelKind === 'codex' ? pickEffort(conv.effort) : undefined;
+  const answer = { id: uid(), role: conv.modelKind, text: '', tools: [], notes: [], at: Date.now(), pending: true, queued: r.busy, model: selected, effort: pickEffort(effort, effortDefault) };
   conv.messages.push(answer);
   conv.model = answer.model; conv.effort = answer.effort;
   ws.review.save();
@@ -251,6 +275,13 @@ export function ask(ws, conv, msg, { model, effort, scope = 'all', thread = null
     const paint = () => { const now = Date.now(); clearTimeout(timer); if (now - last > 80) { last = now; send(); } else timer = setTimeout(() => { last = Date.now(); send(); }, 80); };
     try {
       if (!ws.root) throw new Error('the PR\'s worktree is still being made; try again in a moment');
+      if (answer.role === 'codex') {
+        const context = await systemText(ws, scope, false, true);
+        const input = [context, codex.otherQuestions(ws, conv), prompt(ws, conv, msg, thread)].filter(Boolean).join('\n\n');
+        await codex.streamAnswer(ws, conv, answer, input, r.abort.signal, paint);
+        if (!answer.text && answer.notes.length) answer.text = answer.notes.pop();
+        return;
+      }
       const linked = conv.linked && !conv.sessionId ? conv.linked : null;
       const roots = [ws.root, ...(conv.linked?.cwd && fs.existsSync(conv.linked.cwd) ? [conv.linked.cwd] : [])];
       const options = baseOptions(ws, {
@@ -319,24 +350,93 @@ function toolSummary(root, name, input = {}) {
   }
 }
 
-// ------------------------------------------------------------------ the brief: TLDR and guide
-// One call reads the diff (no tools: fast and the same price every time) and returns structured output.
+// ------------------------------------------------------------------ the brief: a map of the change
+// The brief is for reviewing a change in a codebase you do not know yet. It reads the diff, then reads around it
+// (the changed files in full, their callers, the package, the repository's own docs and the history of the changed
+// files) with the same read-only tools a question gets, and writes: what the change does and why, how this part of
+// the system works today, a map (diagrams) with the change marked on it, and how to review it.
 const BRIEF_SCHEMA = {
   type: 'object',
   properties: {
-    tldr: { type: 'string', description: 'One markdown string (not a list) of two to four short sentences in plain words: what this change does and why. No preamble.' },
+    tldr: { type: 'string', description: 'Markdown, two to four plain sentences, no list: what changes, for whom, and why (the problem it solves), and where in the system it lands. No preamble.' },
     risk: { type: 'string', enum: ['low', 'typical', 'high', 'very high'] },
-    riskWhy: { type: 'string', description: 'One sentence: what could break and where.' },
-    startHere: { type: 'string', description: 'The repository-relative path of the one file to read first.' },
+    riskWhy: { type: 'string', description: 'One sentence: what could break, where, and for whom.' },
+    context: {
+      type: 'object',
+      description: 'The surroundings a reviewer new to this codebase needs, read from the code around the change, not only the diff.',
+      properties: {
+        system: { type: 'string', description: 'Markdown, one or two short paragraphs: what this part of the system is and does today, who calls it and when, what happens at runtime. Cite code as path:line. Say "I infer" where you infer.' },
+        before: { type: 'string', description: 'Markdown, one to three sentences: how it behaved before this change, and the problem or limit the change addresses.' },
+        after: { type: 'string', description: 'Markdown, one to three sentences: how it behaves after, as a user or caller would notice.' },
+        glossary: { type: 'array', description: 'Up to eight terms of this codebase or company that a newcomer will meet in this change, defined from how the code uses them.', items: { type: 'object', properties: { term: { type: 'string' }, meaning: { type: 'string', description: 'One sentence.' }, where: { type: 'string', description: 'path:line where it is defined or best seen.' } }, required: ['term', 'meaning'] } },
+      },
+      required: ['system', 'before', 'after'],
+    },
+    diagrams: {
+      type: 'array',
+      description: 'One or two diagrams in loupe\'s drawing format: parts placed on a small grid, joined by arrows, the change marked on them. First a kind "map": the components this change lives among (6 to 12 nodes: packages, services, handlers, stores, external systems, the person or job that starts it), placed left to right from where a request or job starts (col 0) to where it ends (stores and external systems on the right), with parallel paths on separate rows. Then, when it helps, a kind "flow": the runtime path the change affects, over the same or fewer nodes, its edges numbered by step in order.',
+      items: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['map', 'flow'] },
+          title: { type: 'string', description: 'A few words: what the diagram shows.' },
+          caption: { type: 'string', description: 'One sentence: what to look at in it.' },
+          nodes: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string', description: 'A short id, unique in the diagram.' },
+                label: { type: 'string', description: 'At most 26 characters: the name a reader would use (a type, package or service).' },
+                kind: { type: 'string', enum: ['code', 'data', 'external', 'actor', 'queue'], description: 'code: a package, type, handler or service; data: a database, table, bucket or file; external: a system outside this repository; actor: a person, job or client that starts things; queue: a queue or event stream.' },
+                col: { type: 'integer', minimum: 0, maximum: 5 },
+                row: { type: 'integer', minimum: 0, maximum: 5 },
+                change: { type: 'string', enum: ['none', 'changed', 'new', 'removed'] },
+                section: { type: 'integer', description: 'For a changed or new node: the 1-based number of the guide section that changes it; else 0.' },
+                ref: { type: 'string', description: 'The repository-relative path (optionally :line) where this part lives, or empty for external systems.' },
+              },
+              required: ['id', 'label', 'kind', 'col', 'row', 'change'],
+            },
+          },
+          edges: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                from: { type: 'string' }, to: { type: 'string' },
+                label: { type: 'string', description: 'At most 22 characters: the call, message or data on this arrow.' },
+                change: { type: 'string', enum: ['none', 'changed', 'new', 'removed'] },
+                step: { type: 'integer', description: 'In a flow: this arrow\'s place in the order, from 1. In a map: 0.' },
+              },
+              required: ['from', 'to'],
+            },
+          },
+          groups: { type: 'array', description: 'Optional boundaries, such as a service or a host, around some nodes.', items: { type: 'object', properties: { label: { type: 'string' }, nodes: { type: 'array', items: { type: 'string' } } }, required: ['label', 'nodes'] } },
+        },
+        required: ['kind', 'title', 'nodes', 'edges'],
+      },
+    },
+    plan: {
+      type: 'object',
+      description: 'How to review this change.',
+      properties: {
+        start: { type: 'string', description: 'The repository-relative path of the one file to read first.' },
+        why: { type: 'string', description: 'One sentence: why start there.' },
+        steps: { type: 'array', items: { type: 'string' }, description: 'Three to six short steps in reading order, each naming what to read (path or symbol) and what to look for.' },
+      },
+      required: ['start', 'steps'],
+    },
+    questions: { type: 'array', items: { type: 'string' }, description: 'Up to five questions the diff does not answer, worth asking the author or checking.' },
     sections: {
       type: 'array',
-      description: 'The guide: the change told as a short story. Core changes first, then what supports them, then tests, config and docs. Every changed file in exactly one section.',
+      description: 'The guide: the change in parts, core first, then what supports it, then tests, config and docs. Every changed file in exactly one section.',
       items: {
         type: 'object',
         properties: {
           title: { type: 'string', description: 'A short heading naming what this part does, e.g. "Sessions expire after an hour without use"' },
           role: { type: 'string', enum: ['core', 'supporting', 'tests', 'config', 'docs', 'other'] },
-          why: { type: 'string', description: 'One to three sentences of markdown: why this part exists and what it changes. Cite code as path:line.' },
+          context: { type: 'string', description: 'One or two sentences: where this code sits and what it did before this change.' },
+          why: { type: 'string', description: 'One to three sentences of markdown: what this part changes and why. Cite code as path:line.' },
           check: { type: 'array', items: { type: 'string' }, description: 'One to three specific things a reviewer should verify in this part.' },
           files: { type: 'array', items: { type: 'string' }, description: 'Repository-relative paths, in reading order.' },
         },
@@ -344,7 +444,7 @@ const BRIEF_SCHEMA = {
       },
     },
   },
-  required: ['tldr', 'risk', 'riskWhy', 'sections'],
+  required: ['tldr', 'risk', 'riskWhy', 'context', 'diagrams', 'plan', 'sections'],
 };
 
 async function diffText(ws, files, budget = 180000) {
@@ -380,7 +480,7 @@ export function brief(ws, { model, effort } = {}) {
     ws.emit('brief', ws.review.data.brief);
     const t = totalsOf(files);
     const pr = m.pr ? `Pull request #${m.pr.number}: ${m.pr.title}\nBy ${m.pr.author}, ${m.pr.headRefName} into ${m.pr.baseRefName}.\n\nDescription:\n${(m.pr.body || '(none)').slice(0, 8000)}\n` : `Local branch ${m.branch} (base ${m.base})${m.dirty ? `, with ${m.dirty} files of uncommitted work` : ''}.\n`;
-    const text = `Write a review brief for this change, for a senior engineer who is new to the codebase.
+    const text = `Write a map of this change for a reviewer: a senior engineer who is new to this codebase and this company, who has to review the change without knowing the code around it.
 
 ${pr}
 Commits:
@@ -391,29 +491,47 @@ ${t.files} files, +${t.added} -${t.deleted} (code ${t.code} lines, tests ${t.tes
 The diff:
 ${await diffText(ws, files)}
 
+Before you write, read around the change; the diff alone is not enough. Use your tools (Read, Grep, Glob, and git, all read-only) for about 10 to 25 calls:
+- the changed files in full where the diff is not enough to follow them;
+- who calls the changed functions and types (grep for them), and what they call;
+- the package's other files and its tests, to learn what this part of the system is for;
+- the repository's own notes for newcomers if there are any (README, AGENTS.md, CLAUDE.md, docs/), for the words this codebase uses;
+- the history of the main changed files (git log -n 15 --oneline -- <path>, and git show of a relevant commit) for why the code is the way it is.
+Do not read everything: stop when you can explain where the change sits and how the parts around it work.
+
+Then answer through the structured output. Write plainly, as to a colleague: no filler, no praise, no hedging words. Ground every claim in code you read and cite it as path:line; say "I infer" when you infer. The TLDR says what changes and why in words a newcomer follows. The context explains the system around the change, not the change again. The first diagram maps the components and marks this change on them; place parts on the grid so arrows mostly run left to right.
+
 The guide must account for every one of these paths, each in exactly one section:
 ${files.map((f) => f.path).join('\n')}`;
     const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), 6 * 60 * 1000);
-    const options = baseOptions(ws, {
-      model: pickModel(model, DEFAULTS.briefModel), effort: pickEffort(effort, DEFAULTS.briefEffort), roots: [ws.root || ws.gitDir], abort,
-      append: 'You write review briefs: exact, plain, short. Ground every claim in the diff you are given. Answer only through the structured output.',
-    });
-    options.tools = [];
-    options.mcpServers = {};
-    options.maxTurns = 3;
-    options.persistSession = false;
-    options.includePartialMessages = false;
-    options.outputFormat = { type: 'json_schema', schema: BRIEF_SCHEMA };
+    const timer = setTimeout(() => abort.abort(), 10 * 60 * 1000);
+    const run = { model: pickModel(model, DEFAULTS.briefModel), effort: pickEffort(effort, DEFAULTS.briefEffort) };
+    const append = 'You write review maps: what a change does, the system around it, diagrams of it, and how to review it. Exact, plain, short. Read the code around the change before you write. Answer only through the structured output.';
     let out = null, cost = 0, ms = 0;
     try {
-      for await (const msg of query({ prompt: text, options })) {
-        if (msg.type === 'result') { out = msg.structured_output; cost = msg.total_cost_usd || 0; ms = msg.duration_ms || 0; if (!out && msg.subtype !== 'success') throw new Error(msg.subtype.replace(/_/g, ' ')); }
+      if (modelKind(run.model) === 'codex') {
+        // Codex reads around the change with its own read-only commands; it reports neither steps nor cost
+        ({ out, ms } = await codex.structured(ws, run, append + '\n\n' + text, BRIEF_SCHEMA, abort.signal));
+      } else {
+        const options = baseOptions(ws, { ...run, roots: [ws.root || ws.gitDir], abort, append });
+        // the same read-only tools a question gets (Read, Grep, Glob, a fixed-argv git): reading around the change is the point
+        Object.assign(options, { maxTurns: 40, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema: BRIEF_SCHEMA } });
+        let said = 0;
+        for await (const msg of query({ prompt: text, options })) {
+          // what it is reading, for the page, at most twice a second
+          if (msg.type === 'assistant') for (const c of msg.message?.content || []) {
+            if (c.type !== 'tool_use' || Date.now() - said < 500) continue;
+            said = Date.now();
+            ws.review.data.brief = { ...ws.review.data.brief, step: toolSummary(ws.root, c.name, c.input) };
+            ws.emit('brief', ws.review.data.brief);
+          }
+          if (msg.type === 'result') { out = msg.structured_output; cost = msg.total_cost_usd || 0; ms = msg.duration_ms || 0; if (!out && msg.subtype !== 'success') throw new Error(msg.subtype.replace(/_/g, ' ')); }
+        }
+        if (!out) throw new Error('Claude returned no brief');
       }
-      if (!out) throw new Error('Claude returned no brief');
-      ws.review.data.brief = { key, at: Date.now(), model: options.model, effort: options.effort, cost, ms, head: m.headFull, ...normalizeGuide(out, files) };
+      ws.review.data.brief = { key, at: Date.now(), ...run, cost, ms, head: m.headFull, ...normalizeGuide(out, files) };
     } catch (e) {
-      ws.review.data.brief = { ...(ws.review.data.brief || {}), pending: false, error: abort.signal.aborted ? 'took longer than six minutes' : String(e.message || e) };
+      ws.review.data.brief = { ...(ws.review.data.brief || {}), pending: false, error: abort.signal.aborted ? 'took longer than ten minutes' : String(e.message || e), step: null };
     } finally {
       clearTimeout(timer);
       ws.review.save();
@@ -437,7 +555,7 @@ export function normalizeGuide(out, files) {
     return hit?.path || null;
   };
   const sections = (out.sections || []).map((s) => ({
-    title: String(s.title || 'Untitled').slice(0, 200), role: s.role || 'other', why: String(s.why || '').slice(0, 2000),
+    title: String(s.title || 'Untitled').slice(0, 200), role: s.role || 'other', why: String(s.why || '').slice(0, 2000), context: String(s.context || '').slice(0, 1000),
     check: (s.check || []).map(String).slice(0, 5),
     files: (s.files || []).map(resolve).filter((p) => p && !seen.has(p) && seen.add(p)),
   })).filter((s) => s.files.length);
@@ -449,7 +567,27 @@ export function normalizeGuide(out, files) {
   let tl = out.tldr;
   if (typeof tl === 'string' && /^\s*\[/.test(tl)) { try { const a = JSON.parse(tl); if (Array.isArray(a)) tl = a; } catch { /* a string that starts with [ */ } }
   if (Array.isArray(tl)) tl = tl.map(String).join('\n\n');
-  return { tldr: String(tl || ''), risk: out.risk, riskWhy: out.riskWhy || '', startHere: resolve(out.startHere), sections, pending: false, error: null };
+  const str = (x, n = 4000) => String(x || '').slice(0, n);
+  const c = out.context || {};
+  const context = { system: str(c.system), before: str(c.before, 2000), after: str(c.after, 2000),
+    glossary: (Array.isArray(c.glossary) ? c.glossary : []).slice(0, 8).map((g) => ({ term: str(g.term, 80), meaning: str(g.meaning, 400), where: str(g.where, 200) })).filter((g) => g.term && g.meaning) };
+  // a diagram keeps only what it can draw: known kinds, nodes on the grid, edges between nodes that exist
+  const CH = new Set(['changed', 'new', 'removed']), KINDS = new Set(['code', 'data', 'external', 'actor', 'queue']);
+  const grid = (n) => Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
+  const diagrams = (Array.isArray(out.diagrams) ? out.diagrams : []).slice(0, 3).map((d) => {
+    const seenIds = new Set(), taken = new Set();
+    const nodes = (Array.isArray(d.nodes) ? d.nodes : []).slice(0, 16).map((n) => ({ id: str(n.id, 40), label: str(n.label, 40), kind: KINDS.has(n.kind) ? n.kind : 'code', col: grid(n.col), row: grid(n.row), change: CH.has(n.change) ? n.change : 'none', section: Math.max(0, Math.round(Number(n.section) || 0)), ref: str(n.ref, 200) }))
+      .filter((n) => n.id && n.label && !seenIds.has(n.id) && seenIds.add(n.id))
+      .map((n) => { while (taken.has(`${n.col},${n.row}`)) n.row = Math.min(9, n.row + 1); taken.add(`${n.col},${n.row}`); return n; }); // two nodes never share a cell
+    const edges = (Array.isArray(d.edges) ? d.edges : []).slice(0, 24).map((e) => ({ from: str(e.from, 40), to: str(e.to, 40), label: str(e.label, 30), change: CH.has(e.change) ? e.change : 'none', step: Math.max(0, Math.round(Number(e.step) || 0)) }))
+      .filter((e) => seenIds.has(e.from) && seenIds.has(e.to) && e.from !== e.to);
+    const groups = (Array.isArray(d.groups) ? d.groups : []).slice(0, 4).map((g) => ({ label: str(g.label, 40), nodes: (Array.isArray(g.nodes) ? g.nodes : []).map(String).filter((id) => seenIds.has(id)) })).filter((g) => g.label && g.nodes.length);
+    return { kind: d.kind === 'flow' ? 'flow' : 'map', title: str(d.title, 120), caption: str(d.caption, 400), nodes, edges, groups };
+  }).filter((d) => d.nodes.length >= 2);
+  const pl = out.plan || {};
+  const plan = { start: resolve(pl.start) || resolve(out.startHere), why: str(pl.why, 400), steps: (Array.isArray(pl.steps) ? pl.steps : []).slice(0, 8).map((x) => str(x, 400)).filter(Boolean) };
+  const questions = (Array.isArray(out.questions) ? out.questions : []).slice(0, 6).map((x) => str(x, 400)).filter(Boolean);
+  return { tldr: String(tl || ''), risk: out.risk, riskWhy: out.riskWhy || '', startHere: plan.start, context, diagrams, plan, questions, sections, pending: false, error: null, step: null };
 }
 
 // ------------------------------------------------------------------ Claude Code sessions on this repository
@@ -520,9 +658,15 @@ The diff:
 ${diff}`;
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), 3 * 60 * 1000);
-  const options = baseOptions(ws, { model: pickModel(model, DEFAULTS.briefModel), effort: pickEffort(effort, 'low'), roots: [ws.root || ws.gitDir], abort, append: 'You write commit messages and pull request descriptions: plain, specific, no filler, no emoji. Answer only through the structured output.' });
-  Object.assign(options, { tools: [], mcpServers: {}, maxTurns: 3, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema: DRAFT_SCHEMA[what] } });
+  const run = { model: pickModel(model, DEFAULTS.briefModel), effort: pickEffort(effort, 'low') };
+  const append = 'You write commit messages and pull request descriptions: plain, specific, no filler, no emoji. Answer only through the structured output.';
   try {
+    if (modelKind(run.model) === 'codex') {
+      const { out } = await codex.structured(ws, run, append + '\n\n' + prompt, DRAFT_SCHEMA[what], abort.signal);
+      return out;
+    }
+    const options = baseOptions(ws, { ...run, roots: [ws.root || ws.gitDir], abort, append });
+    Object.assign(options, { tools: [], mcpServers: {}, maxTurns: 3, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema: DRAFT_SCHEMA[what] } });
     for await (const m of query({ prompt, options })) if (m.type === 'result') { if (m.structured_output) return m.structured_output; throw new Error(m.subtype.replace(/_/g, ' ')); }
     throw new Error('no draft came back');
   } finally { clearTimeout(timer); }

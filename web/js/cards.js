@@ -3,9 +3,13 @@
 import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, convOf, threadsAt, lastRun, rememberRun, plural, ago } from './core.js';
 import { buildRows, buildSplit, wordRanges, findRow, revealAround, expandGap, loadTokens, tokHTML, headText, rangeLabel, selText } from './diff.js';
 import { md } from './md.js';
-import { msgHTML, runBtn, runOf, grow, menu, shimmerSync } from './ui.js';
+import { modelKind, msgHTML, runBtn, runOf, grow, menu, shimmerSync } from './ui.js';
 import { hooks } from './hooks.js';
+import { mapCardHTML } from './map.js';
 import { spark, icon } from './pixel.js';
+
+// the glyph of a question: Claude's spark, or a plain bubble for Codex (the spark and orange are Claude's alone)
+const askGlyph = (r) => (modelKind(r?.model) === 'codex' ? I.chat : spark(16, true));
 
 export const cardEl = (p) => document.getElementById('f-' + (fileOf(p)?.i ?? 'x'));
 const isGo = (p) => p.endsWith('.go');
@@ -49,7 +53,7 @@ function cardHTML(f) {
     `<span class="stat"><span class="add">+${f.added}</span><span class="del">−${f.deleted}</span></span>${tags}<span class="sp"></span>` +
     `<span class="faint" data-cc>${n ? `${I.cmt} ${n}` : ''}</span>` +
     `<button class="icon sm" data-act="filemenu" aria-label="More" title="More">${I.more}</button>` +
-    `<button class="viewedbox${countedOnly(f) ? ' counted' : ''}" data-act="viewed" aria-pressed="${isViewed(f)}" title="${isStale(f) ? 'Changed since you viewed it' : countedOnly(f) ? `Counted as viewed: ${f.kind} files are, until you untick one. Turn it off in ⌘K or the View menu.` : 'Mark viewed (v)'}"><span class="box">${icon('check', '--on-fill')}</span>${isStale(f) ? 'Changed' : 'Viewed'}</button></div>` +
+    `<button class="btn sm viewedbox${countedOnly(f) ? ' counted' : ''}" data-act="viewed" aria-pressed="${isViewed(f)}" title="${isStale(f) ? 'Changed since you viewed it' : countedOnly(f) ? `Counted as viewed: ${f.kind} files are, until you untick one. Turn it off in ⌘K or the View menu.` : 'Mark viewed (v)'}"><span class="box">${icon('check', '--on-act')}</span>${isStale(f) ? 'Changed' : 'Viewed'}</button></div>` +
     `<div class="relp" hidden></div><div class="fb${S.layout === 'split' ? ' split' : ''}" data-p="${esc(f.path)}"><div class="loadd">${f.binary ? 'Binary file: no text diff.' : 'Loading…'}</div></div></section>`;
 }
 
@@ -57,15 +61,16 @@ function cardHTML(f) {
 // they came from.
 export const checkKey = (k, j) => `${S.review.brief?.at || 0}:${k}:${j}`;
 function guideHeadHTML(sec, k) {
+  const markdown = { images: modelKind(S.review.brief.model) !== 'codex' };
   const files = sec.files.map(fileOf).filter(Boolean);
   const left = files.filter((f) => !isViewed(f) && f.kind !== 'generated').reduce((n, f) => n + lines(f), 0);
   const checks = (sec.check || []).map((c, j) => {
     const on = !!S.review.checks?.[checkKey(k, j)];
-    return `<button class="gck${on ? ' on' : ''}" data-act="gck" data-key="${esc(checkKey(k, j))}" aria-pressed="${on}"><span class="b">${icon('check', '--on-fill')}</span><span class="x">${md(c).replace(/^<p>|<\/p>\s*$/g, '')}</span></button>`;
+    return `<button class="gck${on ? ' on' : ''}" data-act="gck" data-key="${esc(checkKey(k, j))}" aria-pressed="${on}"><span class="b">${icon('check', '--on-act')}</span><span class="x">${md(c, markdown).replace(/^<p>|<\/p>\s*$/g, '')}</span></button>`;
   }).join('');
   const n = S.review.brief.sections.length;
-  return `<div class="gsec" id="g-${k}"><div class="gmeta"><span>Section ${k + 1} of ${n}</span><span class="dot">·</span><span>${esc(sec.role)}</span><span class="sp"></span><span class="num">${left ? `${left.toLocaleString()} lines left` : 'all viewed'}</span></div><h2>${esc(sec.title)}</h2>` +
-    `<div class="why md">${md(sec.why)}</div>${checks ? `<div class="gcks" aria-label="What to check">${checks}</div>` : ''}</div>`;
+  return `<div class="gsec" id="g-${k}"><div class="sh"><span>Section ${k + 1} of ${n}</span><span class="dot">·</span><span>${esc(sec.role)}</span><span class="sp"></span><span class="n">${left ? `${left.toLocaleString()} lines left` : 'all viewed'}</span></div><h2>${esc(sec.title)}</h2>` +
+    (sec.context ? `<div class="ctx md">${md(sec.context, markdown)}</div>` : '') + `<div class="why md">${md(sec.why, markdown)}</div>${checks ? `<div class="gcks" aria-label="What to check">${checks}</div>` : ''}</div>`;
 }
 
 let io = null;
@@ -74,7 +79,8 @@ export function renderCards() {
   const sections = S.review.brief?.sections || [];
   const cards = $('#cards');
   const banner = bannerHTML();
-  cards.innerHTML = banner + (order.length ? order.map(({ f, sec }) => (sec !== null ? guideHeadHTML(sections[sec], sec) : '') + cardHTML(f)).join('')
+  // the map of the change comes first: what the code around it does, before any file
+  cards.innerHTML = banner + (order.length ? mapCardHTML(S.review.brief) : '') + (order.length ? order.map(({ f, sec }) => (sec !== null ? guideHeadHTML(sections[sec], sec) : '') + cardHTML(f)).join('')
     : `<div class="state"><div class="box"><div class="big">Nothing to review here</div><div>${S.rangeKey === 'wip' ? 'No uncommitted changes.' : 'This scope changes no files.'}</div></div></div>`);
   io?.disconnect();
   io = new IntersectionObserver((ents) => {
@@ -86,7 +92,7 @@ export function renderCards() {
 function bannerHTML() {
   const m = S.ws;
   const bits = [];
-  if (m.kind === 'pr' && !m.worktreeReady) bits.push(`<div class="banner"><span class="working"><span class="shimmer" style="${shimmerSync()}">Making loupe's own checkout of the PR, so Claude and gopls can read its files…</span></span></div>`);
+  if (m.kind === 'pr' && !m.worktreeReady) bits.push(`<div class="banner"><span class="working"><span class="shimmer" style="${shimmerSync()}">Making loupe's own checkout of the PR, so review models and gopls can read its files…</span></span></div>`);
   if (S.untrackedSkipped) bits.push(`<div class="banner warn"><span>${S.untrackedSkipped.toLocaleString()} more untracked files are not shown (over 5,000). A .gitignore entry is probably missing.</span></div>`);
   if (S.rangeKey === 'since') bits.push(`<div class="banner"><span>Showing only what changed since you last marked a file viewed${m.sinceCount ? ` (${plural(m.sinceCount, 'new commit')})` : ''}.</span><span class="sp"></span><button class="btn sm" data-act="scope" data-scope="all">Whole change</button></div>`);
   return bits.join('');
@@ -204,10 +210,10 @@ function hdrHTML(r, k, first, last) {
   let b = '';
   if (g) {
     const size = g.to - g.from + 1;
-    if (size <= 20) b = `<button data-act="expand" data-x="all" title="Show ${size} hidden line${size === 1 ? '' : 's'}">${I.updown}</button>`;
+    if (size <= 20) b = `<button class="icon sm" data-act="expand" data-x="all" title="Show ${size} hidden line${size === 1 ? '' : 's'}">${I.updown}</button>`;
     else {
-      if (!first) b += `<button data-act="expand" data-x="down" title="Show 20 more lines">${I.down}</button>`;
-      if (!last) b += `<button data-act="expand" data-x="up" title="Show 20 more lines">${I.up}</button>`;
+      if (!first) b += `<button class="icon sm" data-act="expand" data-x="down" title="Show 20 more lines">${I.down}</button>`;
+      if (!last) b += `<button class="icon sm" data-act="expand" data-x="up" title="Show 20 more lines">${I.up}</button>`;
     }
   }
   const text = r.h ? `@@ −${r.h.oldStart},${r.h.oldLines} +${r.h.newStart},${r.h.newLines} @@ ${esc(r.h.context || '')}` : g ? `${(g.to - g.from + 1).toLocaleString()} unchanged lines` : '';
@@ -268,7 +274,7 @@ export function renderAllBodies() { for (const p of S.rows.keys()) renderBody(p)
 // its first words in the title, Claude's pixel when an answer waits unread, and a count when a line holds more.
 function pinOf(th) {
   const conv = convOf(th.conv) || { messages: [] }, mine = conv.messages.find((m) => m.role === 'user');
-  return { attr: `data-t="${th.id}"`, cls: 'ask', glyph: spark(16, !busyConv(conv), 'Claude'),
+  return { attr: `data-t="${th.id}"`, cls: conv.modelKind === 'codex' ? 'ask codex' : 'ask', glyph: conv.modelKind === 'codex' ? I.chat : spark(16, !busyConv(conv), 'Claude'),
     title: `Your question: ${oneLine(mine?.text, 120)}`, unread: S.unreadAns.has(th.id), done: th.resolved, lit: S.mark === th.id };
 }
 function ghPinOf(g) {
@@ -288,10 +294,10 @@ export const oneLine = (s, n = 160) => { const t = String(s || '').replace(/```[
 const busyConv = (c) => !!c && (c.busy || c.messages.some((m) => m.pending));
 export function markHTML(th) {
   const conv = convOf(th.conv) || { messages: [] };
-  const mine = conv.messages.filter((m) => m.role === 'user'), claude = conv.messages.filter((m) => m.role === 'claude');
+  const mine = conv.messages.filter((m) => m.role === 'user'), answers = conv.messages.filter((m) => m.role !== 'user');
   const on = S.mark === th.id ? ' on' : '', done = th.resolved ? ' done' : '';
-  const ans = claude.at(-1), busy = busyConv(conv);
-  return `<div class="mrow ask${done}${on}" data-t="${th.id}" data-act="mark-open" role="button" tabindex="0" title="Open the conversation"><span class="mg">${spark(16, !busy, 'Claude')}</span><span class="mq" title="${esc(oneLine(mine[0]?.text, 600))}">${esc(oneLine(mine[0]?.text, 140))}</span>` +
+  const ans = answers.at(-1), busy = busyConv(conv);
+  return `<div class="mrow ask${ans?.role === 'codex' ? ' codex' : ''}${done}${on}" data-t="${th.id}" data-act="mark-open" role="button" tabindex="0" title="Open the conversation"><span class="mg">${ans?.role === 'codex' ? I.chat : spark(16, !busy, 'Claude')}</span><span class="mq" title="${esc(oneLine(mine[0]?.text, 600))}">${esc(oneLine(mine[0]?.text, 140))}</span>` +
     (ans?.text ? `<span class="ma" title="${esc(oneLine(ans.text, 600))}"><span>${esc(oneLine(ans.text, 260))}</span></span>` : '') +
     (busy ? `<span class="mst working shimmer" style="${shimmerSync()}">answering</span>` : !ans ? '<span class="mst">no answer yet</span>' : '') +
     (conv.messages.length > 2 ? `<span class="mn">${plural(conv.messages.length - 2, 'more', 'more')}</span>` : '') + `<span class="mo">${I.chevR}</span></div>`;
@@ -307,10 +313,10 @@ function draftHTML() {
   const d = S.draft;
   if (d.kind === 'comment') return `<div class="mrow draft gh"><span class="mg">${I.github}</span>` +
     `<textarea rows="1" placeholder="Comment on ${esc(d.label)}: it waits in your review until you submit" title="Only you see it on GitHub until you submit your review" aria-label="Review comment"></textarea>` +
-    `<span class="mdk"><button class="mgo" data-act="draft-send">Add to review <kbd>⌘↵</kbd></button></span></div>`;
-  return `<div class="mrow draft ask"><span class="mg">${spark(16, true)}</span>` +
-    `<textarea rows="1" placeholder="Ask Claude about ${esc(d.label)}" aria-label="Question for Claude"></textarea>` +
-    `<span class="mdk">${runBtn(d.run || lastRun())}<button class="mgo claude" data-act="draft-send">Ask <kbd>⌘↵</kbd></button></span></div>`;
+    `<span class="mdk"><button class="btn sm primary" data-act="draft-send">Add to review <kbd>⌘↵</kbd></button></span></div>`;
+  return `<div class="mrow draft ask"><span class="mg">${askGlyph(d.run || lastRun())}</span>` +
+    `<textarea rows="1" placeholder="Ask about ${esc(d.label)}" aria-label="Review question"></textarea>` +
+    `<span class="mdk">${runBtn(d.run || lastRun())}<button class="btn sm primary" data-act="draft-send">Ask <kbd>⌘↵</kbd></button></span></div>`;
 }
 
 // Hide the marks in the code (their gutter ticks stay, and the Marks tab lists them), or show them again.
@@ -349,9 +355,9 @@ function showSeltools(fb, k) {
   if (!row) return;
   const center = $('#center'), cr = center.getBoundingClientRect(), rr = row.getBoundingClientRect();
   const n = selIdx().length;
-  const el = h(`<div class="seltools" id="seltools" role="toolbar"><span class="lbl">${plural(n, 'line')}</span>` +
-    `<button data-act="sel-ask">${spark(16, true)}<span>Ask Claude</span><kbd>a</kbd></button>${canComment(S.sel?.path) ? `<button data-act="sel-comment">${I.github}<span>Comment</span><kbd>c</kbd></button>` : ''}` +
-    `<button data-act="sel-chat">${I.chat}<span>Add to chat</span><kbd>l</kbd></button><button data-act="sel-link" title="Copy a link to these lines (⇧ for GitHub's)">${I.link}<span>Link</span></button></div>`);
+  const el = h(`<div class="seltools" id="seltools" role="toolbar"><span class="n">${plural(n, 'line')}</span>` +
+    `<button class="btn ghost sm" data-act="sel-ask">${askGlyph(lastRun())}<span>Ask ${modelKind(lastRun().model) === 'codex' ? 'Codex' : 'Claude'}</span><kbd>a</kbd></button>${canComment(S.sel?.path) ? `<button class="btn ghost sm" data-act="sel-comment">${I.github}<span>Comment</span><kbd>c</kbd></button>` : ''}` +
+    `<button class="btn ghost sm" data-act="sel-chat">${I.chat}<span>Add to chat</span><kbd>l</kbd></button><button class="btn ghost sm" data-act="sel-link" title="Copy a link to these lines (⇧ for GitHub's)">${I.link}<span>Link</span></button></div>`);
   center.append(el);
   el.style.top = (rr.bottom - cr.top + center.scrollTop + 4) + 'px';
   el.style.left = Math.min(rr.left - cr.left + 96, cr.width - el.offsetWidth - 16) + 'px';
@@ -492,11 +498,11 @@ async function toggleUsedBy(p) {
   try {
     const r = await api(wsApi('/related', { path: p }));
     panel.innerHTML =
-      (r.idents.length ? `<div><span class="lbl">Changed here:</span> <span class="mono">${r.idents.map(esc).join(', ')}</span></div>` : '') +
-      (r.usedBy.length ? r.usedBy.map((u) => `<div><button data-act="open" data-p="${esc(u.path)}" data-l="${u.hits[0]?.line || 1}">${esc(u.path)}${u.changed ? ' · changed here' : ''}</button>` +
-        u.hits.map((x) => `<button class="hit" data-act="open" data-p="${esc(u.path)}" data-l="${x.line}"><span>${x.line}</span><span>${esc(x.text)}</span></button>`).join('') + '</div>').join('')
+      (r.idents.length ? `<div><div class="sh">Changed here</div><div class="mono">${r.idents.map(esc).join(', ')}</div></div>` : '') +
+      (r.usedBy.length ? r.usedBy.map((u) => `<div><button class="link" data-act="open" data-p="${esc(u.path)}" data-l="${u.hits[0]?.line || 1}">${esc(u.path)}${u.changed ? ' · changed here' : ''}</button>` +
+        u.hits.map((x) => `<button class="link hit" data-act="open" data-p="${esc(u.path)}" data-l="${x.line}"><span>${x.line}</span><span>${esc(x.text)}</span></button>`).join('') + '</div>').join('')
         : `<div class="faint">${r.idents.length ? 'Nothing else in the repository names them.' : 'No Go functions or types to follow in this file.'}</div>`) +
-      `<div><div class="lbl">Same folder</div><div class="sibs">${r.siblings.map((s) => `<button data-act="open" data-p="${esc(s.path)}" data-l="1">${esc(s.path.split('/').pop())}${s.changed ? ' <span class="st M" title="Changed here">•</span>' : ''}</button>`).join('')}</div></div>`;
+      `<div><div class="sh">Same folder</div><div class="sibs">${r.siblings.map((s) => `<button class="link" data-act="open" data-p="${esc(s.path)}" data-l="1">${esc(s.path.split('/').pop())}${s.changed ? ' <span class="st M" title="Changed here">•</span>' : ''}</button>`).join('')}</div></div>`;
   } catch (e) { panel.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
