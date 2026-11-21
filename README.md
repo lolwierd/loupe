@@ -21,6 +21,8 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
   changes. A review started on GitHub shows up here, and the other way round.
 - **Ship your own work.** Commit the files you pick, push, and open the PR, with the message drafted in the
   repository's style.
+- **From Claude Code.** The mod puts each repository a session edits on loupe's home; `/loupe` prints the links, each
+  with a chat that knows what the session did. The skill lets Claude open things in loupe for you.
 - **Keyboard first.** `⌘K` finds any file, commit or action; `f` searches the whole repository at the reviewed
   revision; `?` lists the keys.
 
@@ -39,10 +41,13 @@ through those logins and shows the models each one offers. `gopls` on your PATH 
 
 ```bash
 git clone https://github.com/lolwierd/loupe && cd loupe
-npm install
-npm link                # puts the loupe command on your PATH
-loupe service install   # macOS: keeps it running at http://loupe.local
+./install.sh
 ```
+
+`install.sh` installs the dependencies and the `loupe` command, starts the service that keeps loupe at
+http://loupe.local and l.local from login (macOS), and adds loupe's Claude Code mod and skill. Then it runs
+`loupe doctor`, which checks every piece: the gh, Claude Code and Codex sign-ins (and that loupe's own call to Claude
+Code is signed in), both names, port 80 and the service. Run it again any time. `--no-service` and `--no-claude` skip those steps.
 
 Then, in any repository:
 
@@ -51,7 +56,7 @@ loupe                                          # this branch and its uncommitted
 loupe https://github.com/owner/repo/pull/123   # a pull request
 ```
 
-`loupe doctor` checks the setup. Without the service, `loupe serve` runs it in a terminal at http://127.0.0.1:4500.
+Without the service, `loupe serve` runs it in a terminal at http://127.0.0.1:4500.
 Swap `github.com` for `loupe.local` (or `l.local`) in a pull request link to open it in loupe. https is optional:
 [docs/HTTPS.md](docs/HTTPS.md).
 

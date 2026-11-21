@@ -8,7 +8,7 @@ import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
-import { keepModelsCurrent } from './models.mjs';
+import { keepModelsCurrent, reach } from './models.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import { WEB, ROOT, PORT, HOSTNAME, SHORT_HOSTNAME, TLS_DIR, NAME, VERSION, MODELS, EFFORTS, DEFAULTS, BIN, STATE_DIR, modelKind } from './config.mjs';
 import * as W from './workspaces.mjs';
@@ -118,6 +118,7 @@ async function route(req, res, url) {
       last: W.registry.data.last,
       workspaces: W.all().map((w) => w.summary()).sort((a, b) => (b.openedAt || 0) - (a.openedAt || 0)),
       tools: { gh: !!BIN.gh, gopls: !!BIN.gopls, claude: BIN.claude || 'bundled' },
+      reach,
       settings: W.settings(),
     });
   }

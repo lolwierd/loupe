@@ -1,0 +1,14 @@
+{
+  "name": "loupe",
+  "owner": {
+    "name": "lolwierd"
+  },
+  "description": "loupe, a local review desk for pull requests, branches and uncommitted work: its Claude Code mod and skill.",
+  "plugins": [
+    {
+      "name": "loupe",
+      "source": "./claude",
+      "description": "Review what this session changed in loupe: /loupe links each repository it edited, with a chat linked to the session; /loupe live lets the browser ask the session itself."
+    }
+  ]
+}

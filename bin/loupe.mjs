@@ -11,7 +11,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const STATE_DIR = process.env.LOUPE_HOME || path.join(os.homedir(), '.loupe');
 const PORT = Number(process.env.LOUPE_PORT || 4500);
 const API = `http://127.0.0.1:${PORT}`;
-const LABEL = 'dev.loupe.daemon';
+// A second instance (LOUPE_NAME) is its own service, so installing it never replaces the first one's.
+const LABEL = `dev.${process.env.LOUPE_NAME || 'loupe'}.daemon`;
 const PLIST = path.join(os.homedir(), 'Library/LaunchAgents', `${LABEL}.plist`);
 const LOG = path.join(STATE_DIR, 'logs', 'daemon.log');
 const argv = process.argv.slice(2);
@@ -27,7 +28,7 @@ const HELP = `${bold('loupe')}: a local review desk for PRs, branches and uncomm
   ${bold('loupe ls')}                   the open workspaces and how much is left to review in each
   ${bold('loupe close')} <target|url>   close a workspace (a PR's worktree is removed)
   ${bold('loupe status')}               is the daemon up, and where
-  ${bold('loupe doctor')}               check git, gh, claude, gopls, loupe.local and port 80
+  ${bold('loupe doctor')}               check the tools, the sign-ins, the daemon, loupe.local and l.local
   ${bold('loupe service')} install|uninstall|restart|status|logs
                             keep the daemon running (a LaunchAgent; starts at login)
   ${bold('loupe serve')} [--watch] [--no-80] [--no-mdns]
@@ -110,21 +111,58 @@ async function cmdStatus() {
 }
 
 async function cmdDoctor() {
-  const ok = (b, label, fix) => console.log(`${b ? green('✓') : red('✗')} ${label}${b || !fix ? '' : dim('  → ' + fix)}`);
+  // ✓ works, ✗ needs fixing (and makes the exit code 1), ○ optional and missing
+  let bad = 0;
+  const ok = (b, label, fix) => { if (!b) bad++; console.log(`${b ? green('✓') : red('✗')} ${label}${b || !fix ? '' : dim('  → ' + fix)}`); };
+  const opt = (b, label, fix) => console.log(`${b ? green('✓') : dim('○')} ${b ? label : dim(label)}${b || !fix ? '' : dim('  → ' + fix)}`);
   const which = (b) => { try { return execFileSync('/bin/sh', ['-c', `command -v ${b}`]).toString().trim(); } catch { return ''; } };
+  const run = (cmd, args) => { try { return { ok: true, out: execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 }).toString() }; } catch (e) { return { ok: false, out: String(e.stdout || '') }; } };
+  const resolves = (host) => run('dscacheutil', ['-q', 'host', '-a', 'name', host]).out.includes('127.0.0.1');
+
+  console.log(bold('tools'));
+  const major = Number(process.versions.node.split('.')[0]);
+  ok(major >= 22, `Node ${process.versions.node}`, 'Node 22 or newer');
   ok(!!which('git'), `git ${dim(which('git'))}`, 'brew install git');
-  let ghOk = false; try { execFileSync('gh', ['auth', 'status'], { stdio: 'ignore' }); ghOk = true; } catch { /* no */ }
-  ok(ghOk, 'gh, signed in (pull requests are read through it)', 'gh auth login');
-  ok(!!which('claude'), `claude ${dim(which('claude'))}`, 'install Claude Code; answers use its login');
-  ok(!!which('gopls'), 'gopls (hover and ⌘-click on Go)', 'go install golang.org/x/tools/gopls@latest');
-  const s = await up();
-  ok(!!s, `daemon at ${API}`, 'loupe service install');
-  let dns = '';
-  try { dns = execFileSync('dscacheutil', ['-q', 'host', '-a', 'name', 'loupe.local']).toString(); } catch { /* none */ }
-  ok(dns.includes('127.0.0.1'), 'loupe.local resolves to 127.0.0.1 (mDNS)', 'the daemon registers it while it runs');
-  let p80 = false; try { const r = await fetch('http://127.0.0.1:80/api/state', { signal: AbortSignal.timeout(1500) }); p80 = r.ok; } catch { /* no */ }
-  ok(p80, 'port 80 (so http://loupe.local needs no port)', `use http://loupe.local:${PORT}`);
-  ok(fs.existsSync(PLIST), `LaunchAgent ${dim(PLIST)}`, 'loupe service install');
+  const gh = which('gh');
+  ok(!!gh && run('gh', ['auth', 'status']).ok, 'gh, signed in (pull requests are read through it)', gh ? 'gh auth login' : 'brew install gh, then gh auth login');
+  opt(!!which('gopls'), 'gopls (hover and ⌘-click on Go)', 'go install golang.org/x/tools/gopls@latest');
+
+  console.log(bold('models'));
+  const claude = which('claude');
+  let auth = null;
+  if (claude) { try { auth = JSON.parse(run('claude', ['auth', 'status', '--json']).out); } catch { /* an older Claude Code */ } }
+  // loupe talks to Claude through the Agent SDK, which carries its own Claude Code; the command adds /login and the mod.
+  if (claude) ok(auth?.loggedIn !== false, auth?.loggedIn === false ? 'Claude Code, signed in' : `Claude Code${auth?.authMethod ? `, signed in (${auth.authMethod})` : ''}`, 'run claude, then /login');
+  else opt(false, 'the claude command (for /login and the loupe mod)', 'install Claude Code: https://claude.com/claude-code');
+  const codex = which('codex');
+  opt(!!codex && run('codex', ['login', 'status']).ok, 'Codex, signed in (Codex models in the picker)', codex ? 'codex login' : 'npm install -g @openai/codex, then codex login');
+
+  console.log(bold('loupe'));
+  let s = await up();
+  // installed without the service (./install.sh --no-service): a stopped daemon is expected, and loupe serve starts it
+  const noService = has('--no-service');
+  if (!s && noService) opt(false, `daemon at ${API} (no service: start it with loupe serve)`);
+  else ok(!!s, `daemon at ${API}`, 'loupe service install');
+  // A daemon that just started is still asking Claude Code (it asks at start, for its models): wait for the answer.
+  for (let i = 0; s && !s.reach?.claude && i < 25; i++) { await new Promise((r) => setTimeout(r, 1000)); s = (await up()) || s; }
+  const r = s?.reach?.claude;
+  const relogin = 'run claude, then /login; then loupe service restart';
+  if (r && !r.skipped && !r.ok) ok(false, `loupe could not reach Claude Code: ${r.error}`, relogin);
+  else if (r && !r.skipped) ok(r.signedIn !== false, r.signedIn === false ? 'loupe reached Claude Code, but it is not signed in, so answers will fail' : `loupe reached Claude Code${r.signedIn ? ', signed in' : ''} (${r.models} models)`, relogin);
+  else if (s && !r) ok(false, 'loupe has not heard back from Claude Code', 'loupe service logs');
+  const name = s?.name || process.env.LOUPE_NAME || 'loupe';
+  if (process.platform === 'darwin' && (s || !noService)) {
+    ok(resolves(`${name}.local`), `${name}.local resolves to 127.0.0.1 (mDNS)`, 'the daemon registers it while it runs');
+    if (name === 'loupe') ok(resolves('l.local'), 'l.local resolves (github.com → l.local in a PR link opens it here)', 'the daemon registers it while it runs');
+    // port 80 belongs to the first instance; a second one (LOUPE_NAME) keeps its own port
+    if (name === 'loupe') {
+      let p80 = false; try { const res = await fetch('http://127.0.0.1:80/api/state', { signal: AbortSignal.timeout(1500) }); p80 = res.ok && (await res.json()).boot === s?.boot; } catch { /* no */ }
+      ok(p80, 'port 80 (so http://loupe.local needs no port)', `use http://loupe.local:${PORT}`);
+    }
+    if (!noService) ok(fs.existsSync(PLIST), `service ${dim(PLIST)}`, 'loupe service install');
+  }
+  if (claude) opt(/❯ loupe@/.test(run('claude', ['plugin', 'list']).out), 'Claude Code mod and skill (/loupe, and the first edit opens the repository here)', `./install.sh in ${ROOT}`);
+  if (bad) process.exitCode = 1;
 }
 
 // ------------------------------------------------------------------ the LaunchAgent
@@ -133,6 +171,8 @@ function plist() {
     PATH: [path.dirname(process.execPath), '/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.local/bin'), path.join(os.homedir(), 'go/bin'), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].join(':'),
     HOME: os.homedir(),
     LANG: 'en_US.UTF-8',
+    // the service keeps the settings it was installed with
+    ...Object.fromEntries(['LOUPE_NAME', 'LOUPE_PORT', 'LOUPE_HOME', 'LOUPE_SEARCH', 'CODEX_HOME'].filter((k) => process.env[k]).map((k) => [k, process.env[k]])),
   };
   const x = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   return `<?xml version="1.0" encoding="UTF-8"?>
