@@ -23,7 +23,16 @@ loupe, and home lists it under "Open here" with the session's name. `/loupe` pri
 the session edited, each with a chat linked to the session (a read-only fork). `/loupe live` lets the browser send
 questions into the session itself; `/loupe off` stops it.
 
-A GitHub pull request link with `github.com` swapped for `l.local` opens in loupe too.
+A GitHub pull request link with `github.com` swapped for `l.local` opens in loupe too. From a browser, the extension in
+loupe's `extension/` folder (loaded unpacked) does it from GitHub itself: `g` then `l` on a pull request opens it in
+loupe, and a pull request link's right-click menu has "Open link in loupe".
+
+## What it writes by itself
+
+- **File notes:** one or two lines above each file that needs them, saying its part in the change. They are written as
+  a change opens, by the newest Haiku unless another is picked in ⌘K ("File notes model…"), and written again only for
+  files that changed. The settings menu turns them off.
+- **The brief** (the map and the guide) is written only when asked, unless "Write the brief when a PR opens" is on.
 
 ## Health
 

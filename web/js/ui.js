@@ -13,6 +13,11 @@ export function closeMenu() { openMenuEl?.remove(); openMenuEl = null; document.
 function outside(e) { if (openMenuEl && !openMenuEl.contains(e.target)) closeMenu(); }
 export function menu(anchor, items, onPick, { align = 'left', width } = {}) {
   closeMenu();
+  // a rule only between rows: none first or last, none twice (a list that came out empty leaves no band)
+  const kept = [];
+  for (const it of items) if (!it.sep || kept.some((x) => !x.sep && !x.header) && !kept.at(-1).sep) kept.push(it);
+  while (kept.at(-1)?.sep) kept.pop();
+  items = kept;
   const el = h(`<div class="menu" role="menu"${width ? ` style="width:${width}px"` : ''}></div>`);
   let k = 0;
   const keys = items.some((it) => it.key), checks = items.some((it) => 'current' in it || 'on' in it), icons = items.some((it) => it.icon);
@@ -37,13 +42,24 @@ export function menu(anchor, items, onPick, { align = 'left', width } = {}) {
   let cur = -1;
   const btns = $$('.mi', el);
   const mark = (i) => { cur = i; btns.forEach((b, j) => b.setAttribute('aria-selected', String(j === i))); btns[i]?.scrollIntoView({ block: 'nearest' }); };
-  el.addEventListener('click', (e) => { const b = e.target.closest('.mi'); if (!b || b.disabled) return; const it = pickable[Number(b.dataset.i)]; closeMenu(); onPick(it); });
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('.mi'); if (!b || b.disabled) return;
+    const it = pickable[Number(b.dataset.i)];
+    // a row that cannot be undone asks in its own place first ("Delete it?"), as a mark's Delete does
+    if (it.confirm && b.dataset.sure !== '1') {
+      const l = b.querySelector('.ml'), was = l.textContent;
+      b.dataset.sure = '1'; l.textContent = it.confirm;
+      setTimeout(() => { if (b.isConnected) { b.dataset.sure = ''; l.textContent = was; } }, 3000);
+      return;
+    }
+    closeMenu(); onPick(it);
+  });
   el.addEventListener('keydown', (e) => {
     // arrows skip the rows that cannot be picked
     const step = (d) => { let i = cur + d; while (btns[i]?.disabled) i += d; if (btns[i]) mark(i); };
     if (e.key === 'ArrowDown') { e.preventDefault(); step(1); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); step(-1); }
-    else if (e.key === 'Enter' && cur >= 0) { e.preventDefault(); btns[cur].click(); }
+    else if (e.key === 'Enter' && cur >= 0) { e.preventDefault(); if (!e.repeat) btns[cur].click(); } // a held key never confirms
     else if (e.key === 'Escape') { e.preventDefault(); closeMenu(); anchor.focus?.(); }
   });
   setTimeout(() => document.addEventListener('mousedown', outside, true));

@@ -70,6 +70,11 @@ export function findRow(rows, a) {
   if (!rows || !a) return -1;
   return a.side === 'old' ? rows.findIndex((r) => !r.hdr && r.t === '-' && r.o === a.line) : rows.findIndex((r) => !r.hdr && r.t !== '-' && r.n === a.line);
 }
+// a line of a range, which may be context: an old-side number then finds the context row it is on
+export function findLine(rows, a) {
+  const i = findRow(rows, a);
+  return i >= 0 || a?.side !== 'old' || !rows ? i : rows.findIndex((r) => !r.hdr && r.t === ' ' && r.o === a.line);
+}
 export async function headText(p) {
   if (S.newText.has(p)) return S.newText.get(p);
   const file = fileOf(p);

@@ -14,7 +14,7 @@
 import { S, esc, pref, $, I } from './core.js';
 import { md } from './md.js';
 import { hooks } from './hooks.js';
-import { briefRunBtn, modelKind } from './ui.js';
+import { briefRunBtn, modelKind, shimmerSync } from './ui.js';
 
 const NODE_H = 44, PADX = 12, LETTER = 14, MIN_W = 96, MAX_W = 232, ROW_GAP = 44, ROW_GAP_TB = 56, GUTTER = 48, GUTTER_TB = 40, MAX_GUTTER = 200, PAD = 2;
 const CLEAR = 10;                                     // room kept free around a box for line work
@@ -478,7 +478,7 @@ export function mapCardHTML(b) {
     (plan.steps?.length ? `<h3>How to review it</h3>${plan.why ? `<p class="why">${inline(plan.why, o)}</p>` : ''}<ol>${plan.steps.map((x) => `<li>${inline(x, o)}</li>`).join('')}</ol>` : '') +
     (b.questions?.length ? `<h3>Worth asking</h3><ul>${b.questions.map((x) => `<li>${inline(x, o)}</li>`).join('')}</ul>` : '') + `</div>`;
   const tools = (plan.start ? `<button class="link" data-act="mapstart" data-p="${esc(plan.start)}">Start with ${esc(plan.start.split('/').pop())}</button>` : '') +
-    (b.pending ? `<span class="mstate shimmer">${esc(stepLine(b))}</span>` : `<span class="mre">${briefRunBtn()}<button class="link" data-act="maprebrief" title="Write the guide and this map again with this model">Regenerate</button></span>`);
+    (b.pending ? `<span class="mstate shimmer" style="${shimmerSync()}">${esc(stepLine(b))}</span>` : `<span class="mre">${briefRunBtn()}<button class="link" data-act="maprebrief" title="Write the guide and this map again with this model">Regenerate</button></span>`);
   return `<section class="mapcard${open ? '' : ' shut'}" id="mapcard"><header class="mh"><button class="mtoggle" data-act="maptoggle" aria-expanded="${open}"><span class="lbl">Map of this change</span></button><span class="sp"></span>${tools}</header>` +
     `<div class="mapbody">${fig}<div class="mcols">${text}${how}</div></div></section>`;
 }

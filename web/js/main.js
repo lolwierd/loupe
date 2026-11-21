@@ -95,6 +95,7 @@ async function openTarget(target) {
 }
 
 function frame() {
+  S.view = null; // the whole-file viewer lives in the diff's column, which is drawn again here
   $('#root').innerHTML = `<div class="app">
   <header class="top">
     <a class="btn ghost mark" href="/home" title="Home: everything open here, and whose move it is">${icon('loupe', '--pencil')}<span>loupe</span></a>
@@ -109,7 +110,7 @@ function frame() {
     <span class="layout-toggles"><button class="icon" data-act="togglebin" title="Files (t)">${I.sidebarL}</button><button class="icon" data-act="togglepanel" title="Inspector (p)">${I.sidebarR}</button></span></span>
   </header>
   <div class="main" id="main">
-    <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><span class="fwrap"><input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd class="fkey" aria-hidden="true">/</kbd></span><span id="ordseg"></span></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="resizer" data-resize="bin"></div></aside>
+    <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><span class="fwrap">${I.search}<input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd class="fkey" aria-hidden="true">/</kbd></span><span id="ordseg"></span></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="resizer" data-resize="bin"></div></aside>
     <main class="viewer-col"><div class="scroller" id="center"><div class="cards" id="cards"><div class="loadd">Loading…</div></div></div></main>
     <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon sm" data-act="keys" title="Keys (?)"><kbd>?</kbd></button></div><div class="pbody" id="pbody"></div></aside><div class="motefloat" id="motedock"></div>
   </div></div>`;
@@ -134,20 +135,34 @@ function wsTitle() {
 }
 
 // The change's meta, then its files and review state. Called again whenever the change moves.
+// Answers draw in the order they arrive: one that waited on the opening's roll gives way to a newer answer, and a read
+// that failed outright draws only if no answer came while it was out and none waits. A drawn state stops a files read.
+let wsLoad = 0, readyWaiting = 0;
 async function loadWorkspace(reason) {
+  const id = S.id, before = wsLoad;
   let m;
-  try { m = await api(`/api/w/${S.id}`); } catch (e) { return showState('Could not open this', e.message); }
+  try { m = await api(`/api/w/${id}`); } catch (e) { if (S.id === id && !readyWaiting && wsLoad === before) { ++wsLoad; fileRequest++; showState('Could not open this', e.message, true); } return; }
+  const seq = ++wsLoad, latest = () => seq === wsLoad && S.id === id;
+  if (S.id !== id) return;
   if (m.status !== 'ready' || !m.headFull && m.kind === 'pr') {
+    fileRequest++;
     S.opening = { ...m, id: S.id }; // what the state box can show while it waits: a pull request's size, the refs of one that failed
     $('#wsbtn').innerHTML = `${m.kind === 'pr' ? I.pr : I.branch}<span class="t">${esc(m.rec?.pr?.title || m.rec?.slug || '')}</span>`;
     return showState(m.status === 'error' ? 'Could not open this' : 'Opening…', m.progress || '', m.status === 'error');
   }
-  S.ws = m; S.opening = null; endOpening();
+  // the opening's roll finishes its pass before the change is drawn over it
+  readyWaiting++;
+  try { await endOpening(); } finally { readyWaiting--; }
+  if (!latest()) return;
+  S.ws = m; S.opening = null;
   $('#wsbtn').innerHTML = wsTitle();
   await loadFiles(reason);
 }
+// a daemon's or git's message, said as a sentence: capitalised, with its full stop
+// (a program's name leading it, "gh: …" or "git fetch: …", keeps its case)
+const sentence = (t = '') => { t = String(t).trim(); return t && (/^([a-z][\w-]*:|(gh|git|gopls|codex|claude|loupe|node|npm)\b)/.test(t) ? t[0] : t[0].toUpperCase()) + t.slice(1) + (/[.!?…)]$/.test(t) ? '' : '.'); };
 function showState(title, text, error) {
-  $('#cards').innerHTML = `<div class="state${error ? ' failed' : ''}"><div class="box">${error ? moteHTML('failed') : ''}<div class="big">${esc(title)}</div>${error ? `<div class="err">${esc(text)}</div><button class="link" data-act="retry">Try again</button>` : `<div class="working"><span class="shimmer" style="${shimmerSync()}">${esc(text || 'Reading the change…')}</span></div>`}</div></div>`;
+  $('#cards').innerHTML = `<div class="state${error ? ' failed' : ''}"><div class="box">${error ? moteHTML('failed') : ''}<div class="big">${esc(title)}</div>${error ? `<div class="why">${esc(sentence(text))}</div><button class="btn" data-act="retry">Try again</button>` : `<div class="working"><span class="shimmer" style="${shimmerSync()}">${esc(text || 'Reading the change…')}</span></div>`}</div></div>`;
   decorateState($('#cards > .state'), { error, m: S.opening?.id === S.id ? S.opening : null });
   wakeMotes($('#cards'));
 }
@@ -274,9 +289,11 @@ function renderScopebar() {
   const step = k >= 0 ? `<button class="icon sm" data-act="scope" data-scope="${S.ws.commits[k + 1]?.sha || ''}" title="Older commit"${S.ws.commits[k + 1] ? '' : ' disabled'}>${I.chevL}</button><button class="icon sm" data-act="scope" data-scope="${S.ws.commits[k - 1]?.sha || ''}" title="Newer commit"${k > 0 ? '' : ' disabled'}>${I.chevR}</button>` : '';
   const t = S.files.reduce((a, f) => ({ add: a.add + f.added, del: a.del + f.deleted }), { add: 0, del: 0 });
   $('#scopebar').classList.toggle('steps', k >= 0);
+  $('#bin').classList.add('ready'); // the find field shows once there are files to find
   $('#scopebar').innerHTML = `<button class="scopebtn" data-act="scopemenu" title="What to compare: ${esc(scopeLabel())}"><span class="l">${esc(scopeLabel())}</span>${I.chev}</button>${step}` +
-    `<span class="what"><span class="num">${plural(S.files.length, 'file')}</span><span class="delta"><span class="add num">+${t.add.toLocaleString()}</span><span class="del num">−${t.del.toLocaleString()}</span></span>` +
-    `</span>`;
+    `<span class="what" title="${esc(`${plural(S.files.length, 'file')}, ${t.add.toLocaleString()} lines added and ${t.del.toLocaleString()} removed`)}"><span class="add num">+${t.add.toLocaleString()}</span><span class="del num">−${t.del.toLocaleString()}</span></span>`;
+  // the count is said where it is used: in the field that finds among them
+  const ff = $('#filter'); if (ff) ff.placeholder = `Find in ${plural(S.files.length, 'file')}`;
   // the list is a tree or the guide's sections: a switch beside the filter, the same height, when there is a guide (g)
   const ord = $('#ordseg');
   if (ord) ord.innerHTML = S.review.brief?.sections?.length ? `<span class="seg" role="group" aria-label="Order of the files">${[['tree', 'Tree'], ['guide', 'Guide']].map(([o, l]) => `<button data-act="setorder" data-o="${o}" aria-pressed="${S.order === o}" title="Files in ${o === 'tree' ? 'tree' : "the guide's"} order (g)">${l}</button>`).join('')}</span>` : '';
@@ -642,7 +659,7 @@ function commands() {
     { group: 'GO', label: 'Read the change again', key: 'r', run: () => $('[data-act="refresh"]')?.click() },
     { group: 'GO', label: 'Home', run: () => { location.href = '/home'; } },
     { group: 'GO', label: 'Keys', key: '?', run: keySheet },
-    { group: 'GO', label: 'Close this change here', sub: 'forgets its marks and chats', typed: true, run: async () => { if (!confirm('Close this change in loupe? Its marks and chats are forgotten; the code is untouched.')) return; try { await api(`/api/w/${S.id}`, { method: 'DELETE' }); location.href = '/home'; } catch (e) { toast(e.message); } } },
+    { group: 'GO', label: 'Close this change here…', sub: 'its marks stay for next time', typed: true, run: () => hooks.openSheet?.('close') },
     ...S.files.map((f) => ({ group: 'FILES', label: f.path, f, typed: true, file: true, run: () => goLoc({ path: f.path, line: 0 }) })),
   ];
   return c.filter(Boolean);
@@ -886,7 +903,7 @@ async function renderHome(error) {
       `${stageCell(stage, tone, w)}${size(p)}<span class="hc age">${esc(ago(Date.parse(p.updatedAt)))}</span></a><button class="icon hm" data-hm aria-label="More">${I.more}</button></div>`;
   };
   const wsRow = (w) => `<div class="hrow" data-ws="${esc(w.id)}"><a class="hl" href="${esc(w.url)}">` +
-    `<span class="hc who">${w.kind === 'pr' && w.author ? avatar(w.author) : w.kind === 'pr' ? I.pr : I.branch}</span><span class="hc ti"><b title="${esc(w.title)}">${w.kind === 'pr' ? `<span class="no">#${w.number}</span> ` : ''}${esc(w.title)}</b><small>${esc(w.kind === 'pr' ? short(w.repo) : w.repo)}${w.kind === 'pr' && w.author ? ` · ${esc(w.author)}` : ''}${w.session ? ` · <span class="sess" title="${esc(w.session.live ? 'A live Claude Code session' : 'The Claude Code session working on it')}: ${esc(w.session.title)}">${spark(12, !w.session.live)}${esc(w.session.title)}</span>` : ''}</small></span>` +
+    `<span class="hc who">${w.kind === 'pr' && w.author ? avatar(w.author) : w.kind === 'pr' ? I.pr : I.branch}</span><span class="hc ti"><b title="${esc(w.title)}">${w.kind === 'pr' && !w.title.endsWith(`#${w.number}`) ? `<span class="no">#${w.number}</span> ` : ''}${esc(w.title)}</b><small>${esc(w.kind === 'pr' ? short(w.repo) : w.repo === w.title ? (w.root || w.repo).split('/').slice(-2).join('/') : w.repo)}${w.kind === 'pr' && w.author ? ` · ${esc(w.author)}` : ''}${w.session ? ` · <span class="sess" title="${esc(w.session.live ? 'A live Claude Code session' : 'The Claude Code session working on it')}: ${esc(w.session.title)}">${spark(12, !w.session.live)}${esc(w.session.title)}</span>` : ''}</small></span>` +
     `${stageCell(w.dirty ? plural(w.dirty, 'uncommitted file') : w.kind === 'pr' ? '' : 'Checkout', w.dirty ? 'warn' : 'quiet', w)}<span class="hc sz"></span><span class="hc age">${w.openedAt ? esc(ago(w.openedAt)) : ''}</span></a><button class="icon hm" data-hm aria-label="More">${I.more}</button></div>`;
   // PRs whose base is another's head in the same repo are one stack: drawn together, base first, joined by a rail
   const stacked = (rows) => {
@@ -918,7 +935,7 @@ async function renderHome(error) {
     return `<div class="home"><div class="homein">
       <div class="brand">${icon('loupe', '--pencil', 2)}<span class="nm">loupe</span><span class="host">${esc(st.display)}</span></div>
       <form class="openbox" id="go"><input class="field lg" name="t" placeholder="Paste a PR link, owner/repo#123, or a local path" autocomplete="off" autofocus><button class="btn primary">Open</button></form>
-      ${error ? `<div class="lost">${moteHTML('failed')}<div><b>Nothing under the loupe.</b><div class="faint">${esc(error)}</div></div></div>` : ''}
+      ${error ? `<div class="lost">${moteHTML('failed')}<div><b>Nothing under the loupe.</b><div class="faint">${esc(sentence(error))}</div></div></div>` : ''}
       ${ib?.error ? `<div class="err">${esc(ib.error)}</div>` : ''}
       ${section('h-review', 'Review', review.length, ib ? stacked(review) : '', ib ? `<span class="calm">${moteHTML('idle')}<span>Nothing is waiting on your review.</span></span>` : '<span class="calm">Asking GitHub…</span>')}
       ${section('h-yours', 'Yours', yours.length, ib ? stacked(yours) : '', ib ? '<span class="calm">No open pull requests of yours.</span>' : '<span class="calm">Asking GitHub…</span>')}
@@ -930,6 +947,7 @@ async function renderHome(error) {
   const paint = (ib) => {
     const v = $('#go')?.t?.value || '', focused = document.activeElement?.closest?.('.hrow')?.querySelector('.hl')?.getAttribute('href');
     $('#root').innerHTML = draw(ib);
+    $('.home')?.style.setProperty('--drift-at', `-${Math.round(performance.now() % 80000)}ms`); // the drift goes there and back in 80 s
     wakeMotes();
     if (v) $('#go').t.value = v;
     if (focused) $(`.hl[href="${CSS.escape(focused)}"]`)?.focus();
@@ -954,7 +972,7 @@ async function renderHome(error) {
       ...(gh ? [{ label: 'Open on GitHub', value: 'gh' }] : []),
       // hiding needs a daemon that keeps the list (settings.hiddenOrgs); an older one does not offer it
       ...(owner && Array.isArray(st.settings?.hiddenOrgs) ? [{ label: `Hide ${owner}'s pull requests`, value: 'hide' }] : []),
-      ...(ws ? [{ sep: true }, { label: 'Close it here', sub: 'forgets its marks and chats', value: 'close', danger: true }] : []),
+      ...(ws ? [{ sep: true }, { label: 'Close it here', sub: 'its marks stay for next time', value: 'close' }] : []),
     ], async (it) => {
       if (it.value === 'gh') open(gh, '_blank', 'noopener');
       if (it.value === 'hide') setHidden([...hidden, owner.toLowerCase()]);

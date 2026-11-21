@@ -280,10 +280,10 @@ function renderChat(body) {
   if (!conv) { conv = chats().at(-1) || null; S.chat = conv?.id || null; }
   const title = conv ? conv.title || (conv.linked ? conv.linked.title : 'New chat') : 'New chat';
   const linked = conv?.linked;
-  const empty = `<div class="pane"><div class="empty"><p class="big">Ask about the whole change.</p>` +
-    `<p>Select lines in the diff and press <kbd>l</kbd> to put them in your question. Questions about a few lines can also stay at those lines: press <kbd>a</kbd> instead.</p>` +
-    `<p>Link a Claude Code session to ask the session that wrote the code: it answers from what it already knows, as a read-only fork, and the session itself is left alone.</p>` +
-    `<p><button class="link" data-act="linkpick">${I.link} Link a Claude Code session</button></p></div></div>`;
+  // the rule book's empty state: what is empty, one quiet line, one action (the long story is the action's title)
+  const empty = `<div class="pane"><div class="empty chatempty"><p class="big">Ask about the whole change.</p>` +
+    `<p>Select lines and press <kbd>l</kbd> to quote them here, or <kbd>a</kbd> to ask at the lines.</p>` +
+    `<p><button class="link" data-act="linkpick" title="Ask the session that wrote the code: it answers from what it already knows, as a read-only fork, and the session itself is left alone">${I.link}<span>Link the Claude Code session that wrote it</span></button></p></div></div>`;
   body.innerHTML = `<div class="pane fill"><div class="chathead"><button class="btn ghost chatpick" data-act="chatpick" title="${esc(title)}">${linked ? I.link : I.chat}<span class="l">${esc(title)}</span>${I.chev}</button>` +
     `<button class="icon sm" data-act="newchat" title="New chat">${I.plus}</button></div>` +
     `<div class="chatlog" id="chatlog">${linked ? linkbarHTML(linked) : ''}` +
@@ -357,7 +357,7 @@ function chatPicker(btn) {
     { sep: true },
     { label: 'New chat', value: { new: true }, icon: I.plus },
     { label: 'Link a Claude Code session…', value: { link: true }, icon: I.link },
-    ...(S.chat ? [{ sep: true }, { label: 'Delete this chat', value: { del: S.chat }, danger: true }] : []),
+    ...(S.chat ? [{ sep: true }, { label: 'Delete this chat', value: { del: S.chat }, danger: true, confirm: 'Delete it? Its session stays on disk' }] : []),
   ];
   menu(btn, items, (it) => {
     if (it.value.open) { S.chat = it.value.open; renderPanel(); }
@@ -374,7 +374,6 @@ async function newChat() {
   renderPanel();
 }
 async function deleteChat(id) {
-  if (!confirm('Delete this chat? Its saved session stays on disk; only loupe forgets it.')) return;
   await api(`/api/w/${S.id}/convs/${id}`, { method: 'DELETE' }).catch((e) => toast(e.message));
   delete S.review.convs[id];
   S.review.chats = S.review.chats.filter((x) => x !== id);
@@ -573,7 +572,7 @@ $('#root').addEventListener('click', async (e) => {
     const id = S.mark, gh = id?.startsWith('gh:') && (S.github?.threads || []).find((t) => t.id === id.slice(3));
     const th = !gh && S.review.threads.find((t) => t.id === id);
     const t = gh || th;
-    return t && hooks.goLoc?.({ path: t.path, line: t.line, side: t.side });
+    return t && hooks.goLoc?.({ path: t.path, line: t.startLine || t.line, end: t.line, side: t.side });
   }
   if (act === 'markresolve') { const th = S.review.threads.find((t) => t.id === S.mark); if (th) { await setResolved(th, !th.resolved); renderPanel(); } return; }
   if (act === 'markdel') {
@@ -581,7 +580,13 @@ $('#root').addEventListener('click', async (e) => {
     const th = S.review.threads.find((t) => t.id === S.mark); if (th) deleteMark(th); return;
   }
   if (act === 'markask') return markReply(true);
-  if (act === 'ghopen') { hooks.goLoc?.({ path: b.dataset.p, line: Number(b.dataset.l) || 0 }); return openMark('gh:' + b.dataset.g); }
+  if (act === 'ghopen') {
+    // opened first, since it draws the file again; then to its lines, flashed
+    openMark('gh:' + b.dataset.g);
+    const t = (S.github?.threads || []).find((x) => x.id === b.dataset.g);
+    const l = Number(b.dataset.l) || 0; // 0: outdated, its lines are history, so only the file
+    return hooks.goLoc?.({ path: b.dataset.p, line: l && (t?.startLine || l), end: l, side: t?.side });
+  }
   const ght = S.mark?.startsWith('gh:') && (S.github?.threads || []).find((t) => t.id === S.mark.slice(3));
   if (ght && act === 'ghdrop') { if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Delete it?'; setTimeout(() => { if (b.isConnected) { b.dataset.sure = ''; b.textContent = 'Delete'; } }, 3000); return; } if (await hooks.act?.('dropcomment', { nodeId: b.dataset.n })) closeMark(); return; }
   if (ght && act === 'ghresolve') return hooks.act?.('resolve', { threadId: ght.id, resolved: b.dataset.on === '1' });

@@ -78,8 +78,11 @@ export function renderProgress() {
       },
     });
     M.host = host; M.ws = null;
+  } else if (countRolling()) {
+    // a roll is running: it finishes, then rolls on to this count
+    lastLeft = left; paintMeter(); rollWait = setTimeout(rollCount, rollEnd - Date.now() + 10); return;
   } else el.querySelector('.n').outerHTML = n;
-  lastLeft = left; // the next change of the count is measured from what is on screen now
+  lastLeft = left; shown = left; // the next change of the count is measured from what is on screen now
   paintMeter();
   const gen = S.files.filter((f) => f.kind === 'generated');
   el.title = `${left.toLocaleString()} of ${total.toLocaleString()} changed lines not yet viewed, in ${leftFiles.length} of ${plural(files.length, 'file')}.` +
@@ -106,22 +109,35 @@ export function paintProgress() {
 }
 
 // The count rolls down to its new value (old digits slide up and out, three steps), and the moment it reaches zero
-// one glint crosses the strip and the check takes the number's place.
-let lastLeft = null;
-function tickCount() {
+// one glint crosses the strip and the check takes the number's place. A roll always runs to its end: a count that
+// changes while one rolls waits for it, then rolls on from what it shows to the newest count, and nothing draws the
+// count again mid-roll.
+let lastLeft = null, shown = null, rollEnd = 0, rollWait = 0;
+const COUNT_ROLL = 220;
+const countRolling = () => Date.now() < rollEnd;
+const leftNow = () => {
   const files = S.files.filter((f) => f.kind !== 'generated');
-  const left = files.filter((f) => !isViewed(f)).reduce((n, f) => n + lines(f), 0);
-  const total = files.reduce((n, f) => n + lines(f), 0);
-  const el = $('#tally');
-  if (!el || lastLeft === left) return;
+  return { left: files.filter((f) => !isViewed(f)).reduce((n, f) => n + lines(f), 0), total: files.reduce((n, f) => n + lines(f), 0) };
+};
+function tickCount() {
+  const { left } = leftNow();
+  if (!$('#tally') || lastLeft === left) return;
   const was = lastLeft; lastLeft = left;
-  if (was === null) return;
-  if (left === 0 && total) { renderProgress(); M?.glint(); return; }
+  if (was === null) { shown = left; return; }
+  rollCount();
+}
+function rollCount() {
+  clearTimeout(rollWait);
+  if (countRolling()) { rollWait = setTimeout(rollCount, rollEnd - Date.now() + 10); return; }
+  const el = $('#tally'), { left, total } = leftNow();
+  if (!el || shown === left) return;
+  if (left === 0 && total) { shown = 0; renderProgress(); M?.glint(); return; }
   const b = el.querySelector('.odo');
-  if (!b) return renderProgress();
-  b.innerHTML = `<span class="roll"><span>${was.toLocaleString()}</span><span>${left.toLocaleString()}</span></span>`;
+  if (!b || shown === null) { shown = left; return renderProgress(); }
+  b.innerHTML = `<span class="roll"><span>${shown.toLocaleString()}</span><span>${left.toLocaleString()}</span></span>`;
   b.classList.remove('rolling'); void b.offsetWidth; b.classList.add('rolling');
-  setTimeout(() => { if (b.isConnected) b.textContent = left.toLocaleString(); }, 220);
+  rollEnd = Date.now() + COUNT_ROLL; shown = left;
+  setTimeout(() => { if (b.isConnected && shown === left) b.textContent = left.toLocaleString(); }, COUNT_ROLL);
 }
 // After a write the next step turns over to the one after it ("Commit 1 file" becomes "Push 3 commits"), rolled the way
 // the lines-left odometer rolls (three steps in 200 ms), so the change of step is noticed without a word. The app draws
@@ -171,6 +187,8 @@ document.addEventListener('click', (e) => {
   if (!b) return;
   const act = b.dataset.act;
   if (act === 'next') { const a = S.acts?.[0]; if (a && !a.disabled) doAct(a); }
-  if (act === 'nextmenu') menu(b, [{ header: 'NEXT' }, ...S.acts.map((a, i) => ({ label: a.label, value: i, disabled: !!a.disabled, danger: a.tone === 'danger', sub: a.disabled || '' }))], (it) => doAct(S.acts[it.value]), { align: 'right', width: 300 });
+  // the split's menu holds the other steps: the first is the button beside it, so it is not said twice
+  // (a row runs its step as it is now: if the list was drawn again while the menu was open and the step is gone, nothing)
+  if (act === 'nextmenu') menu(b, S.acts.slice(1).map((a) => ({ label: a.label, value: a.label, disabled: !!a.disabled, danger: a.tone === 'danger', sub: a.disabled || '' })), (it) => { const a = S.acts?.find((x) => x.label === it.value && !x.disabled); a ? doAct(a) : toast('That step has changed: pick again.'); }, { align: 'right', width: 300 });
   if (act === 'nextleft') hooks.nextLeft?.();
 });

@@ -251,6 +251,8 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .tsection .gi { font: 600 var(--t-meta)/1.35 var(--f-mono); color: var(--ink-3); text-align: center; font-variant-numeric: tabular-nums; }
 .tsection .gt { font-size: var(--t-ui); font-weight: 600; line-height: 1.35; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .tsection .n { font: var(--t-meta) var(--f-ui); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.tsection.viewed .gt { color: var(--ink-3); }
+.tsection .n svg { width: 12px; height: 12px; display: block; }
 .tsection:first-child { margin-top: 0; border-top: 0; padding-top: var(--s2); }
 /* Empty, loading and error states: quiet text, 13 px ink-3; the one action that fills it is a link button. A first line that names what is empty may be ink. */
 .tempty, .empty, .hempty .calm, .loadd, .menu .none, .state { color: var(--ink-3); font-size: var(--t-ui); }
@@ -301,12 +303,10 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .file.shut .fh { border-bottom: 0; }
 .file.shut .fb, .file.shut .relp { display: none; }
 .file.shut .file-note, .file-note:empty { display: none; }
-/* a file's note: a caption, not a paragraph. The UI's size on a 20 px line in the third ink, read as the header's second
-   line: it starts under the file's name (the header's own columns: its padding, the fold button, a gap, the status
-   letter, a gap), so the name, the note and the hunk's @@ share one edge, with even room above and below and a reading
-   measure; the diff below stays the thing to read */
-.file { --path-x: calc(var(--s2) + var(--h1) + var(--s3) + 14px + var(--s3)); }
-.file-note { margin: 0; padding: var(--s3) var(--s5) var(--s3) var(--path-x); max-width: calc(var(--path-x) + 88ch); color: var(--ink-3); font: var(--t-ui)/20px var(--f-ui); overflow-wrap: anywhere; }
+/* a file's note: a caption, not a paragraph. The UI's size on a 20 px line in the third ink, across the whole row from
+   the file's own edge, so most notes take one line, with even room above and below; the diff below stays the thing to
+   read */
+.file-note { margin: 0; padding: var(--s3) var(--s4); color: var(--ink-3); font: var(--t-ui)/20px var(--f-ui); overflow-wrap: anywhere; }
 .file-note code { font: var(--t-mono)/1 var(--f-mono); color: var(--ink-2); background: none; padding: 0; }
 .file-note-stale { color: var(--warn); font-size: var(--t-meta); }
 .file.shut.viewed .fh { height: 28px; position: static; background: none; backdrop-filter: none; }
@@ -330,12 +330,26 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .fb { font: var(--t-code)/20px var(--f-mono); overflow-x: auto; }
 .fb.long-diff { content-visibility: auto; contain-intrinsic-block-size: auto var(--diff-height); }
 .loadd { padding: var(--s5) var(--s5) var(--s5) var(--code-x, var(--s5)); }
-.relp { padding: var(--s3) var(--s4) var(--s3) var(--code-x); border-bottom: 1px solid var(--rule); font-size: var(--t-ui); display: grid; gap: var(--s3); background: var(--chrome); }
-
-.relp .link { font-family: var(--f-mono); }
-.relp .hit { display: grid; grid-template-columns: 48px minmax(0, 1fr); color: var(--ink-3); padding-left: var(--s4); }
+/* Used by: on the file note's edge, three lists with the rule book's label; places are code (mono, a line number gutter) */
+.relp { padding: var(--s3) var(--s4) var(--s4); border-bottom: 1px solid var(--rule); font-size: var(--t-ui); display: grid; gap: var(--s4); background: var(--chrome); }
+.relp section { display: grid; gap: var(--s2); min-width: 0; }
+.relp .sh { display: flex; align-items: baseline; gap: var(--s2); }
+.relp .ids { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s3); }
+.relp .ids code { font: var(--t-mono)/20px var(--f-mono); color: var(--ink); }
+.relp .use { display: grid; min-width: 0; }
+.relp .use + .use { margin-top: var(--s2); }
+.relp .up { font: var(--t-mono)/20px var(--f-mono); justify-self: start; }
+.relp .up .dir { color: var(--ink-3); } .relp .up .base { color: var(--ink); font-weight: 500; }
+.relp .chg { font-size: var(--t-meta); color: var(--warn); margin-left: var(--s3); }
+.relp .use:has(.chg) { grid-template-columns: auto minmax(0, 1fr); } .relp .use:has(.chg) .hit { grid-column: 1 / -1; }
+.relp .hit { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: var(--s3); font: var(--t-mono)/20px var(--f-mono); color: var(--ink-2); text-decoration: none; }
+.relp .hit .no { color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
+.relp .hit:hover span:last-child { color: var(--ink); }
 .relp .hit span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.relp .sibs { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); }
+.relp .none { color: var(--ink-3); }
+.relp .sibs { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); }
+.relp .sibs .link { font: var(--t-mono)/20px var(--f-mono); display: inline-flex; align-items: center; gap: var(--s2); }
+.relp .dotm { width: 6px; height: 6px; border-radius: 1px; background: var(--warn); }
 
 .ln { display: grid; grid-template-columns: 48px 48px minmax(0, 1fr); min-width: 0; }
 .split .ln { grid-template-columns: 48px minmax(0, 1fr) 48px minmax(0, 1fr); }
@@ -355,7 +369,9 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .ln.d .wd, .ln .cd.d .wd { background: var(--del-word); }
 .ln.sel .no { background: var(--sel-gutter) !important; color: var(--ink); }
 .ln.sel .cd { background: var(--sel-bg) !important; }
-.ln.flash .cd, .ln.flash .no { animation: flash 1.6s var(--ease) 1; }
+.ln.flash .cd, .ln.flash .no { animation: flash 1.6s var(--ease) 1; animation-delay: var(--flash-at, 0s); }
+/* split view: only the half the lines are on (old on the left, new on the right) */
+.split .ln.flash[data-fs="old"] > :nth-child(n+3), .split .ln.flash[data-fs="new"] > :nth-child(-n+2) { animation: none; }
 @keyframes flash { 0%, 30% { background: var(--flash); } }
 .ln.marked .no:first-child { box-shadow: inset 2px 0 0 var(--ink-3); }
 .plus { position: absolute; left: -10px; top: 1px; width: 20px; height: 18px; border: 0; border-radius: var(--r1); background: var(--act); color: var(--on-act); padding: 0; cursor: pointer; opacity: 0; transition: opacity 120ms var(--ease); z-index: 2; display: grid; place-items: center; }
@@ -600,9 +616,12 @@ details.sect[open] > summary.sh::after { transform: none; }
 .nrow .s { font-size: var(--t-meta); color: var(--ink-3); }
 
 /* ---------------------------------------------------------------- overlays */
-.viewer { position: fixed; z-index: 40; inset: calc(var(--bar) + var(--s4)) calc(var(--panel-w) + var(--s6)) var(--s6) var(--s6); display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--bg); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: var(--shadow); }
-.vhead { display: flex; align-items: center; gap: var(--s3); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--rule); background: var(--chrome); border-radius: var(--r3) var(--r3) 0 0; }
-.vpath { font: 600 var(--t-mono) var(--f-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.viewer { position: absolute; z-index: 6; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--bg); }
+.vhead { display: flex; align-items: center; gap: var(--s3); height: 36px; padding: 0 var(--s2) 0 var(--s4); border-bottom: 1px solid var(--rule); background: var(--chrome); }
+.vhead:has(#vback:not([hidden])) { padding-left: var(--s2); }
+.vpath { font: var(--t-mono) var(--f-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.vpath .dir { color: var(--ink-3); } .vpath .base { color: var(--ink); font-weight: 600; }
+.vnote { color: var(--ink-3); font-size: var(--t-meta); white-space: nowrap; }
 .vbody { overflow: auto; font: var(--t-code)/20px var(--f-mono); padding-bottom: 30vh; }
 .vbody .ln { grid-template-columns: 56px minmax(0, 1fr); }
 .vbody .ln .cd { padding-left: var(--s4); }
@@ -767,6 +786,8 @@ canvas.pxi { image-rendering: pixelated; display: inline-block; vertical-align: 
 .app::before, .app::after, .home::before, .home::after { content: ""; position: fixed; z-index: -1; border-radius: 50%; filter: blur(70px); pointer-events: none; animation: drift 40s ease-in-out infinite alternate; }
 .app::before, .home::before { width: 34vw; height: 70vh; left: -8vw; top: -12vh; background: radial-gradient(closest-side, var(--field-a), transparent); }
 .app::after, .home::after { width: 30vw; height: 72vh; right: -8vw; top: 18vh; background: radial-gradient(closest-side, var(--field-b), transparent); animation-delay: -20s; }
+/* home is drawn again often (its list updates live): its glows start where the page's clock has them, not at the start */
+.home::before { animation-delay: var(--drift-at, 0s); } .home::after { animation-delay: calc(var(--drift-at, 0s) - 20s); }
 @keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(3vw, 8vh) scale(1.12); } }
 @media (prefers-reduced-motion: reduce) { .app::before, .app::after, .home::before, .home::after { animation: none; } }
 .top, .bin, .panel { backdrop-filter: blur(24px) saturate(1.35); -webkit-backdrop-filter: blur(24px) saturate(1.35); }
@@ -1040,6 +1061,7 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 .menu .mi[disabled] { opacity: 0.45; cursor: default; }
 .menu .mi[disabled]:hover { background: none; }
 .menu .mi.danger, .menu .mi.danger svg { color: var(--danger); }
+.menu .mi.danger[data-sure="1"] { background: color-mix(in srgb, var(--danger) 10%, transparent); font-weight: 500; }
 
 /* the stack in Overview: one row per change, this one in ink */
 .srow { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; width: 100%; min-height: var(--h3); padding: 0 var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); cursor: pointer; font-size: var(--t-ui); }
@@ -1172,6 +1194,26 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 @media (max-width: 860px) { .motefloat { right: 22px; } } /* the inspector is hidden there */
 .motefloat .mote { cursor: grab; }
 .motefloat .motelight { position: absolute; left: -2px; z-index: -1; pointer-events: none; } /* its lens's light on the desk (mote.js) */
+/* a file viewed (mote.js viewed): Mote hops in sprite steps, up two pixels a frame and down, while his light stays on
+   the desk; a check of seven by six art pixels, in the viewed green, rises off his head and goes */
+.motefloat.hop .mote { animation: mote-hop 300ms steps(1) 1; }
+@keyframes mote-hop { 0% { transform: translateY(0); } 20% { transform: translateY(-2px); } 40% { transform: translateY(-4px); } 60% { transform: translateY(-3px); } 80% { transform: translateY(-1px); } 100% { transform: translateY(0); } }
+.motecheck { position: absolute; top: -2px; left: calc(30px + var(--n, 0) * 8px); width: 7px; height: 6px; background: var(--ok); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 7 6' shape-rendering='crispEdges'%3E%3Cpath d='M6 0h1v1H6zM5 1h2v1H5zM0 2h1v1H0zM4 2h2v1H4zM0 3h2v1H0zM3 3h2v1H3zM1 4h3v1H1zM2 5h1v1H2z'/%3E%3C/svg%3E") 0 0 / 7px 6px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 7 6' shape-rendering='crispEdges'%3E%3Cpath d='M6 0h1v1H6zM5 1h2v1H5zM0 2h1v1H0zM4 2h2v1H4zM0 3h2v1H0zM3 3h2v1H3zM1 4h3v1H1zM2 5h1v1H2z'/%3E%3C/svg%3E") 0 0 / 7px 6px no-repeat; image-rendering: pixelated; pointer-events: none; animation: mote-check 640ms steps(1) 1 forwards; }
+.motefloat.flip .motecheck { left: auto; right: calc(30px + var(--n, 0) * 8px); }
+@keyframes mote-check { 0% { transform: translateY(0); opacity: 1; } 25% { transform: translateY(-3px); } 50% { transform: translateY(-6px); } 75% { transform: translateY(-8px); opacity: 0.6; } 100% { transform: translateY(-10px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .motefloat.hop .mote, .motecheck { animation: none; } }
+/* his life (mote.js): a note hummed, a z while he dozes, a glint on his lens; art pixels on his grid, rising (or, the
+   glint, flashing) once and gone. A shuffle: a step to the side and back, in sprite steps */
+.moteprop { position: absolute; pointer-events: none; image-rendering: pixelated; animation: mote-rise var(--ms, 900ms) steps(6) 1 forwards; }
+.moteprop.note { top: 0; left: calc(36px + var(--dx, 0px)); width: 5px; height: 6px; background: var(--ink-3); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 5 6' shape-rendering='crispEdges'%3E%3Cpath d='M2 0h3v1H2zM2 1h1v1H2zM4 1h1v1H4zM2 2h1v1H2zM2 3h1v1H2zM0 4h3v1H0zM0 5h3v1H0z'/%3E%3C/svg%3E") 0 0 / 5px 6px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 5 6' shape-rendering='crispEdges'%3E%3Cpath d='M2 0h3v1H2zM2 1h1v1H2zM4 1h1v1H4zM2 2h1v1H2zM2 3h1v1H2zM0 4h3v1H0zM0 5h3v1H0z'/%3E%3C/svg%3E") 0 0 / 5px 6px no-repeat; }
+.moteprop.z { top: 2px; left: calc(34px + var(--dx, 0px)); width: 5px; height: 5px; background: var(--ink-3); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 5 5' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h5v1H0zM3 1h1v1H3zM2 2h1v1H2zM1 3h1v1H1zM0 4h5v1H0z'/%3E%3C/svg%3E") 0 0 / 5px 5px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 5 5' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h5v1H0zM3 1h1v1H3zM2 2h1v1H2zM1 3h1v1H1zM0 4h5v1H0z'/%3E%3C/svg%3E") 0 0 / 5px 5px no-repeat; }
+.moteprop.glint { top: 30px; left: 32px; width: 5px; height: 5px; background: var(--hi); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 5 5' shape-rendering='crispEdges'%3E%3Cpath d='M2 0h1v1H2zM2 1h1v1H2zM0 2h5v1H0zM2 3h1v1H2zM2 4h1v1H2z'/%3E%3C/svg%3E") 0 0 / 5px 5px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 5 5' shape-rendering='crispEdges'%3E%3Cpath d='M2 0h1v1H2zM2 1h1v1H2zM0 2h5v1H0zM2 3h1v1H2zM2 4h1v1H2z'/%3E%3C/svg%3E") 0 0 / 5px 5px no-repeat; animation-name: mote-glint; animation-timing-function: steps(1); }
+.motefloat.flip .moteprop.note, .motefloat.flip .moteprop.z { left: auto; right: calc(36px + var(--dx, 0px)); }
+@keyframes mote-rise { 0% { transform: translateY(0); opacity: 1; } 70% { opacity: 0.8; } 100% { transform: translateY(-12px); opacity: 0; } }
+@keyframes mote-glint { 0%, 100% { opacity: 0; } 15%, 45% { opacity: 1; } 30% { opacity: 0.4; } }
+.motefloat.shuffle .mote { animation: mote-shuffle 1020ms steps(1) 1; }
+@keyframes mote-shuffle { 0% { transform: none; } 12% { transform: translateX(-2px); } 25% { transform: translateX(-4px); } 40% { transform: translateX(-5px); } 55% { transform: translateX(-3px); } 70% { transform: translateX(-1px); } 85%, 100% { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .moteprop, .motefloat.shuffle .mote { animation: none; display: none; } }
 .motefloat.drag .mote { cursor: grabbing; }
 .motefloat .mw { position: absolute; left: 52px; bottom: 16px; max-width: 280px; padding: var(--s1) var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r2); box-shadow: 0 1px 2px rgba(20, 20, 30, 0.08); font-size: var(--t-meta); color: var(--ink-2); pointer-events: none; }
 .motefloat .mw:empty { display: none; }
@@ -1196,6 +1238,23 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 .tree-head .fwrap .field { width: 100%; box-sizing: border-box; padding-right: 28px; }
 .tree-head .fkey { position: absolute; right: var(--s2); top: 50%; transform: translateY(-50%); pointer-events: none; }
 .tree-head .fwrap .field:focus + .fkey, .tree-head .fwrap .field:not(:placeholder-shown) + .fkey { display: none; }
+/* The file list's head, as the head of a table: one line saying what the list holds (the scope, a quiet menu drawn
+   like a row, so its label starts where the rows' status letters do) with its totals at the right in the figures'
+   type; then the two ways to narrow it, drawn alike (filled, no border, the switch's height) with the find field's
+   glyph inside it and its key a faint hint rather than a box. The head's edges are the rows' edges. */
+.scopebar, .scopebar.steps { display: flex; align-items: center; gap: var(--s1); padding: var(--s3) var(--s2) 0; }
+.scopebar .scopebtn { flex: 0 1 auto; width: auto; height: var(--h1); padding: 0 var(--s2); gap: var(--s1); border: 0; border-radius: var(--r1); background: none; color: var(--ink); font-weight: 500; }
+.scopebar .scopebtn:hover { background: var(--hover); }
+.scopebar .scopebtn:active { background: var(--press); }
+.scopebar .scopebtn:focus-visible { box-shadow: 0 0 0 2px var(--pencil); }
+.scopebar .what { grid-column: auto; flex: none; margin-left: auto; padding: 0 var(--s2) 0 var(--s3); display: inline-flex; align-items: baseline; gap: var(--s2); font: var(--t-meta)/16px var(--f-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.scopebar .what .dot { color: var(--ink-3); }
+.tree-head { padding: var(--s2) var(--s2) var(--s2); gap: var(--s1); }
+.tree-head .fwrap > svg { position: absolute; left: var(--s3); top: 50%; width: 14px; height: 14px; transform: translateY(-50%); color: var(--ink-3); pointer-events: none; }
+.tree-head .fwrap .field { padding-left: 28px; border-color: transparent; background: var(--hover); }
+.tree-head .fwrap .field:hover { border-color: transparent; background: color-mix(in srgb, var(--hover) 70%, var(--press)); }
+.tree-head .fwrap .field:focus { border-color: var(--ink-3); background: var(--bg); }
+.tree-head .fkey { min-width: 0; padding: 0; border: 0; background: none; font: var(--t-meta)/1 var(--f-mono); color: var(--ink-3); }
 #ordseg { display: contents; }
 /* the model picker: words and a chevron, no box, so it sits among links and beside a send button alike */
 .runpick { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: var(--s1); height: var(--h1); padding: 0 var(--s2); border-radius: var(--r1); font: 500 var(--t-ui) var(--f-ui); color: var(--ink-2); white-space: nowrap; cursor: pointer; transition: background 120ms var(--ease), color 120ms var(--ease); }
@@ -1231,6 +1290,10 @@ button.pill:hover { filter: brightness(0.96); text-decoration: underline; text-u
 .forme .cap { margin: 0; font-size: var(--t-ui); color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .forme .cap b { color: var(--ink); font-weight: 500; }
 /* a change that could not open: the column is the moiré's, the message sits on clear paper in its middle */
+.state.failed .why { color: var(--ink-2); max-width: 52ch; overflow-wrap: anywhere; }
+.state.failed .btn { margin-top: var(--s2); }
+.bin:not(.ready) .tree-head { visibility: hidden; }
+.empty p > button.link { gap: var(--s2); } .empty p > button.link svg { width: 14px; height: 14px; flex: none; }
 .state.failed { position: relative; min-height: calc(100vh - var(--bar) - var(--s6)); isolation: isolate; }
 .state.failed > canvas.moire { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
 /* a write's dialog: the dim is a fine tone screen as heavy as the act is hard to undo (dither.js toneScreen; sheets.js

@@ -1,7 +1,7 @@
 // The diff column: every changed file as a card in one scroll (tree order, or the guide's), loaded as it nears the
 // viewport. Selecting lines, the composer under them, and the threads anchored to them live here.
 import { S, $, $$, esc, tick, h, api, wsApi, I, pref, toast, fileOf, convOf, threadsAt, lastRun, rememberRun, plural, ago, reducedMotion } from './core.js';
-import { buildRows, buildSplit, wordRanges, findRow, revealAround, expandGap, loadTokens, tokHTML, headText, rangeLabel, selText } from './diff.js';
+import { buildRows, buildSplit, wordRanges, findRow, findLine, revealAround, expandGap, loadTokens, tokHTML, headText, rangeLabel, selText } from './diff.js';
 import { md } from './md.js';
 import { modelKind, msgHTML, runBtn, runOf, grow, menu, shimmerSync } from './ui.js';
 import { hooks } from './hooks.js';
@@ -277,7 +277,42 @@ function hdrHTML(r, k, first, last) {
   return `<div class="hk" data-k="${k}"><span class="hx">${b}</span><span class="ht">${text}</span></div>`;
 }
 
-export function renderBody(p) {
+// A flash on lines (a jump to them) runs its 1.6 s to the end: a redraw of the file in that time draws it again at the
+// point it had reached, and a second jump to a line still flashing leaves it running. S.flash: { path, side, lines, t0 }.
+const FLASH_MS = 1600;
+export function flashLines(p, side, lines) {
+  const prev = S.flash, now = performance.now();
+  const again = prev && prev.path === p && prev.side === side && now - prev.t0 < FLASH_MS && lines.every((l) => prev.lines.includes(l));
+  if (!again) S.flash = { path: p, side, lines, t0: now };
+  reflash(p);
+}
+function reflash(p) {
+  const f = S.flash, card = cardEl(p);
+  if (!f || f.path !== p || !card) return;
+  const at = performance.now() - f.t0;
+  if (at >= FLASH_MS) { S.flash = null; return; }
+  const rows = S.rows.get(p), items = S.items.get(p);
+  if (!rows || !items) return;
+  for (const line of f.lines) {
+    const r = findLine(rows, { side: f.side, line });
+    const k = r >= 0 ? items.findIndex((it) => it.i === r || it.L === r || it.R === r) : -1;
+    const el = k >= 0 && card.querySelector(`.ln[data-k="${k}"]`);
+    if (!el || el.classList.contains('flash')) continue;
+    el.style.setProperty('--flash-at', `-${Math.round(at)}ms`);
+    el.dataset.fs = f.side; // split view lights only that side's half of the row
+    el.classList.add('flash');
+  }
+}
+// a flash that has run its course leaves no class behind (a fold and unfold must not play it again)
+// (its cells start and end together, so the first to end clears the row)
+const unflash = (ln) => { ln.classList.remove('flash'); ln.style.removeProperty('--flash-at'); delete ln.dataset.fs; };
+document.addEventListener('animationend', (e) => {
+  if (e.animationName !== 'flash') return;
+  const ln = e.target.closest?.('.ln.flash');
+  if (ln) unflash(ln);
+});
+export function renderBody(p) { drawBody(p); reflash(p); }
+function drawBody(p) {
   const fb = cardEl(p)?.querySelector('.fb');
   const rows = S.rows.get(p);
   if (!fb || !rows) return;
@@ -501,8 +536,8 @@ export async function setViewed(p, on) {
   updateCard(p);
   hooks.progress?.();
   hooks.sound?.viewed(S.id); // a tick up the ladder (with desk sounds on)
-  // Mote looks at the file's row in the list, where its check lands (the card itself folds and the view moves on)
-  if (on) hooks.mote?.glance(() => document.querySelector(`.trow[data-p="${CSS.escape(p)}"]`));
+  // Mote is pleased (a hop and a check off his head), then looks at the file's row in the list, where its check lands
+  if (on) { hooks.mote?.viewed(); hooks.mote?.glance(() => document.querySelector(`.trow[data-p="${CSS.escape(p)}"]`), 420); }
   api(`/api/w/${S.id}/viewed`, { method: 'POST', body: { path: p, blob: key, viewed: on } }).catch((e) => toast(e.message));
   if (on) {
     const c = cardEl(p);
@@ -516,6 +551,7 @@ export function toggleFold(p, shut) {
   const s = shut ?? !c.classList.contains('shut');
   c.classList.toggle('shut', s);
   s ? S.shut.add(p) : S.shut.delete(p);
+  if (s) { c.querySelectorAll('.ln.flash').forEach(unflash); if (S.flash?.path === p) S.flash = null; } // folded mid-flash: done
   // Always: loadFile knows a file that is loaded (a card redrawn while it was folded only needs its body drawn again, and
   // nothing else will do it, since the card was already in view), one still loading, and one not read yet.
   if (!s) loadFile(p).catch((err) => bodyError(p, err));
@@ -582,12 +618,16 @@ async function toggleUsedBy(p) {
   panel.innerHTML = '<span class="faint">Looking for the files that use it…</span>';
   try {
     const r = await api(wsApi('/related', { path: p }));
+    // three short lists under one rule each, on the note's edge: what this file changes, who names it (each place a line
+    // you can open), and its neighbours; a list with nothing in it says so once, or is left out
+    const path = (q) => { const k = q.lastIndexOf('/'); return `<span class="dir">${esc(q.slice(0, k + 1))}</span><span class="base">${esc(q.slice(k + 1))}</span>`; };
+    const sect = (title, n, body) => `<section><div class="sh"><span>${title}</span>${n ? `<span class="n">${n}</span>` : ''}</div>${body}</section>`;
     panel.innerHTML =
-      (r.idents.length ? `<div><div class="sh">Changed here</div><div class="mono">${r.idents.map(esc).join(', ')}</div></div>` : '') +
-      (r.usedBy.length ? r.usedBy.map((u) => `<div><button class="link" data-act="open" data-p="${esc(u.path)}" data-l="${u.hits[0]?.line || 1}">${esc(u.path)}${u.changed ? ' · changed here' : ''}</button>` +
-        u.hits.map((x) => `<button class="link hit" data-act="open" data-p="${esc(u.path)}" data-l="${x.line}"><span>${x.line}</span><span>${esc(x.text)}</span></button>`).join('') + '</div>').join('')
-        : `<div class="faint">${r.idents.length ? 'Nothing else in the repository names them.' : 'No Go functions or types to follow in this file.'}</div>`) +
-      `<div><div class="sh">Same folder</div><div class="sibs">${r.siblings.map((s) => `<button class="link" data-act="open" data-p="${esc(s.path)}" data-l="1">${esc(s.path.split('/').pop())}${s.changed ? ' <span class="st M" title="Changed here">•</span>' : ''}</button>`).join('')}</div></div>`;
+      (r.idents.length ? sect('Changed here', r.idents.length, `<div class="ids">${r.idents.map((x) => `<code>${esc(x)}</code>`).join('')}</div>`) : '') +
+      sect('Used by', r.usedBy.length, r.usedBy.length ? r.usedBy.map((u) => `<div class="use"><button class="link up" data-act="open" data-p="${esc(u.path)}" data-l="${u.hits[0]?.line || 1}">${path(u.path)}</button>${u.changed ? '<span class="chg">changed here too</span>' : ''}` +
+        u.hits.map((x) => `<button class="link hit" data-act="open" data-p="${esc(u.path)}" data-l="${x.line}"><span class="no">${x.line}</span><span>${esc(x.text.trim())}</span></button>`).join('') + '</div>').join('')
+        : `<div class="none">${r.idents.length ? 'Nothing else in the repository names them.' : 'No Go functions or types to follow in this file.'}</div>`) +
+      (r.siblings.length ? sect('Same folder', r.siblings.length, `<div class="sibs">${r.siblings.map((s) => `<button class="link" data-act="open" data-p="${esc(s.path)}" data-l="1">${esc(s.path.split('/').pop())}${s.changed ? '<span class="dotm" title="Changed here"></span>' : ''}</button>`).join('')}</div>`) : '');
   } catch (e) { panel.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 

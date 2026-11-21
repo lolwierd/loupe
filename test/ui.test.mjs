@@ -196,16 +196,17 @@ test('Mote cancels detached and hidden animation timers', () => {
     pref: { get: () => null, set() {} }, addEventListener() {}, innerWidth: 1440, innerHeight: 900,
     setTimeout(fn) { timers.set(++next, fn); return next; }, clearTimeout: (id) => timers.delete(id),
   });
+  // a breath, the hello and his life's next small thing
   hooks.moteMount(false);
-  assert.equal(timers.size, 2);
+  assert.equal(timers.size, 3);
   hooks.moteMount(false);
-  assert.equal(timers.size, 2);
+  assert.equal(timers.size, 3);
   document.hidden = true;
   listeners.visibilitychange();
   assert.equal(timers.size, 0);
   document.hidden = false;
   listeners.visibilitychange();
-  assert.equal(timers.size, 1);
+  assert.equal(timers.size, 2);
 });
 
 test('a removed Codex model line falls back to another Codex model', () => {

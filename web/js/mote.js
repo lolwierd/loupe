@@ -68,7 +68,7 @@ class Mote {
   // one of the ten faces: his idle frame with the pupils moved (or shut)
   face(i) { this.el.style.backgroundImage = `url(${strip})`; this.el.style.backgroundSize = `${W * 10}px ${H}px`; this.el.style.backgroundPosition = `${-i * W}px 0`; }
   stop() { clearTimeout(this.timer); this.timer = 0; }
-  pause() { this.stop(); this.endLook(false); this.once = null; }
+  pause() { this.stop(); this.endLook(false); this.once = null; this.queued = null; } // a paused pose takes its successor with it
   // play a state's frames: once, then back to what the desk is doing; or around and around for a working state
   run(state, loop) {
     this.stop(); this.endLook(false);
@@ -88,7 +88,16 @@ class Mote {
     };
     step();
   }
-  done() { this.once = null; this.rest(); }
+  // a pose ended: the one that waited for it plays now, else back to the desk's pose, and a look the pointer asked for
+  // during a breath is taken now
+  done() {
+    this.once = null;
+    const q = this.queued; this.queued = null;
+    if (q) return this.play(q);
+    this.rest();
+    const look = this.pendingLook; this.pendingLook = null;
+    if (look) this.lookAt(look[0], look[1]);
+  }
   // still, on the first idle frame, with a breath every seven to twelve seconds
   rest() {
     if (this.once) return; // a move in progress owns the timer and comes back here when it ends
@@ -99,12 +108,28 @@ class Mote {
     if (reducedMotion() || document.hidden) return;
     this.timer = setTimeout(() => { if (!this.looking) { this.once = 'breath'; this.run('idle', false); } }, 7000 + Math.random() * 5000);
   }
-  set(base) { if (base === this.base) return; this.base = base; if (!this.once) this.rest(); }
-  play(state) { if (this.once && this.once !== 'breath') return; this.once = state; this.run(state, false); }
+  set(base) { if (base === this.base) return; if (this.once === 'doze') life.wake(false); this.base = base; if (!this.once) this.rest(); }
+  // pleased: his eyes shut in a smile for a moment (the blink face, held), then back to what he was doing; never over a
+  // pose that is playing
+  pleased(ms = 380) {
+    if (this.once && this.once !== 'breath') return;
+    this.stop(); this.endLook(false); this.once = 'pleased';
+    this.face(BLINK);
+    this.timer = setTimeout(() => this.done(), ms);
+  }
+  // a pose: played now, or, while another plays, next (the newest one waiting wins); a pose is never cut for another
+  play(state) {
+    if (this.once === 'doze') life.wake(false); // something happened: he wakes for it
+    if (this.once && this.once !== 'breath') { this.queued = state; return; } // his own small things finish first too
+    this.once = state; this.run(state, false);
+  }
   // look toward a point, with his eyes: eight directions, clockwise from straight up. glance: a point he was shown (an
   // event), looked at however far it is and held a shorter while; else the pointer, within LOOK_FAR, held LOOK_HOLD
   lookAt(x, y, glance = false) {
     if (this.hold || this.base !== 'idle' || (this.once && this.once !== 'breath') || reducedMotion() || document.hidden || !strip) return;
+    if (!glance && this.once === 'breath') { this.pendingLook = [x, y]; return; } // the breath finishes first
+    if (!glance && performance.now() < (this.glanceUntil || 0)) return; // a glance at an event holds against the pointer
+    if (glance) this.glanceUntil = performance.now() + GLANCE_HOLD;
     const r = this.el.getBoundingClientRect();
     if (!r.width) return;
     const dx = x - (r.left + 24), dy = y - (r.top + 31), d = Math.hypot(dx, dy); // from between his eyes
@@ -218,9 +243,15 @@ addEventListener('resize', () => { const d = $('#motedock'); if (d) place(d); })
 let panelWatch = null;
 function aim(dock) { const r = dock.getBoundingClientRect(); dock.classList.toggle('flip', r.left > innerWidth - r.right); }
 // mount into its floating spot; called when a change opens
+let mountedFor = null;
 hooks.moteMount = (allViewed, left = 1) => {
   const dock = $('#motedock');
-  main?.pause();
+  // the same change drawn again (a save in the tree, a refresh, another scope): he carries on with whatever he was doing
+  if (main && dock && mountedFor === S.id && main.el.isConnected && dock.contains(main.el)) {
+    share = left; allNow = !!allViewed; allWas = allNow; drawLens(); hooks.mote.sync(); return;
+  }
+  mountedFor = S.id;
+  main?.pause(); life.stop();
   clearTimeout(wordsTimer); clearTimeout(helloTimer);
   words = null;
   if (!dock) { main = null; return; }
@@ -236,6 +267,7 @@ hooks.moteMount = (allViewed, left = 1) => {
   lastBusy = new Map(); briefWas = !!S.review?.brief?.pending; allWas = !!allViewed;
   hooks.mote.sync();
   if (!document.hidden) helloTimer = setTimeout(() => { if (main.base === 'idle') main.play('waving'); }, 500);
+  life.start();
 };
 hooks.mote = {
   // after any change to answers, the brief or a dialog: the working pose while something runs, and what just ended
@@ -272,6 +304,26 @@ hooks.mote = {
     allWas = all;
     drawLens();
   },
+  // a file viewed: he hops (his light stays on the desk), pleased, and a small check rises off his head; then he looks at
+  // the file's row. A hop runs to its end: a file viewed while he is in the air adds its check beside the first and leaves
+  // the hop as it is. The last file viewed is his jump instead (progress), so it gets no hop.
+  viewed() {
+    const m = main, dock = m?.el.parentElement;
+    if (!m || !dock || reducedMotion() || document.hidden || allNow) return;
+    const n = dock.querySelectorAll('.motecheck').length;
+    if (n < 4) {
+      const chk = document.createElement('i');
+      chk.className = 'motecheck'; chk.setAttribute('aria-hidden', 'true'); chk.style.setProperty('--n', n);
+      chk.addEventListener('animationend', () => chk.remove(), { once: true });
+      dock.append(chk);
+    }
+    if (dock.classList.contains('hop')) return;
+    dock.classList.add('hop');
+    m.el.addEventListener('animationend', () => dock.classList.remove('hop'), { once: true });
+    m.pleased();
+  },
+  // one of his small things now (by its place in LIFE), or a doze, for tests and for the curious
+  live: (i) => (i === 'doze' ? main && life.doze(main) : life.tick(i)),
   // what it is doing, for tests and for the curious
   state: () => main && { base: main.base, once: main.once, looking: main.looking, eye: main.eye, hidden: document.hidden, reduced: reducedMotion() },
   // a dialog's send went through, or did not; then, if it went, a look at what comes next (at: the element, found then)
@@ -292,6 +344,95 @@ hooks.mote = {
     if (ms) setTimeout(go, ms); else requestAnimationFrame(go);
   },
 };
+
+// ------------------------------------------------------------------ his life
+// Left alone he lives a little: every 9 to 30 s, when nothing is going on (the desk idle, no pose, no look, no dialog,
+// the tab in front, motion allowed), he does one small thing, never the same twice running. After a few minutes with
+// no key or pointer he dozes, a z rising now and then, and wakes with a start when you come back. Late at night (after
+// eleven, before five) he dozes sooner and blinks slower.
+const night = () => { const h = new Date().getHours(); return h >= 23 || h < 5; };
+const rand = (a, b) => a + Math.random() * (b - a);
+let lastInput = Date.now();
+function prop(kind, { dx = 0, ms = 900 } = {}) {
+  const dock = main?.el.parentElement;
+  if (!dock || dock.querySelectorAll('.moteprop').length > 3) return;
+  const p = document.createElement('i');
+  p.className = `moteprop ${kind}`; p.setAttribute('aria-hidden', 'true');
+  p.style.setProperty('--dx', `${dx}px`); p.style.setProperty('--ms', `${ms}ms`);
+  p.addEventListener('animationend', () => p.remove(), { once: true });
+  dock.append(p);
+}
+// eyes to a direction (1 up, then clockwise; 0 the centre) for a while, then the next
+function eyes(m, path) {
+  let t = 0;
+  m.looking = true;
+  for (const [dir, ms] of path) { setTimeout(() => { if (m.once === 'life') { m.looking = dir !== 0; m.eye = dir; m.face(dir); } }, t); t += ms; }
+  return t;
+}
+const LIFE = [
+  // looks left, then right, then back
+  { w: 4, run: (m) => eyes(m, [[7, 650], [0, 180], [3, 700], [0, 120]]) },
+  // two quick blinks
+  { w: 4, run: (m) => eyes(m, [[BLINK, 90], [0, 140], [BLINK, 90], [0, 60]]) },
+  // a slow blink, slower at night
+  { w: 2, run: (m) => eyes(m, [[BLINK, night() ? 700 : 320], [0, 80]]) },
+  // a peek at the code, down and to the left, held
+  { w: 3, run: (m) => eyes(m, [[6, 1400], [0, 80]]) },
+  // a look up toward the top bar's count
+  { w: 2, run: (m) => eyes(m, [[1, 900], [8, 500], [0, 80]]) },
+  // a look at his loupe, the inspecting pose
+  { w: 2, run: (m) => { m.run('review', false); return sum(TIMES.review); } },
+  // a note hummed
+  { w: 2, run: (m) => { prop('note', { dx: 4, ms: 1400 }); return eyes(m, [[BLINK, 260], [0, 900]]); } },
+  // a glint on his lens
+  { w: 2, run: () => { prop('glint', { ms: 700 }); return 760; } },
+  // a little hop, pleased
+  { w: 1, run: (m) => { const d = m.el.parentElement; d.classList.add('hop'); m.el.addEventListener('animationend', () => d.classList.remove('hop'), { once: true }); return eyes(m, [[BLINK, 300], [0, 60]]); } },
+  // a shuffle to one side and back
+  { w: 2, run: (m) => { const d = m.el.parentElement; d.classList.add('shuffle'); m.el.addEventListener('animationend', () => d.classList.remove('shuffle'), { once: true }); return eyes(m, [[7, 500], [3, 520], [0, 60]]); } },
+  // a wave at nobody, now and then
+  { w: 1, run: (m) => { m.run('waving', false); return sum(TIMES.waving); } },
+];
+const life = {
+  timer: 0, last: -1, dozing: false, zTimer: 0,
+  start() { this.stop(); this.next(); },
+  stop() { this.wake(false, false); clearTimeout(this.timer); this.timer = 0; },
+  next(ms = rand(9000, 30000)) { clearTimeout(this.timer); this.timer = setTimeout(() => this.tick(), ms); },
+  free(m) { return m && m.el.isConnected && !m.hold && m.base === 'idle' && !m.once && !m.queued && !m.looking && !document.hidden && !reducedMotion() && !document.querySelector('.scrim, .sheetscrim'); },
+  // pick: one of LIFE by its place, for a test or the curious (hooks.mote.live); else weighted, never the last one again
+  tick(pick) {
+    const m = main;
+    if (!m || !m.el.isConnected || document.hidden) return; // a hidden tab starts him again when it is shown
+    if (!this.free(m)) return this.next(rand(4000, 9000));
+    if (pick === undefined && Date.now() - lastInput > (night() ? 90000 : 240000)) return this.doze(m);
+    const total = LIFE.reduce((n, x, i) => n + (i === this.last ? 0 : x.w), 0);
+    let r = Math.random() * total, i = 0;
+    for (; i < LIFE.length; i++) { if (i === this.last) continue; r -= LIFE[i].w; if (r <= 0) break; }
+    if (pick !== undefined) i = pick;
+    this.last = i = Math.min(i, LIFE.length - 1);
+    m.stop(); m.once = 'life';
+    const ms = LIFE[i].run(m) || 600;
+    m.timer = setTimeout(() => { m.looking = false; m.eye = 0; if (m.once === 'life') m.done(); this.next(); }, ms);
+  },
+  doze(m) {
+    this.dozing = true; m.stop(); m.once = 'doze'; m.face(BLINK);
+    const z = () => { if (!this.dozing) return; prop('z', { dx: rand(-2, 6), ms: 1800 }); this.zTimer = setTimeout(z, rand(2200, 3400)); };
+    z();
+  },
+  // a key or the pointer: awake, with a start, and a look at where you are
+  wake(react = true, carryOn = true) {
+    if (!this.dozing) return;
+    this.dozing = false; clearTimeout(this.zTimer);
+    const m = main;
+    if (!m) return;
+    m.once = null; m.face(0);
+    if (react && !reducedMotion()) { const d = m.el.parentElement; d.classList.add('hop'); m.el.addEventListener('animationend', () => d.classList.remove('hop'), { once: true }); }
+    m.rest(); if (carryOn) this.next();
+  },
+};
+const touched = () => { lastInput = Date.now(); if (life.dozing) life.wake(); };
+for (const ev of ['keydown', 'pointerdown', 'wheel']) document.addEventListener(ev, touched, { passive: true, capture: true });
+document.addEventListener('pointermove', () => { if (life.dozing || Date.now() - lastInput > 1000) touched(); }, { passive: true });
 
 // ------------------------------------------------------------------ the still ones on home
 // home's quiet states: Mote at rest where nothing waits on you, slumped where a link led nowhere
@@ -352,9 +493,10 @@ document.addEventListener('visibilitychange', () => {
   pruneHomeMotes();
   if (document.hidden) {
     clearTimeout(wordsTimer); clearTimeout(helloTimer);
-    main?.pause();
+    main?.pause(); life.stop(); // nobody is watching: no life either
     for (const m of homeMotes) m.pause();
   } else {
+    if (main) life.start();
     if (main) { main.pause(); main.rest(); say(status()); }
     for (const m of homeMotes) { m.pause(); m.rest(); }
   }

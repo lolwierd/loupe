@@ -2,6 +2,7 @@
 // its lines left, a check once viewed (amber when it changed since), and how many marks are on it. The strip in the
 // top bar draws the same files as segments.
 import { S, $, $$, esc, tick, I, threadsAt, fileOf, plural } from './core.js';
+import { shimmerSync } from './ui.js';
 import { isViewed, isStale, lines, statusGlyph, cardEl, orderedFiles, countedOnly } from './cards.js';
 import { icon } from './pixel.js';
 import { md } from './md.js';
@@ -54,7 +55,7 @@ function guideSideHTML(match) {
   };
   return `<nav class="gtoc" aria-label="The guide">${secs.map((sec, k) => row(k, sec.title, sec.files.map(fileOf).filter((f) => f && match(f)), sec.check || [])).join('')}` +
     (rest.length ? row(secs.length, 'Not in the guide', rest, []) : '') +
-    `<div class="gfoot">${S.review.brief.pending ? `<span class="shimmer">Regenerating</span>` : `<button class="link" data-act="writebrief">Regenerate the guide</button>`}</div></nav>`;
+    `<div class="gfoot">${S.review.brief.pending ? `<span class="shimmer" style="${shimmerSync()}">Regenerating</span>` : `<button class="link" data-act="writebrief">Regenerate the guide</button>`}</div></nav>`;
 }
 export function renderTree() {
   const q = S.filter.toLowerCase();
@@ -70,8 +71,10 @@ export function renderTree() {
     S.review.brief.sections.forEach((sec, k) => {
       const fs = sec.files.map(fileOf).filter((f) => f && match(f));
       if (!fs.length) return;
-      const left = leftIn(fs);
-      html += `<div class="tsection"><span class="gi">${k + 1}</span><span class="gt tick">${tick(sec.title)}</span><span class="n">${left ? left.toLocaleString() : ''}</span></div>` + fs.map((f) => fileRow(f, 0, f.path.split('/').pop())).join('');
+      // the head counts what is left, or checks a section read to the end, only when it holds more than its one file (else
+      // the file's own row says it); a finished section's title dims like its rows
+      const left = leftIn(fs), done = fs.every((f) => isViewed(f) || f.kind === 'generated');
+      html += `<div class="tsection${done ? ' viewed' : ''}"><span class="gi">${k + 1}</span><span class="gt tick">${tick(sec.title)}</span><span class="n">${fs.length < 2 ? '' : done ? icon('check', '--ok') : left ? left.toLocaleString() : ''}</span></div>` + fs.map((f) => fileRow(f, 0, f.path.split('/').pop())).join('');
     });
   } else {
     const node = (n, depth) => [...n.dirs.values()].sort((a, b) => a.name.localeCompare(b.name)).map((d) => {

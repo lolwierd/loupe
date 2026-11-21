@@ -7,7 +7,8 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
 - **Read the change.** A split or unified diff of a PR, a branch, or your uncommitted work, one file after another.
   The top bar shows what is left as a small board of lamps, one block per file as long as its changed lines: a file
   turns green as you mark it viewed, and pointing at a block names its file. Jump to a definition, a reference or a
-  search hit, and `[` brings you back to where you were; after `]`, it un-views that file and returns to it.
+  search hit, and `[` brings you back to where you were; after `]`, it un-views that file and returns to it. A mark,
+  clicked anywhere, takes you to its lines and lights them.
 - **A note above each file.** As a change opens, a small model (the newest Haiku, unless you pick another in `⌘K`)
   writes one or two lines above each file that needs them: what part of the repository it is, and why this change has
   to touch it, linked to the other files it changes. Lockfiles, generated code and files whose role is plain from their
@@ -34,11 +35,14 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
 
 Mote, the small beetle floating in the corner (drag him anywhere), shows what the desk is doing: working while an
 answer or the map is being written, and jumping when you have read the last file. He looks with his eyes, at the
-pointer when it is near and at what just happened: the file you viewed, the answer that landed.
+pointer when it is near and at what just happened: the answer that landed, the file you viewed, which earns a little
+hop and a check off his head. Left alone he lives a little, every so often: looks around, blinks, peeks at the code,
+hums, catches a glint on his lens, shuffles, waves, and after a few quiet minutes dozes off until you move.
 
 Small things answer what you do. Every button gives a little when pressed, by the pointer or by its key. Approving
 prints a stamp with the commit you approved and leaves its impression under the review, which slips out of register
-when the author pushes past it. A commit's new id flips in from its parent's. Desk sounds are there too, off until you
+when the author pushes past it. A commit's new id flips in from its parent's. Nothing is cut short: the press that
+runs while a pull request opens finishes its pass, and the count of lines left finishes each roll. Desk sounds are there too, off until you
 turn them on in `⌘K`: a tick per file viewed that climbs as the change is read, a stamp on approve, and a bell when an
 answer lands while the tab is in the background.
 

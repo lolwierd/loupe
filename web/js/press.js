@@ -121,10 +121,18 @@ function moire(state, refs) {
   });
 }
 
-// The change is open: the forme and the moiré let go of their clocks and watchers
+// The change is open. An opening is never cut mid-roll: the brayer finishes the pass it is on, so every dot has taken
+// its ink, and only then do the forme and the moiré let go of their clocks and watchers. Resolves when the page may draw
+// the change; at once when nothing is rolling (no forme, a still one, reduced motion). Called again while it waits, it
+// gives the same wait.
 export function endOpening() {
-  forme?.stop?.(); forme?.unwatch?.(); forme = null;
   moireStop?.(); moireStop = null;
+  const f = forme;
+  if (f?.ending) return f.ending;
+  const done = () => { f?.stop?.(); f?.unwatch?.(); if (forme === f) forme = null; };
+  if (!f || !f.running || !f.el.isConnected || reducedMotion()) { done(); return Promise.resolve(); }
+  const left = PASS - (f.last % PASS) + 1000 / 12; // to the end of this pass, and its last frame drawn
+  return (f.ending = new Promise((resolve) => setTimeout(() => { done(); resolve(); }, left)));
 }
 
 // Called each time the state box is drawn, and again when a newer record arrives: the box's own state (failed or

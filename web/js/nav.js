@@ -1,8 +1,8 @@
 // Getting around: going to a path:line (in the diff when it is there, else the whole-file viewer), the viewer
 // itself, and gopls: hover for docs, ⌘-click for the definition, ⇧⌘-click for references.
 import { S, $, esc, h, api, wsApi, toast, fileOf, I } from './core.js';
-import { loadTokens, tokHTML, findRow, revealAround } from './diff.js';
-import { cardEl, loadFile, renderBody, toggleFold } from './cards.js';
+import { loadTokens, tokHTML, findRow, findLine, revealAround } from './diff.js';
+import { cardEl, loadFile, renderBody, toggleFold, flashLines } from './cards.js';
 import { md } from './md.js';
 import { hooks } from './hooks.js';
 
@@ -95,13 +95,16 @@ export async function goLoc(loc, origin, restore, { remembered = false } = {}) {
   let rows = S.rows.get(p);
   if (findRow(rows, { side, line: loc.line }) < 0 && side === 'new') { if (await revealAround(p, loc.line)) renderBody(p); rows = S.rows.get(p); }
   if (!current() || cardEl(p) !== card) return;
-  const i = findRow(rows, { side, line: loc.line });
+  // a range is found by its first line, or by its last when the first is context the old side does not hold
+  let i = findLine(rows, { side, line: loc.line });
+  if (i < 0 && loc.end) i = findRow(rows, { side, line: loc.end });
   if (i < 0) return openViewer({ path: p, line: loc.line, side });
-  const items = S.items.get(p);
-  const k = items.findIndex((it) => it.i === i || it.L === i || it.R === i);
-  const el = card.querySelector(`.ln[data-k="${k}"]`);
-  el?.scrollIntoView({ block: 'center' });
-  if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+  // a range (loc.end: a mark's lines) is centred on its first line and every line of it flashes, to the end (cards.js)
+  const items = S.items.get(p), k = items.findIndex((it) => it.i === i || it.L === i || it.R === i);
+  card.querySelector(`.ln[data-k="${k}"]`)?.scrollIntoView({ block: 'center' });
+  const lines = [];
+  for (let line = loc.line, last = Math.max(loc.line, loc.end || loc.line); line <= last && lines.length < 400; line++) lines.push(line);
+  flashLines(p, side, lines);
 }
 
 export async function goThread(id) {
@@ -114,10 +117,10 @@ export async function goThread(id) {
   if (card.hidden) hooks.clearFilter?.();
   if (card.classList.contains('shut')) toggleFold(th.path, false);
   await loadFile(th.path);
+  // the mark opens beside the code first (it draws its file again), then the page goes to its lines and they flash
   hooks.openMark?.(th.id);
-  const el = card.querySelector(`.mrow[data-t="${th.id}"]`);
-  if (!el) return goLoc({ path: th.path, line: th.line, side: th.side });
-  el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return goLoc({ path: th.path, line: th.startLine || th.line, end: th.line, side: th.side });
 }
 
 // ------------------------------------------------------------------ the whole-file viewer
@@ -125,14 +128,17 @@ export async function openViewer(v) {
   const side = v.side === 'old' ? 'old' : 'new';
   let el = $('#viewer');
   if (!el) {
-    el = h(`<div class="viewer" id="viewer" role="dialog" aria-label="File"><div class="vhead"><button class="icon sm" id="vback" title="Back" aria-label="Back" hidden>${I.chevL}</button><span class="vpath" id="vpath"></span><span class="faint" id="vnote"></span><span class="sp"></span><button class="btn sm" id="vclose">Close <kbd>esc</kbd></button></div><div class="vbody" id="vbody"></div></div>`);
-    document.body.append(el);
+    // it takes the diff's column exactly, as another pane would, and its head is a file's head: the panes either side stay
+    el = h(`<div class="viewer" id="viewer" role="region" aria-label="The whole file"><div class="vhead"><button class="icon sm" id="vback" title="Back" aria-label="Back" hidden>${I.chevL}</button><span class="vpath" id="vpath"></span><span class="vnote" id="vnote"></span><span class="sp"></span><button class="icon sm" id="vclose" title="Close (esc)" aria-label="Close">${I.x}</button></div><div class="vbody" id="vbody"></div></div>`);
+    ($('.viewer-col') || document.body).append(el);
     $('#vclose').onclick = closeViewer;
     $('#vback').onclick = goBack;
   }
   S.view = v;
   paintReturn();
-  $('#vpath').textContent = v.path;
+  const k = v.path.lastIndexOf('/');
+  $('#vpath').innerHTML = `<span class="dir">${esc(v.path.slice(0, k + 1))}</span><span class="base">${esc(v.path.slice(k + 1))}</span>`;
+  $('#vpath').title = v.path;
   $('#vnote').textContent = v.ext ? 'outside the repository, read-only' : fileOf(v.path) ? `the whole file, ${side} side` : 'unchanged by this change';
   const body = $('#vbody');
   body.dataset.p = v.ext ? '' : v.path;
@@ -147,7 +153,7 @@ export async function openViewer(v) {
     body.innerHTML = f.lines.map((s, i) => `<div class="ln" data-l="${i + 1}"><span class="no">${i + 1}</span><span class="cd"><span class="tx" data-r="${rowSide}" data-l="${i + 1}">${tokHTML(key, i + 1, s)}</span></span></div>`).join('');
     const row = body.querySelector(`.ln[data-l="${v.line || 1}"]`);
     if (row) { row.scrollIntoView({ block: 'center' }); if (v.line) row.classList.add('flash'); }
-  } catch (e) { body.innerHTML = `<div class="loadd err">${esc(e.message)}</div>`; }
+  } catch (e) { if (S.view === v) body.innerHTML = `<div class="loadd err">${esc(e.message)}</div>`; }
 }
 export function closeViewer() { $('#viewer')?.remove(); S.view = null; paintReturn(); }
 

@@ -60,7 +60,7 @@ const EVENTS = [['COMMENT', 'Comment'], ['REQUEST_CHANGES', 'Request changes'], 
 // How hard each write is to undo, which is how heavy the tone screen behind its dialog is: a commit stays on this
 // machine and can be amended; the rest go where other people read them; a push that overwrites the remote is
 // destructive, for as long as its latest preview says it will (refresh() sets it again on every preview).
-const WEIGHT = { commit: 'local', review: 'public', push: 'public', openpr: 'public', stacklink: 'public' };
+const WEIGHT = { commit: 'local', close: 'local', review: 'public', push: 'public', openpr: 'public', stacklink: 'public' };
 const overwrites = (c) => c.kind === 'push' && (c.pv?.needsForce || c.pv?.tone === 'danger');
 const weightOf = (c) => (overwrites(c) ? 'destructive' : WEIGHT[c.kind] || 'public');
 const SHEETS = {
@@ -137,6 +137,27 @@ const SHEETS = {
     payload: () => ({ title: S.prTitle || '', body: S.prBody ?? S.ship?.template ?? '', base: S.prBase || S.ship?.base, draft: pref.get('prDraft', true) }),
     async after(r) { const n = Number(/\/pull\/(\d+)/.exec(r.url || '')?.[1]); if (n) S.lastPr = n; S.prTitle = ''; S.prBody = undefined; await loadShip(true); hooks.loadStack?.(); },
   },
+  // Closing a change here is loupe's own write: nothing is sent, so its preview is read here, not from the daemon. It
+  // takes the change off home; what you wrote here stays on disk and comes back when it is opened again, and a pull
+  // request's checkout is loupe's own copy, fetched again then. Undone by opening it, so it weighs what a commit does.
+  close: {
+    title: 'Close this change', local: true, idle: () => 'Close',
+    payload: () => ({ id: S.id }),
+    preview() {
+      const r = S.review, pr = S.ws?.pr;
+      const n = [(r.threads || []).length && plural(r.threads.length, 'mark'), (r.chats || []).length && plural(r.chats.length, 'chat')].filter(Boolean);
+      return {
+        title: pr ? `Close #${pr.number} here` : `Close ${S.ws?.branch || 'this change'} here`,
+        items: [
+          'Takes it off home and out of ⌘K',
+          n.length ? `Keeps its ${n.join(' and ')} for when you open it again` : 'Nothing to keep: no marks or chats yet',
+          pr ? "Removes loupe's own checkout of the pull request; opening it again fetches a fresh one" : 'Your checkout and its branch are untouched',
+        ],
+        where: 'Back to home after', confirm: 'Close',
+      };
+    },
+    async send() { await api(`/api/w/${S.id}`, { method: 'DELETE' }); location.href = '/home'; },
+  },
   stacklink: {
     title: 'Add to the stack', idle: () => 'Add to stack',
     payload: (c) => ({ stackNumber: c.opts.stackNumber, pr: c.opts.pr }),
@@ -201,7 +222,7 @@ async function refresh() {
   const payload = c.def.payload(c), key = JSON.stringify(payload), seq = ++c.seq;
   const btn = c.el.querySelector('[data-sh="go"]'); btn.disabled = true;
   try {
-    const pv = await preview(c.kind, payload);
+    const pv = c.def.local ? c.def.preview(c) : await preview(c.kind, payload);
     if (cur !== c || seq !== c.seq || S.id !== c.id) return;
     c.pv = pv; c.key = key;
     $('#sht', c.el).textContent = pv.title;
@@ -233,6 +254,7 @@ async function go() {
   gb.disabled = true; gb.classList.add('sending');
   gb.querySelector('.gl').innerHTML = `<span class="launch">${icon('arrow', '--on-act')}</span>Sending…`;
   c.sending = true;
+  if (c.def.local) { try { await c.def.send(c); } catch (e) { toast(e.message); c.sending = false; gb.classList.remove('sending'); refresh(); } return; }
   const parent = S.ship?.head || ''; // a commit's toast turns its new id over from this one
   const arm = armRoll(); // and the next step, as it is now, will turn over to the one after it
   try {
