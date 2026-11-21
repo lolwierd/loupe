@@ -478,6 +478,8 @@ export function brief(ws, { model, effort } = {}) {
   if (briefRuns.has(ws.id)) return briefRuns.get(ws.id);
   const p = (async () => {
     ws.review.data.brief = { ...(ws.review.data.brief || {}), pending: true, error: null, step: null };
+    // on disk at once, so a promote that checks for work in flight sees a brief from its first second
+    ws.review.save(true);
     ws.emit('brief', ws.review.data.brief);
     const abort = new AbortController();
     let timer;

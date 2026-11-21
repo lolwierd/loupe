@@ -1,7 +1,7 @@
 // The page: which change this URL is, the frame around it (top bar; bin | diff | inspector), live
 // updates from the daemon, keys, the palette and home. One URL per change; "/" goes back to the last one.
 import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, briefRun } from './core.js';
-import { renderCards, renderBody, renderAllBodies, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment } from './cards.js';
+import { renderCards, renderBody, renderAllBodies, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment, statusGlyph } from './cards.js';
 import { renderTree, markCurrent, nextUnviewed } from './tree.js';
 import { renderPanel, setTab, renderTabs, openChat, paintMessage } from './panel.js';
 import { goLoc, goThread, openViewer, closeViewer, hideTip, goBack, clearReturns } from './nav.js';
@@ -508,7 +508,7 @@ function commands() {
   const pr = S.github?.pr, isPr = m.kind === 'pr', local = m.kind === 'local';
   const cur = S.current && fileOf(S.current), name = S.current?.split('/').pop();
   const panel = (tab) => () => { setPane('panel', true); setTab(tab); };
-  const setting = (k, on, label) => ({ group: 'SETTINGS', label: `${on ? 'Turn off' : 'Turn on'}: ${label}`, run: async () => { try { S.app.settings = await api('/api/settings', { method: 'POST', body: { [k]: !on } }); } catch (e) { return toast(e.message); } for (const f of S.files) updateCard(f.path); progress(); toast(`${label}: ${on ? 'off' : 'on'}.`); } });
+  const setting = (k, on, label) => ({ group: 'VIEW', label, on, run: async () => { try { S.app.settings = await api('/api/settings', { method: 'POST', body: { [k]: !on } }); } catch (e) { return toast(e.message); } for (const f of S.files) updateCard(f.path); progress(); toast(`${label}: ${on ? 'off' : 'on'}.`); } });
   const scopes = [
     ['all', isPr ? 'Whole pull request' : m.dirty ? 'Branch + uncommitted' : 'Whole branch'],
     ...(local ? [['branch', 'Committed only'], ...(m.dirty ? [['wip', `Uncommitted only (${plural(m.dirty, 'file')})`]] : [])] : []),
@@ -519,25 +519,25 @@ function commands() {
   const c = [
     ...next,
     { group: 'READ', label: 'Search the repository', key: 'f', run: openRepositorySearch },
-    { group: 'READ', label: 'Done with this file: mark it viewed, go to the next left', key: ']', run: () => nextLeft() },
+    { group: 'READ', label: 'Mark viewed, go to the next file', key: ']', run: () => nextLeft() },
     cur && { group: 'READ', label: `${isViewed(cur) ? 'Unmark' : 'Mark'} ${name} viewed`, key: 'v', run: () => setViewed(S.current, !isViewed(cur)) },
     { group: 'READ', label: 'Next file', key: 'j', run: () => stepFile(1) },
     { group: 'READ', label: 'Previous file', key: 'k', run: () => stepFile(-1) },
     cur && { group: 'READ', label: `${S.shut.has(S.current) ? 'Unfold' : 'Fold'} ${name}`, key: 'o', run: () => toggleFold(S.current) },
-    { group: 'READ', label: 'Fold every file you have viewed', run: () => { for (const f of S.files) if (isViewed(f) || f.kind === 'generated') toggleFold(f.path, true); } },
-    { group: 'READ', label: 'Unfold every file', run: () => { for (const f of S.files) if (S.shut.has(f.path)) toggleFold(f.path, false); } },
-    S.review.brief?.sections?.length && { group: 'READ', label: S.order === 'guide' ? 'Files in tree order' : "Files in the guide's order", key: 'g', run: () => setOrder(S.order === 'guide' ? 'tree' : 'guide') },
+    { group: 'READ', label: 'Fold the viewed files', run: () => { for (const f of S.files) if (isViewed(f) || f.kind === 'generated') toggleFold(f.path, true); } },
+    { group: 'READ', label: 'Unfold all files', run: () => { for (const f of S.files) if (S.shut.has(f.path)) toggleFold(f.path, false); } },
+    S.review.brief?.sections?.length && { group: 'READ', label: S.order === 'guide' ? 'Tree order' : 'Guide order', key: 'g', run: () => setOrder(S.order === 'guide' ? 'tree' : 'guide') },
     { group: 'READ', label: S.layout === 'split' ? 'Unified diff' : 'Split diff', key: 's', run: () => setLayout(S.layout === 'split' ? 'unified' : 'split') },
     ...scopes.map(([k, label]) => ({ group: 'COMPARE', label, run: () => setScope(k) })),
-    local && { group: 'COMPARE', label: `Compare with another base (now ${m.base})`, run: () => { const b = $('[data-act="scopemenu"]'); if (b) baseMenu(b); } },
+    local && { group: 'COMPARE', label: 'Compare with another base', sub: m.base, run: () => { const b = $('[data-act="scopemenu"]'); if (b) baseMenu(b); } },
     ...m.commits.filter((x) => x.sha !== S.rangeKey).map((x) => ({ group: 'COMPARE', label: `Commit ${x.short.slice(0, 7)} ${x.subject}`, sub: ago(x.at), typed: true, run: () => setScope(x.sha) })),
     { group: 'REVIEW', label: 'Ask about the whole change', key: 'a', run: () => { setPane('panel', true); openChat(); } },
     { group: 'REVIEW', label: S.review.brief?.tldr ? 'Regenerate the guide and map' : 'Write the guide and map', run: () => { setPane('panel', true); setTab('overview'); hooks.rebrief?.(); } },
     { group: 'REVIEW', label: 'New chat', run: () => hooks.newChat?.() },
-    { group: 'CLAUDE', label: 'Link a Claude Code session…', run: () => hooks.linkSession?.() },
-    { group: 'INSPECTOR', label: 'Overview', key: '1', run: panel('overview') },
-    { group: 'INSPECTOR', label: 'Chat', key: '2', run: panel('chat') },
-    { group: 'INSPECTOR', label: 'Marks', key: '3', run: panel('review') },
+    { group: 'REVIEW', label: 'Link a Claude Code session…', run: () => hooks.linkSession?.() },
+    { group: 'VIEW', label: 'Overview tab', key: '1', run: panel('overview') },
+    { group: 'VIEW', label: 'Chat tab', key: '2', run: panel('chat') },
+    { group: 'VIEW', label: 'Marks tab', key: '3', run: panel('review') },
     isPr && pr && !pr.viewerIsAuthor && { group: 'REVIEW', label: 'Submit your review…', run: () => hooks.openSheet?.('review') },
     isPr && pr && { group: 'REVIEW', label: `Comment on #${pr.number}`, run: () => hooks.focusComment?.() },
     (pr?.checks?.length || S.github?.checks?.length) && { group: 'REVIEW', label: 'Show the checks', run: () => hooks.showChecks?.() },
@@ -554,29 +554,64 @@ function commands() {
     setting('autoView', !!S.app.settings?.autoView, 'Count tests and generated files as viewed'),
     setting('autoBrief', !!S.app.settings?.autoBrief, 'Write the brief when a PR opens'),
     ghUrl && { group: 'GO', label: 'Open on GitHub', run: () => open(ghUrl, '_blank', 'noopener') },
-    { group: 'GO', label: 'Copy the link to this page', run: () => navigator.clipboard.writeText(location.href).then(() => toast('Link copied.'), () => toast('Could not copy.')) },
+    { group: 'GO', label: "Copy this page's link", run: () => navigator.clipboard.writeText(location.href).then(() => toast('Link copied.'), () => toast('Could not copy.')) },
     { group: 'GO', label: 'Read the change again', key: 'r', run: () => $('[data-act="refresh"]')?.click() },
     { group: 'GO', label: 'Home', run: () => { location.href = '/home'; } },
     { group: 'GO', label: 'Keys', key: '?', run: keySheet },
     { group: 'GO', label: 'Close this change here', sub: 'forgets its marks and chats', typed: true, run: async () => { if (!confirm('Close this change in loupe? Its marks and chats are forgotten; the code is untouched.')) return; try { await api(`/api/w/${S.id}`, { method: 'DELETE' }); location.href = '/home'; } catch (e) { toast(e.message); } } },
-    ...S.files.map((f) => ({ group: 'FILES', label: f.path, sub: isViewed(f) ? 'viewed' : `${(f.added + f.deleted).toLocaleString()} lines`, typed: true, file: true, run: () => goLoc({ path: f.path, line: 0 }) })),
+    ...S.files.map((f) => ({ group: 'FILES', label: f.path, f, typed: true, file: true, run: () => goLoc({ path: f.path, line: 0 }) })),
   ];
   return c.filter(Boolean);
 }
 
 // The palette draws this many rows and says how many more there are, so a change of 300 files stays instant.
 const PAL_ROWS = 60;
+// With nothing typed the groups come in the order of the work: what is next, the other changes open here, then reading,
+// comparing, reviewing, shipping, the view, and leaving.
+const PAL_CHANGES = 6;
+const PAL_GROUPS = ['NEXT', 'CHANGES', 'READ', 'COMPARE', 'REVIEW', 'SHIP', 'STACK', 'VIEW', 'GO', 'FILES'];
 let palClose = null, keysClose = null;
+// Every row is the file list's row: a 14 px glyph column, the label, and a trailing column of quiet figures (a key, a
+// count, the viewed check). Commands leave the glyph column empty so every label starts on one edge.
+const palGlyph = (x = '') => `<span class="g">${x}</span>`;
+const palTrail = (x = '') => `<span class="tr">${x}</span>`;
+const fileLeft = (f) => (isViewed(f) ? icon('check', '--ok') : f.kind === 'generated' ? 'gen' : lines(f).toLocaleString());
+
+// The palette is the title opened, the way a browser's address bar opens: flush to the top of the window, its field on
+// the top bar's own row with the typed text where the title's text was, and the rows' glyphs in a column under the
+// title's icon. The field, the rows and the heads share one inset in the style sheet, so placing the box is one number,
+// measured rather than assumed. Home has no title, and a narrow window has no room beside it: there it stands centred.
+function palOpen(label, glyph, placeholder, foot) {
+  const scrim = h(`<div class="scrim" role="dialog" aria-label="${esc(label)}"><div class="palette"><div class="pfield">${glyph}<input placeholder="${esc(placeholder)}" aria-label="${esc(label)}" autocomplete="off" spellcheck="false"></div><div class="list"></div>${foot ? `<div class="foot">${foot}</div>` : ''}</div></div>`);
+  document.body.append(scrim);
+  const box = $('.palette', scrim);
+  const place = () => {
+    const ic = $('#wsbtn svg'), bar = $('.top');
+    const on = !!(ic && bar && ic.getBoundingClientRect().width && innerWidth >= 760);
+    scrim.classList.toggle('anchored', on);
+    box.style.left = box.style.width = '';
+    if (!on) return;
+    const w = Math.min(560, innerWidth - 16);
+    scrim.style.setProperty('--bar-h', `${Math.round(bar.getBoundingClientRect().height)}px`);
+    box.style.width = `${w}px`;
+    box.style.left = '0px';
+    const inset = $('.pfield > svg', scrim).getBoundingClientRect().left - box.getBoundingClientRect().left;
+    box.style.left = `${Math.max(8, Math.min(Math.round(ic.getBoundingClientRect().left - inset), innerWidth - 8 - w))}px`;
+  };
+  place();
+  addEventListener('resize', place);
+  return { scrim, input: $('input', scrim), list: $('.list', scrim), done: () => { removeEventListener('resize', place); scrim.remove(); } };
+}
+
 function openRepositorySearch(snapshot = {}) {
   palClose?.();
   keysClose?.();
   closeMenu();
-  const scrim = h(`<div class="scrim" role="dialog" aria-label="Search the repository"><div class="palette"><input placeholder="Search the repository" aria-label="Search the repository" maxlength="160" autocomplete="off"><div class="list"></div><div class="foot"><span><kbd>↵</kbd> open</span><span><kbd>↑</kbd><kbd>↓</kbd> pick</span><span><kbd>esc</kbd> close</span><span class="sp"></span><span class="revision"></span></div></div></div>`);
-  document.body.append(scrim);
-  const input = $('input', scrim), list = $('.list', scrim);
+  const { scrim, input, list, done } = palOpen('Search the repository', I.search, 'Search the repository', '<span class="revision"></span>');
+  input.maxLength = 160;
   const scope = S.scope;
   let selected = snapshot.selected ?? 0, result, timer, request;
-  const close = () => { clearTimeout(timer); request?.abort(); scrim.remove(); palClose = null; };
+  const close = () => { clearTimeout(timer); request?.abort(); done(); palClose = null; };
   palClose = close;
   const pick = () => {
     list.querySelector('[aria-selected="true"]')?.setAttribute('aria-selected', 'false');
@@ -588,10 +623,12 @@ function openRepositorySearch(snapshot = {}) {
     result = r;
     const rev = $('.revision', scrim);
     rev.title = r.revision;
-    rev.textContent = r.revision === 'Working tree' ? r.revision : r.revision.slice(0, 12);
-    list.innerHTML = r.matches.map((m, i) => `<button class="mi repo-hit" data-i="${i}" aria-selected="false">${I.file}<span class="mono where" title="${esc(m.path)}:${m.line}">${esc(m.path)}:${m.line}</span><span class="mono excerpt" title="${esc(m.excerpt)}">${esc(m.excerpt)}</span></button>`).join('')
-      + (r.more ? '<div class="more">First 60 matches. Keep typing to narrow them.</div>' : '');
-    if (!r.matches.length) list.innerHTML = `<div class="none">${input.value.trim() ? 'No matches.' : 'Type text to find in source.'}</div>`;
+    rev.textContent = r.revision === 'Working tree' ? 'In the working tree' : `At ${r.revision.slice(0, 12)}`;
+    // a hit in a file this change touches carries the file list's letter, so the change's own lines stand out
+    const changed = new Map(S.files.map((f) => [f.path, f]));
+    list.innerHTML = r.matches.map((m, i) => `<button class="mi repo-hit" data-i="${i}" aria-selected="false">${palGlyph(changed.has(m.path) ? statusGlyph(changed.get(m.path)) : '')}<span class="mono where" title="${esc(m.path)}:${m.line}">${esc(m.path)}:${m.line}</span><span class="mono excerpt" title="${esc(m.excerpt)}">${esc(m.excerpt)}</span></button>`).join('')
+      + (r.more ? '<div class="more">The first 60 matches. Keep typing to narrow them.</div>' : '');
+    if (!r.matches.length) list.innerHTML = `<div class="none">${input.value.trim() ? 'No matches.' : 'Type text to find in the source.'}</div>`;
     if (r.matches.length) { selected = Math.min(selected, r.matches.length - 1); pick(); }
   };
   const search = () => {
@@ -638,9 +675,9 @@ function openPalette() {
   closeMenu();
   // Drawn at once from what the page already has; the daemon's own list replaces the workspace rows when it arrives.
   let st = S.app || { workspaces: [], display: location.origin };
-  const scrim = h(`<div class="scrim" role="dialog" aria-label="Open or do"><div class="palette"><input placeholder="Paste a PR link, owner/repo#123 or a path, or type what to do" aria-label="Open or do"><div class="list"></div><div class="foot"><span><kbd>↵</kbd> go</span><span><kbd>↑</kbd><kbd>↓</kbd> pick</span><span><kbd>esc</kbd> close</span><span class="sp"></span><span>${esc(st.display)}</span></div></div></div>`);
-  document.body.append(scrim);
-  const input = scrim.querySelector('input'), list = scrim.querySelector('.list');
+  // The field keeps the title's icon in the title's place: this is that change's title, opened.
+  const here = S.ws ? (S.ws.kind === 'pr' ? I.pr : I.branch) : I.search;
+  const { scrim, input, list, done } = palOpen('Open or do', here, 'Find a file, a change or something to do', 'Paste a PR link, owner/repo#123 or a path to open it.');
   let cur = 0, shown = [];
   // Lower-cased once per open, not per keystroke; a file also keeps its own name apart from its folders.
   const cmds = commands().map((c) => { const lab = c.label.toLowerCase(); return { ...c, lab, hay: `${lab} ${c.group.toLowerCase()}`, base: c.file ? lab.slice(lab.lastIndexOf('/') + 1) : '' }; });
@@ -652,16 +689,18 @@ function openPalette() {
     if (c.lab.endsWith('/' + q)) return 95; // the end of its path
     return c.base.startsWith(q) ? 80 : c.base.includes(q) ? 70 : 50;
   };
+  const openRow = (t, i) => `<button class="mi" data-i="${i}" aria-selected="${i === cur}">${palGlyph(I.plus)}<span class="ml" title="${esc(t)}">Open “${esc(t)}”</span>${palTrail()}</button>`;
   const draw = () => {
     const q = input.value.trim().toLowerCase();
-    const ws = st.workspaces.filter((w) => !q || `${w.title} ${w.repo} ${w.slug} ${w.number || ''}`.toLowerCase().includes(q)).map((w) => ({ ws: w, group: 'OPEN HERE', s: q && [w.title, w.repo, w.slug].some((t) => String(t || '').toLowerCase().startsWith(q)) ? 75 : 45 }));
+    // the change you are on is the title itself, so it is not offered as somewhere to go
+    const ws = st.workspaces.filter((w) => w.id !== S.id && (!q || `${w.title} ${w.repo} ${w.slug} ${w.number || ''}`.toLowerCase().includes(q))).map((w) => ({ ws: w, group: 'CHANGES', s: q && [w.title, w.repo, w.slug].some((t) => String(t || '').toLowerCase().startsWith(q)) ? 75 : 45 }));
     const words = q.split(/\s+/).filter(Boolean);
     const cs = cmds.filter((c) => (q ? words.every((w) => c.hay.includes(w)) : !c.typed)).map((c) => ({ cmd: c, group: c.group, s: q ? score(c, q) : 0 }));
     // Typed: each group stays whole under its own heading, the group holding the best match first, and the best match first
-    // within it. Nothing typed: the next act first, then what is open here, then the rest. At most PAL_ROWS rows are
-    // drawn (the arrow keys walk only those); a group that matches hundreds of files leaves a few rows to each group after
-    // it, so the commands that match are never the rows that get cut.
-    let total, rows;
+    // within it. Nothing typed: the groups in the order of the work. At most PAL_ROWS rows are drawn (the arrow keys walk
+    // only those); a group that matches hundreds of files leaves a few rows to each group after it, so the commands that
+    // match are never the rows that get cut.
+    let total, rows, moreChanges = 0;
     if (q) {
       const groups = new Map();
       for (const x of [...cs, ...ws]) { let g = groups.get(x.group); if (!g) groups.set(x.group, (g = { rows: [], best: 0, at: groups.size })); g.rows.push(x); g.best = Math.max(g.best, x.s); }
@@ -674,35 +713,43 @@ function openPalette() {
         room -= take;
         return g.rows.sort((a, b) => b.s - a.s).slice(0, take);
       });
-    } else { rows = [...cs.filter((x) => x.group === 'NEXT'), ...ws, ...cs.filter((x) => x.group !== 'NEXT')]; total = rows.length; }
+    } else {
+      const rank = (x) => { const i = PAL_GROUPS.indexOf(x.group); return i < 0 ? PAL_GROUPS.length : i; };
+      // with nothing typed, the most recent few changes stand for the rest, so the commands are still in the first view
+      // (on home the changes are all there is, so they are all shown)
+      const few = S.ws ? ws.slice(0, PAL_CHANGES) : ws;
+      moreChanges = ws.length - few.length;
+      rows = [...cs, ...few].map((x, i) => [x, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map(([x]) => x);
+      total = rows.length;
+    }
     shown = rows.slice(0, PAL_ROWS);
     const more = total - shown.length;
     if (q && /\/|#\d|^\d+$|^~/.test(input.value.trim())) { if (cs.length) shown.push({ target: input.value.trim() }); else shown.unshift({ target: input.value.trim() }); }
     cur = Math.min(cur, Math.max(0, shown.length - 1));
     let last = null;
-    // when the open change is listed, every row ends in the same check column, so the keys and counts on the right keep one edge
-    const anyCur = shown.some((x) => x.ws?.id === S.id);
-    const mc = (on) => (anyCur ? `<span class="mc">${on ? I.check : ''}</span>` : '');
     list.innerHTML = shown.map((x, i) => {
-      const head = x.group && x.group !== last ? `<div class="sh">${x.group}</div>` : '';
+      const rest = last === 'CHANGES' && x.group !== 'CHANGES' && moreChanges ? `<div class="gmore">and ${moreChanges.toLocaleString()} more: type to find them</div>` : '';
+      const head = rest + (x.group && x.group !== last ? `<div class="sh">${x.group}</div>` : '');
       last = x.group || last;
-      if (x.target) return `<button class="mi" data-i="${i}" aria-selected="${i === cur}">${I.plus}<span class="two"><span>Open “${esc(x.target)}”</span><span>a PR link, owner/repo#123, #123 or a path</span></span>${mc(false)}</button>`;
-      if (x.cmd?.file) { const k = x.cmd.label.lastIndexOf('/'); return head + `<button class="mi" data-i="${i}" aria-selected="${i === cur}">${I.file}<span class="fp ml" title="${esc(x.cmd.label)}"><span class="d">${esc(x.cmd.label.slice(0, k + 1))}</span>${esc(x.cmd.label.slice(k + 1))}</span><span class="sub">${esc(x.cmd.sub)}</span>${mc(false)}</button>`; }
-      if (x.cmd) return head + `<button class="mi" data-i="${i}" aria-selected="${i === cur}">${I.chevR}<span class="ml" title="${esc(x.cmd.label)}">${esc(x.cmd.label)}</span>${x.cmd.key ? `<span class="sub"><kbd>${esc(x.cmd.key)}</kbd></span>` : x.cmd.sub ? `<span class="sub">${esc(x.cmd.sub)}</span>` : ''}${mc(false)}</button>`;
-      const w = x.ws;
-      return head + `<button class="mi" data-i="${i}" aria-selected="${i === cur}"${w.id === S.id ? ' aria-current="true"' : ''}>${w.kind === 'pr' ? I.pr : I.branch}<span class="two"><span>${w.kind === 'pr' ? `#${w.number} ` : ''}${esc(w.title)}</span><span>${esc(w.repo)} · ${esc(st.display.replace(/^https?:\/\//, ''))}${esc(w.url)}</span></span><span class="sub">${w.left ? (w.left.lines ? `${w.left.lines.toLocaleString()} left` : 'all viewed') : ''}</span>${mc(w.id === S.id)}</button>`;
-    }).join('') || `<button class="mi" data-i="-1" aria-selected="true">${I.plus}<span class="two"><span>Open “${esc(input.value.trim())}”</span><span>a PR link, owner/repo#123, #123 or a path</span></span>${mc(false)}</button>`;
+      if (x.target) return openRow(x.target, i);
+      const c = x.cmd, sel = `data-i="${i}" aria-selected="${i === cur}"`;
+      if (c?.file) { const k = c.label.lastIndexOf('/'); return head + `<button class="mi" ${sel}>${palGlyph(statusGlyph(c.f))}<span class="fp ml" title="${esc(c.label)}"><span class="d">${esc(c.label.slice(0, k + 1))}</span><span class="n">${esc(c.label.slice(k + 1))}</span></span>${palTrail(fileLeft(c.f))}</button>`; }
+      if (c) return head + `<button class="mi" ${sel}>${palGlyph()}<span class="ml" title="${esc(c.label)}">${esc(c.label)}</span>${palTrail(c.key ? `<kbd>${esc(c.key)}</kbd>` : c.on ? I.check : c.sub ? esc(c.sub) : '')}</button>`;
+      const w = x.ws, left = w.left ? (w.left.lines ? w.left.lines.toLocaleString() : icon('check', '--ok')) : '';
+      const repo = w.repo && w.repo !== w.title ? `<span class="rp">${esc(w.repo)}</span>` : '';
+      return head + `<button class="mi" ${sel}>${palGlyph(w.kind === 'pr' ? I.pr : I.branch)}<span class="ml" title="${esc(w.title)}${w.repo ? ` · ${esc(w.repo)}` : ''}">${w.kind === 'pr' ? `#${w.number} ` : ''}${esc(w.title)}${repo}</span>${palTrail(left)}</button>`;
+    }).join('') || `<div class="none">${q ? `Nothing matches “${esc(input.value.trim())}”.` : 'Nothing to show.'}</div>`;
     if (more > 0) list.insertAdjacentHTML('beforeend', `<div class="more">and ${more.toLocaleString()} more: keep typing to narrow them</div>`);
     list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   };
-  const close = () => { scrim.remove(); palClose = null; };
+  const close = () => { done(); palClose = null; };
   palClose = close;
   api('/api/state').then((fresh) => { if (palClose === close) { st = fresh; draw(); } }, () => { /* the page's own list stands */ });
   const go = async (i) => {
     const x = shown[i];
     if (x?.ws) { close(); location.href = x.ws.url; return; }
     if (x?.cmd) { close(); return x.cmd.run(); }
-    const target = (x?.target || input.value).trim(); if (!target) return;
+    const target = x?.target; if (!target) return;
     input.disabled = true;
     try { const r = await api('/api/workspaces', { method: 'POST', body: { target, cwd: S.ws?.root || undefined } }); close(); location.href = r.url; }
     catch (e) { input.disabled = false; list.insertAdjacentHTML('afterbegin', `<div class="err">${esc(e.message)}</div>`); }
@@ -711,7 +758,7 @@ function openPalette() {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); cur = Math.min(shown.length - 1, cur + 1); draw(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); cur = Math.max(0, cur - 1); draw(); }
-    else if (e.key === 'Enter') { e.preventDefault(); go(shown.length ? cur : -1); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (shown.length) go(cur); }
     else if (e.key === 'Escape') close();
   });
   list.addEventListener('click', (e) => { const b = e.target.closest('.mi'); if (b) go(Number(b.dataset.i)); });

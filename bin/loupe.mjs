@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // loupe: the command. `loupe` opens what you're in; `loupe <PR link | owner/repo#123 | #123 | path>` opens that;
 // the daemon behind it is one process for every workspace, kept up by a LaunchAgent (`loupe service install`).
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -245,12 +246,32 @@ async function cmdServe() {
   };
   let stopping = false;
   run();
-  let timer = null;
-  fs.watch(path.join(ROOT, 'src'), { recursive: true }, (_, f) => {
+  // A restart cuts off any answer or brief being written, so it happens only when a file's contents changed. macOS
+  // reports a file under src/ when a copy only sets the folder's times (an rsync that changed nothing restarted the
+  // daemon), and a touched file has nothing new to load either.
+  const SRC = path.join(ROOT, 'src');
+  const prints = () => {
+    const out = new Map();
+    const walk = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.mjs')) { try { out.set(path.relative(SRC, p), crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex')); } catch { /* gone while we looked */ } }
+      }
+    };
+    walk(SRC);
+    return out;
+  };
+  let seen = prints(), timer = null;
+  fs.watch(SRC, { recursive: true }, (_, f) => {
     if (!String(f).endsWith('.mjs')) return;
     clearTimeout(timer);
     timer = setTimeout(() => {
-      console.log(`loupe: ${f} changed, restarting`);
+      const now = prints();
+      const changed = [...new Set([...seen.keys(), ...now.keys()])].filter((k) => seen.get(k) !== now.get(k));
+      seen = now;
+      if (!changed.length) return;
+      console.log(`loupe: ${changed.join(', ')} changed, restarting`);
       if (child) { restarting = true; child.kill('SIGTERM'); } else { backoff = 1000; run(); }
     }, 250);
   });

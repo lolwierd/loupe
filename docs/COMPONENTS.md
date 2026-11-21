@@ -54,6 +54,14 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
 - **Row** (file tree, menus, palette, Marks list, stack, home): one hover (`--hover`), one current (`--press`), one
   keyboard focus (2 px blue inset ring), `--r1` corners inside lists with padding, square in full-bleed lists.
   Leading glyph column, label, trailing meta column right-aligned with tabular figures.
+  A key in a row is a plain 11 px mono figure in that trailing column, like a count, never a keycap.
+- **Palette** (⌘K, and `f` for the repository): the top bar's title opened, as an address bar opens. Flush to the top
+  of the window, square above and `--r3` below; its field is the top bar's own row, the title's icon kept in the
+  title's place and the typed text on the title's text edge; the bar stays lit and a click on it closes the palette.
+  560 wide, 72vh at most. Its rows are the file list's rows: 28 px, a 14 px glyph column (M / A / D for files, the PR
+  or branch icon for changes, empty for commands, so every label shares one edge) and a trailing column of keys,
+  counts and checks. Section headers sit on the rows' text edge. The change you are on is not listed (it is the
+  title). One quiet line at the foot says what else the field takes. Home and windows under 760 px get it centred.
 - **List box** (files in a dialog, commits, home lists): 1 px `--rule`, `--r3`, rows divided by 1 px `--rule`.
 - **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`.
 - **Message** (chat and marks): who (13 px 600; Claude in orange), model meta 11 px `--ink-3`, body 14 px.

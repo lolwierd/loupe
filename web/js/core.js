@@ -105,6 +105,7 @@ export const I = {
   updown: P('<path d="m5 6 3-3 3 3M5 10l3 3 3-3"/>'),
   check: P('<path d="m3.5 8.5 3 3 6-7"/>'),
   plus: P('<path d="M8 3v10M3 8h10"/>'),
+  search: P('<circle cx="7" cy="7" r="4.25"/><path d="m10.25 10.25 3.5 3.5"/>'),
   x: P('<path d="m4 4 8 8M12 4l-8 8"/>'),
   dir: P('<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>'),
   file: P('<path d="M4 1.75h5l3 3v9.5H4z"/><path d="M9 1.75v3h3"/>'),

@@ -23,8 +23,8 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
   repository's style.
 - **From Claude Code.** The mod puts each repository a session edits on loupe's home; `/loupe` prints the links, each
   with a chat that knows what the session did. The skill lets Claude open things in loupe for you.
-- **Keyboard first.** `⌘K` finds any file, commit or action; `f` searches the whole repository at the reviewed
-  revision; `?` lists the keys.
+- **Keyboard first.** `⌘K`, or a click on the title, finds any file, open change, commit or action; `f` searches the
+  whole repository at the reviewed revision; `?` lists the keys.
 
 Mote, the small beetle floating in the corner (drag him anywhere), shows what the desk is doing: working while an
 answer or the map is being written, and jumping when you have read the last file.

@@ -527,12 +527,34 @@ details.sect[open] > summary.sh::after { transform: rotate(180deg); }
 .tip .md { font-size: var(--t-ui); }
 .tip .foot { margin-top: var(--s3); padding-top: var(--s2); border-top: 1px solid var(--rule); font-size: var(--t-meta); color: var(--ink-3); }
 .scrim { position: fixed; inset: 0; z-index: 85; background: var(--scrim-soft); display: grid; place-items: start center; padding-top: 12vh; }
-.palette { width: min(640px, 92vw); background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: var(--shadow); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: 70vh; }
-.palette input { all: unset; box-sizing: border-box; height: var(--h4); padding: 0 var(--s5); font-size: var(--t-read); border-bottom: 1px solid var(--rule); }
+/* The palette's field, rows and heads keep the file list's columns: a 14 px glyph column 12 in from the box's edge, the
+   text edge 34 in. The field is a row of the same kind, so what you type starts where every label starts. */
+.palette { --pal-g: calc(var(--s2) + var(--s3)); --pal-t: calc(var(--pal-g) + 14px + var(--s3)); width: min(640px, 92vw); background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: var(--shadow); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: 70vh; }
+.palette .pfield { display: flex; align-items: center; gap: var(--s3); height: var(--h4); padding: 0 var(--s5) 0 var(--pal-g); border-bottom: 1px solid var(--rule); }
+.palette .pfield > svg { width: 14px; height: 14px; flex: none; color: var(--ink-3); }
+.palette .pfield input { all: unset; box-sizing: border-box; flex: 1; min-width: 0; height: 100%; font-size: var(--t-read); color: var(--ink); }
+.palette .pfield input::placeholder { color: var(--ink-3); }
 .palette .list { overflow: auto; padding: var(--s2); }
-.palette .foot { display: flex; gap: var(--s4); padding: var(--s2) var(--s4); border-top: 1px solid var(--rule); font-size: var(--t-meta); color: var(--ink-3); align-items: center; }
-.palette .err { padding: var(--s3) var(--s4); }
-.palette .more { position: sticky; bottom: calc(-1 * var(--s2)); padding: var(--s3) var(--s3) var(--s3); font-size: var(--t-meta); color: var(--ink-3); background: var(--raise); border-top: 1px solid var(--rule); }
+.palette .list :is(.sh, .more, .none, .err, .gmore) { padding-left: calc(var(--pal-t) - var(--s2)); }
+.palette .gmore { padding-block: var(--s1) var(--s2); font-size: var(--t-meta); line-height: 16px; color: var(--ink-3); }
+.palette .foot { padding: var(--s2) var(--s5) var(--s2) var(--pal-t); border-top: 1px solid var(--rule); font-size: var(--t-meta); line-height: 16px; color: var(--ink-3); }
+.palette .err { padding-block: var(--s3); color: var(--danger); font-size: var(--t-ui); }
+.palette .none { padding-block: var(--s3); color: var(--ink-3); font-size: var(--t-ui); }
+.palette .more { position: sticky; bottom: calc(-1 * var(--s2)); padding-block: var(--s3); font-size: var(--t-meta); color: var(--ink-3); background: var(--raise); border-top: 1px solid var(--rule); }
+.palette .mi .g { display: inline-grid; place-items: center; width: 14px; height: 14px; flex: none; color: var(--ink-3); }
+.palette .mi .tr { margin-left: auto; padding-left: var(--s4); display: inline-flex; align-items: center; justify-content: flex-end; flex: none; color: var(--ink-3); font-size: var(--t-meta); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.palette .mi .tr:empty { display: none; }
+.palette .mi .tr svg { width: 12px; height: 12px; color: var(--ink); }
+.palette .mi .rp { margin-left: var(--s3); color: var(--ink-3); }
+/* a long path gives up its folders, never the file's own name */
+.palette .mi .fp { display: flex; }
+.palette .mi .fp .d { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette .mi .fp .n { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Opened from the title, the box hangs from the top of the window and its field is the top bar's own row, so the
+   field's rule carries on the bar's. The bar stays lit; a click on it still closes the palette. */
+.scrim.anchored { display: block; padding: 0; background: linear-gradient(to bottom, transparent var(--bar-h), var(--scrim-soft) var(--bar-h)); }
+.scrim.anchored .palette { position: absolute; top: 0; border-top: 0; border-radius: 0 0 var(--r3) var(--r3); max-height: 72vh; }
+.scrim.anchored .pfield { height: var(--bar-h); }
 .keys { max-height: 70vh; overflow: auto; display: grid; grid-template-columns: auto 1fr; gap: var(--s2) var(--s4); padding: var(--s5); font-size: var(--t-ui); align-items: center; }
 .keys .sh { grid-column: 1 / -1; margin: var(--s5) 0 0; }
 .keys .sh:first-child { margin-top: 0; }
@@ -540,6 +562,7 @@ details.sect[open] > summary.sh::after { transform: rotate(180deg); }
 .keys .k .mouse { margin-left: var(--s2); color: var(--ink-2); }
 .keys .k .mouse:first-child { margin-left: 0; }
 .palette.keysheet { grid-template-rows: minmax(0, 1fr) auto; }
+.palette.keysheet .foot { display: flex; gap: var(--s4); align-items: center; padding: var(--s2) var(--s4); line-height: normal; }
 .stamp { position: fixed; z-index: 95; top: 32vh; left: 50%; transform: translateX(-50%) rotate(-8deg) scale(1.6); opacity: 0; pointer-events: none; display: grid; justify-items: center; gap: var(--s1); padding: var(--s3) var(--s6); border: 4px double var(--ink); border-radius: var(--r2); color: var(--ink); font: 800 34px/1 var(--f-ui); letter-spacing: 0.14em; animation: stamp 260ms cubic-bezier(0.3, 1.4, 0.5, 1) forwards; mix-blend-mode: multiply; }
 .stamp small { font: 600 var(--t-meta) var(--f-mono); letter-spacing: 0.08em; }
 /* multiply reads as ink on paper; on the dark paper the same ink is lit instead */
@@ -920,7 +943,10 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 .menu .mi .mi-ic { width: 14px; height: 14px; flex: none; }
 .menu .mi .mk { margin-left: auto; min-width: 18px; flex: none; }
 .menu .mi .sub ~ .mk { margin-left: var(--s3); }
-.menu .mi kbd.mk { color: var(--ink-3); }
+/* a key in a row is a quiet figure in the trailing column, like a count, not a keycap */
+:is(.menu, .palette) .mi kbd { border: 0; background: none; padding: 0; min-width: 0; text-align: right; font: 500 var(--t-meta)/16px var(--f-mono); color: var(--ink-3); }
+.menu .mi kbd.mk { min-width: 18px; }
+.menu .sh kbd { border: 0; background: none; padding: 0; min-width: 0; font: 500 var(--t-meta)/16px var(--f-mono); color: var(--ink-3); }
 :is(.menu, .palette) .mi .mc { display: grid; place-items: center; width: 16px; height: 16px; flex: none; color: var(--ink); }
 .palette .mi .mc { margin-left: auto; }
 .palette .mi .sub + .mc { margin-left: 0; }
