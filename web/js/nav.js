@@ -42,12 +42,24 @@ export async function goBack() {
   paintReturn();
 }
 
-export async function goLoc(loc, origin, restore) {
+// A place to come back to with [, taken now: the scroll of every column, and what to undo on the way back. ] takes one
+// before it marks a file viewed and moves on, so [ un-views that file and returns to it.
+export function remember(restore) {
+  const scroll = ['#center', '#pbody', '#vbody'].flatMap((id) => { const el = $(id); return el ? [[id, el.scrollTop, el.scrollLeft, null]] : []; });
+  const entry = { scroll, restore, view: S.view, filter: S.filter };
+  returns.push(entry);
+  if (returns.length > 24) returns.shift();
+  paintReturn();
+  return entry;
+}
+// a place taken for something that then did nothing
+export function forget(entry) { const i = returns.lastIndexOf(entry); if (i >= 0) returns.splice(i, 1); paintReturn(); }
+export async function goLoc(loc, origin, restore, { remembered = false } = {}) {
   if (loc.external && !loc.readable) return toast(`Defined outside the repository: ${loc.path}:${loc.line}`);
   const scope = S.scope, id = S.id;
   const request = ++jump;
   const current = () => request === jump && S.scope === scope && S.id === id;
-  if (origin || restore || S.view) {
+  if (!remembered && (origin || restore || S.view)) {
     const scroll = ['#center', '#pbody', '#vbody'].flatMap((id) => {
       const el = $(id);
       if (!el) return [];

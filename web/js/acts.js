@@ -22,8 +22,9 @@ export function nextActs() {
   // submit comments you have pending
   const own = !!(p?.viewerIsAuthor || p?.viewerIsAssignee);
   if (m.kind === 'pr') {
-    // loupe does not merge: a pull request GitHub calls ready is merged there, so that is the first act
-    if (canMerge(p)) acts.push({ label: 'Merge on GitHub', run: () => window.open(p.url, '_blank', 'noopener') });
+    // loupe does not merge: your own pull request (written by or assigned to you) that GitHub would merge is merged there,
+    // so that is the first act; someone else's is theirs to merge
+    if (canMerge(p) && (p.viewerIsAuthor || p.viewerIsAssignee)) acts.push({ label: 'Merge on GitHub', run: () => window.open(p.url, '_blank', 'noopener') });
     if (p?.state === 'OPEN') {
       if (!own || pend) acts.push(reviewAct);
       if (!own) acts.push({ label: 'Approve', sheet: ['review', { event: 'APPROVE' }] }, { label: 'Request changes', sheet: ['review', { event: 'REQUEST_CHANGES' }] });

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { attemptFileNotes, eligibleForNotes, fileNoteKey, filesNeedingNotes, resetNotesAttempt } from '../web/js/file-notes.js';
+import { attemptFileNotes, eligibleForNotes, fileNoteKey, filesNeedingNotes, resetNotesAttempt, currentNotes } from '../web/js/file-notes.js';
 import vm from 'node:vm';
 
 test('a preview finishing after navigation never sends its write to the next workspace', async () => {
@@ -337,7 +337,7 @@ test('file notes wait for a local change to settle and respect the automatic set
   const requests = [];
   let scheduled;
   const check = vm.runInNewContext(auto + '\n(change) => { notesChange = change; maybeAutoNotes(); }', {
-    S, attemptFileNotes, filesNeedingNotes, changedT: null, Date: { now: () => 1000 },
+    S, attemptFileNotes, filesNeedingNotes, currentNotes, changedT: null, Date: { now: () => 1000 },
     setTimeout(fn, ms) { scheduled = { fn, ms }; }, clearTimeout() { scheduled = null; },
     notesRun: () => ({ model: 'claude-haiku-5-5', effort: 'low' }),
     api: async (path, request) => { requests.push({ path, ...request }); return { started: true }; },
@@ -413,4 +413,24 @@ test('file cards draw current notes above the diff and mark older notes when idl
   S.review.notes.error = 'model failed';
   assert.match(draw(moved), /Written for an earlier version\./);
   assert.doesNotMatch(draw(file), /Written for an earlier version\./);
+});
+
+test('GitHub emoji shortcodes become emoji, beside links and from the full list', async () => {
+  const source = fs.readFileSync(new URL('../web/js/md.js', import.meta.url), 'utf8');
+  const part = source.slice(source.indexOf('// GitHub\'s full list'), source.indexOf('export function md('));
+  const { EMOJI } = await import('../web/js/emoji.js');
+  const github = vm.runInNewContext(part + '\ngithub', { GITHUB_EMOJI: EMOJI, S: { github: null, ws: null } });
+  // a shortcode right before a link (the text run ends where the link starts) and one GitHub lists but loupe used not to
+  const out = github('<p>:umbrella: <a href="https://x">View report</a>.</p><p>:loudspeaker: Feedback? <a href="https://y">Share</a>.</p>');
+  assert.match(out, /☔/);
+  assert.match(out, /📢/);
+  assert.match(out, /<a href="https:\/\/x">View report<\/a>/);
+  // inside code it stays as typed; an unknown name stays as typed
+  assert.match(github('<p><code>:rocket:</code> :not_an_emoji:</p>'), /<code>:rocket:<\/code> :not_an_emoji:/);
+  assert.equal(EMOJI.hash, '#\ufe0f\u20e3');
+  // a > inside a quoted attribute is not the end of the tag: the alt keeps its text
+  assert.match(github('<p><img alt="before > :umbrella:"></p><pre><code>x</code></pre>'), /alt="before > :umbrella:"/);
+  // joined emoji keep their joiners
+  assert.equal(EMOJI.technologist, '\u{1f9d1}\u200d\u{1f4bb}');
+  assert.equal(EMOJI.rainbow_flag, '\u{1f3f3}\ufe0f\u200d\u{1f308}');
 });

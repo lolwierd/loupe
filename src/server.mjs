@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { keepModelsCurrent, reach } from './models.mjs';
 import { spawn, execFileSync } from 'node:child_process';
-import { WEB, ROOT, PORT, HOSTNAME, SHORT_HOSTNAME, TLS_DIR, NAME, VERSION, MODELS, EFFORTS, DEFAULTS, BIN, STATE_DIR, modelKind } from './config.mjs';
+import { WEB, ROOT, PORT, HOSTNAME, SHORT_HOSTNAME, TLS_DIR, NAME, VERSION, MODELS, EFFORTS, DEFAULTS, BIN, STATE_DIR, modelKind, lineOf } from './config.mjs';
 import * as W from './workspaces.mjs';
 import * as C from './claude.mjs';
 import * as L from './live.mjs';
@@ -68,7 +68,10 @@ setInterval(() => {
 
 // The page reloads itself when its own files change (developing loupe).
 let webStamp = 0;
-const modelState = () => ({ models: MODELS.map(([id, label]) => ({ id, label, kind: modelKind(id) })), efforts: EFFORTS, defaults: DEFAULTS });
+// Every listed model is the newest of its line, so it is named by the line alone (Opus, Sonnet, Sol, Luna); the label
+// with its version stays as full, for a title.
+const lineName = (id, label) => { const l = lineOf(id); return l ? l.replace(/^gpt:/, '').replace(/^./, (c) => c.toUpperCase()) : label; };
+const modelState = () => ({ models: MODELS.map(([id, label]) => ({ id, label: lineName(id, label), full: label, kind: modelKind(id) })), efforts: EFFORTS, defaults: DEFAULTS });
 function watchWeb() {
   try {
     fs.watch(WEB, { recursive: true }, (_, file) => { if (String(file || '').startsWith('proto')) return; /* design prototypes are not the app */ webStamp = Date.now(); for (const ws of W.all()) ws.emit('page', {}); homeEmit('page', {}); });

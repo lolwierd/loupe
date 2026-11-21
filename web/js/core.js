@@ -59,7 +59,16 @@ export const wsApi = (sub, q = {}) => {
   return `/api/w/${S.id}${sub}?${params}`;
 };
 
-export const modelName = (id) => S.app?.models.find((m) => m.id === String(id || '').replace(/\[.*\]$/, ''))?.label || id || 'Claude';
+// A listed model by its line (Opus, Sol); one the list has moved past, kept on an old answer, with its version
+// (Sonnet 5.2, Terra 6.1), so the two read apart.
+export const modelName = (id) => {
+  const bare = String(id || '').replace(/\[.*\]$/, '');
+  const m = S.app?.models.find((x) => x.id === bare);
+  if (m) return m.label;
+  const c = /^claude-([a-z]+)-([\d-]+)$/.exec(bare), g = /^gpt-([\d.]+)-([a-z]+)$/.exec(bare);
+  const up = (s) => s[0].toUpperCase() + s.slice(1);
+  return c ? `${up(c[1])} ${c[2].replace(/-/g, '.')}` : g ? `${up(g[2])} ${g[1]}` : bare || 'Claude';
+};
 // The model and effort a new question starts with: what you picked last, in this browser.
 // a remembered model that the list has moved past becomes the newest of its line (opus, gpt:astra), else the default
 const lineOf = (id = '') => { const c = /^claude-([a-z]+)-/.exec(id), g = /^gpt-[\d.]+-([a-z]+)$/.exec(id); return c ? c[1] : g ? 'gpt:' + g[1] : null; };

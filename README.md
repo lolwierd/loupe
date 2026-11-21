@@ -7,10 +7,11 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
 - **Read the change.** A split or unified diff of a PR, a branch, or your uncommitted work, one file after another.
   The top bar shows what is left as a small board of lamps, one block per file as long as its changed lines: a file
   turns green as you mark it viewed, and pointing at a block names its file. Jump to a definition, a reference or a
-  search hit, and `[` brings you back to where you were.
+  search hit, and `[` brings you back to where you were; after `]`, it un-views that file and returns to it.
 - **A note above each file.** As a change opens, a small model (the newest Haiku, unless you pick another in `⌘K`)
-  writes one or two lines above each file that needs them: what part of the repository it is, and what this change
-  does to it. Lockfiles, generated code and files whose role is plain from their path get none.
+  writes one or two lines above each file that needs them: what part of the repository it is, and why this change has
+  to touch it, linked to the other files it changes. Lockfiles, generated code and files whose role is plain from their
+  path get none.
 - **A map of the change.** Before the first file, the model reads the code around the change and explains how that part
   of the system works, what was there before and after, the words you will meet, and where to start reviewing. It draws
   the parts involved with the change marked on them, and the runtime path as numbered steps. A `file:line` it cites
@@ -71,7 +72,7 @@ Swap `github.com` for `loupe.local` (or `l.local`) in a pull request link to ope
 |---|---|
 | `j` `k` | next and previous file |
 | `]` | done with this file: mark it viewed and go to the next |
-| `[` | back to where you were before a jump |
+| `[` | back: un-view the file `]` just marked, or return from a jump |
 | `/` `f` | find a file, search the repository |
 | `v` `o` | mark viewed, fold |
 | `a` `c` | on selected lines: ask, comment for your review |

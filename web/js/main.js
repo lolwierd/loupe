@@ -2,10 +2,10 @@
 // updates from the daemon, keys, the palette and home. One URL per change; "/" goes back to the last one.
 import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, briefRun, notesRun } from './core.js';
 import { renderCards, renderBody, renderAllBodies, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment, statusGlyph, updateFileNotes } from './cards.js';
-import { attemptFileNotes, filesNeedingNotes, resetNotesAttempt } from './file-notes.js';
+import { attemptFileNotes, filesNeedingNotes, resetNotesAttempt, currentNotes } from './file-notes.js';
 import { renderTree, markCurrent, nextUnviewed } from './tree.js';
 import { renderPanel, setTab, renderTabs, openChat, paintMessage } from './panel.js';
-import { goLoc, goThread, openViewer, closeViewer, hideTip, goBack, clearReturns } from './nav.js';
+import { goLoc, goThread, openViewer, closeViewer, hideTip, goBack, clearReturns, remember, forget } from './nav.js';
 import { renderProgress, paintProgress, renderGo, renderStack, doAct } from './acts.js';
 import { menu, closeMenu, shimmerSync, refreshRunButtons, pickRun, runLabel } from './ui.js';
 import { hooks } from './hooks.js';
@@ -241,7 +241,7 @@ function maybeAutoNotes() {
   clearTimeout(notesTimer);
   const change = notesChange;
   if (!change || change.id !== S.id || S.app.settings?.autoNotes === false || S.review.notes?.pending ||
-      change.request || change.attempted || !filesNeedingNotes(change.files, S.review.notes?.files || {}).length) return;
+      change.request || change.attempted || !filesNeedingNotes(change.files, currentNotes(S.review.notes)).length) return;
   notesTimer = setTimeout(async () => {
     if (notesChange !== change || changedT || S.app.settings?.autoNotes === false || S.review.notes?.pending) return;
     const retryAt = await attemptFileNotes(change, () => writeNotes({ auto: true, key: change.key }));
@@ -370,12 +370,22 @@ function onScroll() {
   requestAnimationFrame(() => { spy = false; spyNow(); hideTip(); });
 }
 // Next left: you are done with this file. It is marked viewed and you go to the next one left after it.
+// ] is done with this file: viewed, and on to the next one left. [ undoes it: the file goes back to unviewed and the page
+// back to where you were in it.
+let nextT = 0;
 function nextLeft() {
   const cur = S.current, f = cur && fileOf(cur);
   const next = nextUnviewed();
-  if (f && !isViewed(f) && f.kind !== 'generated') setViewed(cur, true);
+  const marking = !!(f && !isViewed(f) && f.kind !== 'generated');
+  // one place to come back to per ], taken before anything moves (marking can fold the file), dropped if ] did nothing
+  const entry = remember(() => { clearTimeout(nextT); if (marking) return setViewed(cur, false); });
+  if (marking) setViewed(cur, true);
   const to = next && next !== cur ? next : nextUnviewed();
-  if (to) setTimeout(() => goLoc({ path: to, line: 0 }), 60); else toast('Every file is viewed.');
+  if (!marking && !to) forget(entry);
+  if (!to) return toast('Every file is viewed.');
+  const id = S.id, scope = S.scope;
+  clearTimeout(nextT);
+  nextT = setTimeout(() => { if (S.id === id && S.scope === scope) goLoc({ path: to, line: 0 }, null, null, { remembered: true }); }, 60);
 }
 hooks.nextLeft = nextLeft;
 hooks.setFilter = (value) => { S.filter = value; const f = $('#filter'); if (f) f.value = value; renderTree(); };
@@ -959,7 +969,7 @@ function keySheet() {
   // a mouse action is not a key: the modifier is a key, the click or hover is a word
   const m = (mods, action, what) => `<span class="k">${mods.map((x) => `<kbd>${x}</kbd>`).join('')}<span class="mouse">${action}</span></span><span>${what}</span>`;
   const scrim = h(`<div class="scrim"><div class="palette keysheet"><div class="keys">
-    <h3 class="sh">MOVING</h3>${k(['j'], 'next file')}${k(['k'], 'previous file')}${k([']'], 'done with this file: mark it viewed, go to the next left')}${k(['['], 'return to where you were')}${k(['/'], 'find a file')}${k(['f'], 'search the repository')}${k(['⌘', 'K'], 'open or do anything')}
+    <h3 class="sh">MOVING</h3>${k(['j'], 'next file')}${k(['k'], 'previous file')}${k([']'], 'done with this file: mark it viewed, go to the next left')}${k(['['], 'back: un-view the file ] just marked, or return from a jump')}${k(['/'], 'find a file')}${k(['f'], 'search the repository')}${k(['⌘', 'K'], 'open or do anything')}
     <h3 class="sh">REVIEWING</h3>${k(['v'], 'mark the file viewed, or not viewed again')}${k(['o'], 'fold or unfold the file')}${k(['s'], 'unified or split')}${k(['g'], 'guide order or file order')}${k(['m'], 'hide or show the marks in the code')}
     <h3 class="sh">ON SELECTED LINES</h3>${k(['a'], 'ask there')}${k(['c'], 'comment for your GitHub review (pending until you submit)')}${k(['l'], 'add them to the chat')}${k(['↵'], 'send a question (⇧↵ for a new line)')}${k(['⌘', '↵'], 'add a comment to your review')}${k(['esc'], 'cancel')}
     <h3 class="sh">PANELS</h3>${k(['1'], 'overview')}${k(['2'], 'chat')}${k(['3'], 'marks')}${k(['t'], 'files')}${k(['p'], 'inspector')}${k(['r'], 'read the change again')}

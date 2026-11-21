@@ -291,8 +291,10 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .file.shut .fh { border-bottom: 0; }
 .file.shut .fb, .file.shut .relp { display: none; }
 .file.shut .file-note, .file-note:empty { display: none; }
-.file-note { margin: 0; padding: var(--s3) var(--s5) var(--s3) min(var(--code-x), 20%); max-width: calc(min(var(--code-x), 20%) + 72ch); color: var(--ink-2); font-size: var(--t-read); line-height: 1.6; overflow-wrap: anywhere; }
-.file-note code { font-family: var(--f-mono); font-size: var(--t-code); }
+/* a file's note: a caption, not a paragraph. The UI's size on a 20 px line in the third ink, on the file's own ground,
+   starting where the code's text starts and kept to a reading measure; the diff below stays the thing to read */
+.file-note { margin: 0; padding: var(--s2) var(--s5) var(--s3) min(var(--code-x), 20%); max-width: calc(min(var(--code-x), 20%) + 88ch); color: var(--ink-3); font: var(--t-ui)/20px var(--f-ui); overflow-wrap: anywhere; }
+.file-note code { font: var(--t-mono)/1 var(--f-mono); color: var(--ink-2); background: none; padding: 0; }
 .file-note-stale { color: var(--warn); font-size: var(--t-meta); }
 .file.shut.viewed .fh { height: 28px; position: static; background: none; backdrop-filter: none; }
 .file.shut.viewed .fh .path .base { color: var(--ink-3); font-weight: 400; }

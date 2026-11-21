@@ -258,3 +258,13 @@ test('the change fingerprint keeps its formula, so briefs written before still m
   const want = crypto.createHash('sha1').update('a.go:b1:o1\nb.go:b2:null').digest('hex').slice(0, 16);
   assert.equal(contentKey(files), want);
 });
+
+test('notes from an older prompt count as unwritten, so they are written again', async () => {
+  const { currentNotes, NOTES_VERSION } = await import('../web/js/file-notes.js');
+  const old = { key: 'a.go::b:o', note: 'old words' }, fresh = { key: 'b.go::b:o', note: 'new words', v: NOTES_VERSION };
+  // per note: a run cut short leaves the notes it did not reach marked old
+  assert.deepEqual(currentNotes({ files: { 'a.go': old, 'b.go': fresh } }), { 'b.go': fresh });
+  assert.deepEqual(currentNotes({ files: { 'a.go': { ...old, v: NOTES_VERSION - 1 } } }), {});
+  assert.deepEqual(filesNeedingNotes([file('a.go')], currentNotes({ files: { 'a.go': old } })).map((f) => f.path), ['a.go']);
+  assert.equal(normalizeNotes({ notes: [] }, [file('c.go')])['c.go'].v, NOTES_VERSION);
+});

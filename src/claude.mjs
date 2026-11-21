@@ -14,7 +14,7 @@ import { BIN, GO_ROOTS, MODELS, EFFORTS, DEFAULTS, STATE_DIR, HOME as HOME_DIR, 
 import { registry, contentKey, totalsOf, settings } from './workspaces.mjs';
 import { git, uid } from './util.mjs';
 import { WORKTREE, changedFiles, fileHunks, readWorktree } from './git.mjs';
-import { eligibleForNotes, fileNoteKey, filesNeedingNotes } from '../web/js/file-notes.js';
+import { eligibleForNotes, fileNoteKey, filesNeedingNotes, currentNotes, NOTES_VERSION } from '../web/js/file-notes.js';
 
 // a model still offered, or the newest of its line (the list moves on as providers ship); else the default
 const pickModel = (m, d = DEFAULTS.model) => currentModel(m) || (modelKind(m) === 'codex' ? codexDefault() : d);
@@ -557,48 +557,67 @@ ${files.map((f) => f.path).join('\n')}`;
   return p;
 }
 
-const NOTES_APPEND = "You write file notes for a code reviewer: one or two plain sentences that sit above a file's diff and say what part of the system the file is and what this change does to it. Exact, plain, short. Answer only through the structured output.";
+const NOTES_APPEND = "You write file notes for a code reviewer: one or two plain sentences above a file's diff that say what the diff cannot: what part of the system the file is, and what its part in this change is, how it connects to the other files changed. Exact, plain, short. Answer only through the structured output.";
 
-function notesPrompt(change, layout, files, diff) {
+// The brief, when one is written already: what the change is for, and how its files group, as the map reads it.
+function briefContext(ws) {
+  const b = ws.review.data.brief;
+  if (!b?.tldr) return '';
+  const tldr = Array.isArray(b.tldr) ? b.tldr.join(' ') : String(b.tldr);
+  const parts = (Array.isArray(b.sections) ? b.sections : []).filter((x) => x && typeof x.title === 'string')
+    .map((x, i) => `${i + 1}. ${x.title}: ${(Array.isArray(x.files) ? x.files : []).filter((p) => typeof p === 'string').join(', ')}`).join('\n');
+  return `What the change does, from the brief already written for it:\n${tldr.slice(0, 1500)}\n${parts ? `\nIts parts, in reading order:\n${parts}\n` : ''}\n`;
+}
+
+function notesPrompt(change, layout, files, diff, { all = files, brief = '' } = {}) {
   return `A reviewer is about to read this change one file at a time. They are a senior engineer who is new to this repository.
-Above each file's diff you get one note, so that before they read the file they know what part of the system it is
-and what the change does there.
+Above each file's diff you write one note. They read the diff right after it, so a note that retells the diff is
+wasted: say what the diff cannot.
 
 ${change}
-The repository, top two levels (\`git ls-files\`, folders with file counts, capped at 80 lines):
+${brief}The repository, top two levels (\`git ls-files\`, folders with file counts, capped at 80 lines):
 ${layout}
 
-The changed files to consider:
-${files.map((f) => `${f.status} ${f.path} +${f.added} -${f.deleted} ${f.kind}`).join('\n')}
+Every file in this change (status, path, +added -deleted, kind):
+${all.slice(0, 200).map((f) => `${f.status} ${f.path} +${f.added} -${f.deleted} ${f.kind}`).join('\n')}${all.length > 200 ? `\n… and ${all.length - 200} more` : ''}
 
-The diff:
+The files to write notes for, and their diffs:
 ${diff}
 
-Write a note only where it helps the reviewer. Code files usually get one. A test, config or docs file gets one only
-when its role is not obvious from its path. Leave out:
-- files whose diff is only formatting, renames of imports or a reordering;
-- one-line version or dependency bumps;
+A note says, in this order:
+1. What part of the system the file is, for someone who has never opened it, and what depends on it. Leave this out
+   when the path already says it (a test beside its code, a README).
+2. Why this change had to touch it: its job in this change, and how it connects to the other changed files. Name the
+   changed file it serves, or that serves it, when that is the link.
+
+It is not a list of what was added or renamed, and not the before and after: the reviewer is about to see both. One or
+two sentences, 35 words at most.
+
+For example, a note that retells the diff: "Adds \`retryAfter\` to the options and checks it in \`send()\`." A note that
+helps: "The one function every outgoing request passes through; the new backoff queue in \`queue.ts\` depends on it to
+report a 429 instead of retrying." Another that retells: "Renames \`--fg\` to \`--text\`." One that helps: "The
+variables the email templates share; the dark theme added in \`theme.ts\` reaches emails only through these names."
+
+When several files change the same way (one config per site, the same rename across packages), give the first a note
+and the others a short one that points back to it ("The same settings as the Frankfurt config.").
+
+Leave a file out when it needs no note:
+- its diff is only formatting, renames of imports or a reordering;
+- a one-line version or dependency bump;
 - fixtures and test data;
-- anything whose note would only restate its path.
+- anything whose note could only restate its path.
 
 Leaving a file out is better than a note that says nothing.
-
-Each note is one or two sentences, 40 words at most:
-1. The file's role in the repository, as a newcomer needs it: what part of the system this is and what uses it.
-2. What this change does here, concretely: the behaviour before and after, not a list of edits.
-
-For example: "The HTTP client's retry loop; every request goes through it. It now stops on a 429 and waits for
-\`Retry-After\` instead of backing off blindly."
 
 Don't:
 - repeat the file's name or path, or open with "This file" or "Here";
 - restate the pull request's title;
 - judge the change ("properly", "cleanly", "important");
-- name more than one function or type (put it in backticks).
+- name more than two functions or types (in backticks).
 
 If you know the file's role only from its name, keep that part short rather than guess, and say "likely" if you must
-infer it. You may use the read-only tools for at most six calls, and only where a file's role is unclear from the diff
-and the layout: read the top of the file, or grep for who calls a changed function. Do not read widely.`;
+infer it. You may use the read-only tools for at most six calls, where the link between files is unclear from the
+diffs: read the top of a file, or grep for who calls a changed function. Do not read widely.`;
 }
 
 function notesSchema(files) {
@@ -618,7 +637,7 @@ function notesSchema(files) {
 
 export function normalizeNotes(out, files) {
   // A successful omission is kept for this key so opening the change won't keep asking about it.
-  const notes = new Map(files.map((f) => [f.path, { key: fileNoteKey(f), note: null }]));
+  const notes = new Map(files.map((f) => [f.path, { key: fileNoteKey(f), note: null, v: NOTES_VERSION }]));
   for (const entry of Array.isArray(out.notes) ? out.notes : []) {
     const saved = notes.get(entry?.path);
     if (!saved || saved.note || typeof entry.note !== 'string') continue;
@@ -671,7 +690,7 @@ async function notesPlan(ws, { again, expectedKey }) {
     if (failure?.key === key && failure.retryAt > Date.now()) return { started: false, retryAt: failure.retryAt };
   }
   const previous = ws.review.data.notes;
-  return { key, previous, targets: filesNeedingNotes(files, previous?.files || {}, again) };
+  return { key, previous, targets: filesNeedingNotes(files, currentNotes(previous), again) };
 }
 
 export async function notes(ws, { model, effort, again = false, expectedKey } = {}, request = requestNotes) {
@@ -691,7 +710,7 @@ export async function notes(ws, { model, effort, again = false, expectedKey } = 
   if (running) return queue(running);
   // Another run can have saved notes while this request was reading the file list.
   const previous = ws.review.data.notes;
-  const targets = filesNeedingNotes(plan.targets, previous?.files || {}, again);
+  const targets = filesNeedingNotes(plan.targets, currentNotes(previous), again);
   if (!targets.length) return { started: false };
 
   const slot = { model: run.model, queued: null };
@@ -745,7 +764,7 @@ async function runNotes(ws, run, key, targets, previous, request) {
             prepared.set(f.path, { hunks });
           }
           if (!files.length) continue;
-          const prompt = notesPrompt(change, layout, files, await diffText(ws, files, 60000, prepared));
+          const prompt = notesPrompt(change, layout, files, await diffText(ws, files, 60000, prepared), { all: [...snapshot.values()].filter((f) => f.kind !== 'generated'), brief: briefContext(ws) });
           const result = await request(ws, run, abort, prompt, notesSchema(files));
           if (abort.signal.aborted) return;
           const current = new Map((await ws.files('all', { fresh: true })).map((f) => [f.path, fileNoteKey(f)]));

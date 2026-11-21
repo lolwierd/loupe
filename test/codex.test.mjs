@@ -292,7 +292,7 @@ test('file notes run separately, persist each batch, and resend only changed or 
   const saved = () => JSON.parse(fs.readFileSync(path.join(temp, 'state', 'ws', workspace.split('/').at(-1), 'review.json'), 'utf8')).notes;
   const state = await api('/api/state');
   assert.equal(state.defaults.notesModel, 'claude-haiku-5-5');
-  assert.equal(state.defaults.notesEffort, 'low');
+  assert.equal(state.defaults.notesEffort, 'medium');
   assert.equal(state.settings.autoNotes, true);
   const initial = await wsApi('/files');
   await api('/api/settings', { autoNotes: false });

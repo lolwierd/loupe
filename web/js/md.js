@@ -5,6 +5,7 @@
 // http(s), and path:line turns into a link that opens the place in the diff.
 import { Marked } from '/vendor/marked.js';
 import { esc, S } from './core.js';
+import { EMOJI as GITHUB_EMOJI } from './emoji.js';
 
 const LOC = /(?<![\w/.-])((?:[\w.@-]+\/)*[\w.@-]+\.(?:go|mod|sum|tmpl|tpl|sql|ya?ml|json|md|j2|[cm]?js|jsx|[cm]?ts|tsx|py|rb|rs|hcl|tf|sh|toml|proto|css|html|swift|kt|java|c|h|cc|cpp|lua|nix|service|conf|ini))(?::(\d+)(?:[-–](\d+))?)?(?![\w])/g;
 // a place is shown by its file name and line (the full path is in its title): a paragraph of refs stays short, and the
@@ -60,7 +61,8 @@ function clean(html, images) {
 }
 
 // ------------------------------------------------------------------ :emoji:, callouts, @people, #123
-const EMOJI = {
+// GitHub's full list (emoji.js), and a few names people type that GitHub does not know, kept from before
+const ALIASES = {
   white_check_mark: '✅', heavy_check_mark: '✔️', check: '✔️', x: '❌', heavy_multiplication_x: '✖️', negative_squared_cross_mark: '❎', warning: '⚠️', no_entry: '⛔', no_entry_sign: '🚫',
   rotating_light: '🚨', exclamation: '❗', question: '❓', grey_question: '❔', bulb: '💡', memo: '📝', pencil: '📝', pencil2: '✏️', book: '📖', books: '📚', link: '🔗', lock: '🔒', unlock: '🔓', key: '🔑',
   rocket: '🚀', tada: '🎉', sparkles: '✨', fire: '🔥', boom: '💥', zap: '⚡', star: '⭐', star2: '🌟', bug: '🐛', beetle: '🐞', wrench: '🔧', hammer: '🔨', hammer_and_wrench: '🛠️', gear: '⚙️', toolbox: '🧰',
@@ -76,10 +78,19 @@ const EMOJI = {
   coffee: '☕', pizza: '🍕', beer: '🍺', computer: '💻', desktop_computer: '🖥️', keyboard: '⌨️', floppy_disk: '💾', cd: '💿', dvd: '📀', file_folder: '📁', open_file_folder: '📂', page_facing_up: '📄', clipboard: '📋',
   goal_net: '🥅', building_construction: '🏗️', card_file_box: '🗃️', alembic: '⚗️', passport_control: '🛂', bricks: '🧱', monocle_face: '🧐', technologist: '🧑‍💻', busts_in_silhouette: '👥', bust_in_silhouette: '👤',
 };
+const EMOJI = { ...ALIASES, ...GITHUB_EMOJI };
 const ALERTS = { NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution' };
+// fn on the text between tags, skipping what is inside <code>, <pre> and <a>. Tags are read whole, quoted attribute values
+// included, so a > inside an alt or title is never taken for the end of a tag.
 function textOutsideCode(html, fn) {
-  // apply fn to text between tags, skipping <code>…</code>, <pre>…</pre> and <a>…</a>
-  return html.split(/(<pre[\s>][\s\S]*?<\/pre>|<code[\s>][\s\S]*?<\/code>|<a [^>]*>[\s\S]*?<\/a>)/).map((part, i) => (i % 2 ? part : part.replace(/>([^<]+)</g, (m, t) => '>' + fn(t) + '<'))).join('');
+  let skip = 0;
+  return html.replace(/<(\/?)([a-zA-Z][\w-]*)(?:[^>"']|"[^"]*"|'[^']*')*>|[^<]+/g, (tok, close, tag) => {
+    if (tag) {
+      if (/^(code|pre|a)$/i.test(tag) && !/\/>$/.test(tok)) skip = Math.max(0, skip + (close ? -1 : 1));
+      return tok;
+    }
+    return skip ? tok : fn(tok);
+  });
 }
 function github(html) {
   html = html.replace(/<blockquote>\s*<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:<br>)?/g, (m, k) => `<blockquote class="alert ${k.toLowerCase()}"><p class="alert-t">${ALERTS[k]}</p><p>`);

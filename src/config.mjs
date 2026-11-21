@@ -94,7 +94,7 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const DEFAULTS = {
   model: 'claude-opus-5-5', effort: 'xhigh', // a question, until the page remembers what you last picked
   briefModel: 'claude-sonnet-5-5', briefEffort: 'high', // the map of a change: it reads around the change, so it gets room to think
-  notesModel: 'claude-haiku-5-5', notesEffort: 'low',
+  notesModel: 'claude-haiku-5-5', notesEffort: 'medium', // medium: at low it retold the diffs; medium links the files (22 Nov)
 };
 // put a new list in place; the defaults follow their lines (a question on the newest Opus, the map on the newest Sonnet)
 export function setModels(claude, codex) {
