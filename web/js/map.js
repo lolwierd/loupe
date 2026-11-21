@@ -331,7 +331,7 @@ function mapLayout(d, f, dir, narrow) {
   for (const n of at.values()) add(n.x, n.y, n.x + n.w, n.y + n.h);
   for (const r of routes) for (const [x, y] of r.pts) add(x - 4, y - 4, x + 4, y + 4);
   for (const l of lab.labels) add(...l.b);
-  const boxes = d.groups.map((g) => {
+  const boxes = (d.groups || []).map((g) => {
     const ns = g.nodes.map((gid) => at.get(gid)).filter(Boolean);
     if (!ns.length) return null;
     const b = [Math.min(...ns.map((n) => n.x)) - 16, Math.min(...ns.map((n) => n.y)) - 28, Math.max(...ns.map((n) => n.x + n.w)) + 16, Math.max(...ns.map((n) => n.y + n.h)) + 16];
@@ -441,7 +441,6 @@ export const diagramSVG = (d, dir) => draw(d, dir).svg;
 // the room the drawing has inside the card; a map that does not fit across turns to read top to bottom
 const room = () => { const c = $('#cards'); return c ? c.clientWidth - 2 * 16 - 2 - 2 * 16 : innerWidth - 700; };
 // opening it large helps only when the whole drawing, as Claude laid it out, fits the window but not the column
-const bigHelps = (d, dir) => { const w = draw(d, 'lr').w; return (dir === 'tb' || w > room()) && w <= innerWidth - 96; };
 function pickDir(d) {
   const lr = draw(d, 'lr').w;
   if (lr <= room()) return 'lr';
@@ -465,11 +464,10 @@ export function mapCardHTML(b) {
   queueMicrotask(watchWidth);
   const open = pref.get('mapOpen', true);
   const c = b.context || {}, ds = b.diagrams || [], plan = b.plan || {};
-  const o = { images: modelKind(b.model) !== 'codex' }; // Codex's words never fetch an image
+  const o = { images: modelKind(b.model) !== 'codex', citations: b.citations };
   const which = Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0));
   const d = ds[which], dir = d ? pickDir(d) : 'lr';
-  const cramped = d && bigHelps(d, dir);
-  const big = cramped ? `<button class="link dgbig" data-act="mapbig" title="The drawing across the whole window">Open large</button>` : '';
+  const big = `<button class="link dgbig" data-act="mapbig" title="The drawing across the whole window">Open large</button>`;
   const fig = d ? `<figure class="dg" data-dir="${dir}" data-room="${Math.round(room())}"><div class="dgbar">${ds.length > 1 ? `<div class="dgtabs" role="tablist">${ds.map((x, i) => `<button role="tab" data-act="maptab" data-i="${i}" aria-selected="${i === which}">${esc(x.title || (x.kind === 'flow' ? 'Flow' : 'Map'))}</button>`).join('')}</div>` : `<div class="dgtabs"><span class="one">${esc(d.title || 'Map')}</span></div>`}${big}</div>` +
     `<div class="dgview">${diagramSVG(d, dir)}</div>${d.caption ? `<figcaption>${inline(d.caption, o)}</figcaption>` : ''}${legend(d)}</figure>` : '';
   const text = `<div class="mtext">` +
@@ -489,7 +487,7 @@ hooks.mapChanged = () => {
   const m = $('#mapcard'), html = mapCardHTML(S.review.brief);
   if (m) { m.outerHTML = html; return; }
   const cards = $('#cards');
-  if (!html || !cards || !cards.querySelector('.card')) return;
+  if (!html || !cards || !cards.querySelector(':scope > .file')) return;
   const after = cards.querySelector(':scope > .banner');
   if (after) after.insertAdjacentHTML('afterend', html); else cards.insertAdjacentHTML('afterbegin', html);
 };
@@ -497,25 +495,39 @@ hooks.mapStep = () => { const t = $('#mapcard .mstate'); if (t && S.review.brief
 hooks.briefPending = () => hooks.mapChanged();
 
 // the drawing across the whole window, as Claude laid it out, in the same dialog frame as the rest of loupe
-function openLarge() {
-  const b = S.review.brief, ds = b?.diagrams || [], d = ds[Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0))];
-  if (!d) return;
+function openLarge(focusNode, diagram) {
+  const b = S.review.brief, ds = b?.diagrams || [];
+  const active = diagram || ds[Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0))];
+  if (!active) return;
   const opener = document.activeElement;
   const scrim = document.createElement('div');
   scrim.className = 'sheetscrim';
-  scrim.innerHTML = `<div class="sheet k-map" role="dialog" aria-modal="true" aria-labelledby="mapbigt" id="mapbig"><header class="shh"><h2 class="t" id="mapbigt">${esc(d.title || 'Map')}</h2>${legend(d)}<button class="icon" data-mb="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
-    `<div class="mbview">${diagramSVG(d, 'lr')}</div>${d.caption ? `<p class="mbcap">${inline(d.caption, { images: modelKind(b.model) !== 'codex' })}</p>` : ''}</div>`;
+  scrim.innerHTML = `<div class="sheet k-map" role="dialog" aria-modal="true" aria-labelledby="mapbigt" id="mapbig"><header class="shh"><h2 class="t" id="mapbigt">${esc(active.title || 'Map')}</h2>${legend(active)}<button class="icon" data-mb="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
+    `<div class="mbview">${diagramSVG(active, 'lr')}</div>${active.caption ? `<p class="mbcap">${inline(active.caption, { images: modelKind(b?.model) !== 'codex', citations: b?.citations })}</p>` : ''}</div>`;
   const close = () => { scrim.remove(); document.removeEventListener('keydown', key, true); if (opener?.isConnected) opener.focus(); };
   const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
   scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) close(); });
   scrim.addEventListener('click', (e) => {
     if (e.target.closest('[data-mb="close"]')) return close();
-    const nd = e.target.closest('.nd[data-ref]');
-    if (nd) { close(); goRef(nd.dataset.ref); }
+    const nd = e.target.closest('.nd[data-ref]'), link = e.target.closest('a.loc');
+    if (nd || link) {
+      const view = scrim.querySelector('.mbview'), { scrollTop, scrollLeft } = view;
+      close();
+      const restore = () => {
+        openLarge(nd?.dataset.id, active);
+        const restored = $('#mapbig .mbview');
+        if (restored) { restored.scrollTop = scrollTop; restored.scrollLeft = scrollLeft; }
+      };
+      if (nd) goRef(nd, restore);
+      else hooks.goLoc?.({ path: link.dataset.p, line: Number(link.dataset.l), excerpt: link.dataset.excerpt }, link, restore);
+    }
   });
   document.addEventListener('keydown', key, true);
   document.body.append(scrim);
-  requestAnimationFrame(() => scrim.querySelector('[data-mb="close"]')?.focus());
+  requestAnimationFrame(() => {
+    const node = focusNode && scrim.querySelector(`.nd[data-id="${CSS.escape(focusNode)}"]`);
+    (node || scrim.querySelector('[data-mb="close"]'))?.focus({ preventScroll: true });
+  });
 }
 // the column changes width when a pane opens or closes: turn the drawing when the other way fits better
 let watched = null, observer = null, rz = 0;
@@ -530,16 +542,16 @@ function watchWidth() {
     const fig = $('#mapcard .dg'), ds = S.review.brief?.diagrams || [], d = ds[Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0))];
     if (!fig || !d) return;
     const dir = pickDir(d), lanes = dir === 'tb' && Math.abs(room() - Number(fig.dataset.room)) >= 8;
-    if (fig.dataset.dir !== dir || lanes || !!fig.querySelector('.dgbig') !== bigHelps(d, dir)) hooks.mapChanged?.();
+    if (fig.dataset.dir !== dir || lanes) hooks.mapChanged?.();
   }, 120); });
   observer.observe(cards);
 }
 
 // ------------------------------------------------------------------ what you can do on it
-function goRef(ref) {
-  const m = /^(.*?)(?::(\d+))?$/.exec(ref);
+function goRef(node, restore) {
+  const m = /^(.*?)(?::(\d+))?$/.exec(node.dataset.ref);
   if (!m) return;
-  hooks.goLoc?.({ path: m[1], line: Number(m[2]) || 0 });
+  hooks.goLoc?.({ path: m[1], line: Number(m[2]) || 0, excerpt: S.review.brief?.citations?.[node.dataset.ref], side: node.classList.contains('removed') ? 'old' : 'new' }, node, restore);
 }
 // pointing at a part lights its arrows and the parts at their other ends; the rest of the sheet recedes
 function light(svg, id) {
@@ -560,11 +572,11 @@ document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-act]');
   if (b?.dataset.act === 'maptoggle') { const open = card.classList.toggle('shut') === false; pref.set('mapOpen', open); b.setAttribute('aria-expanded', String(open)); return; }
   if (b?.dataset.act === 'maptab') { pref.set('mapTab', Number(b.dataset.i)); card.outerHTML = mapCardHTML(S.review.brief); return; }
-  if (b?.dataset.act === 'mapstart') return hooks.goLoc?.({ path: b.dataset.p, line: 0 });
+  if (b?.dataset.act === 'mapstart') return hooks.goLoc?.({ path: b.dataset.p, line: 0 }, b);
   if (b?.dataset.act === 'maprebrief') return hooks.rebrief?.();
   if (b?.dataset.act === 'mapbig') return openLarge();
   const nd = e.target.closest('.nd[data-ref]');
-  if (nd) return goRef(nd.dataset.ref);
+  if (nd) return goRef(nd);
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;

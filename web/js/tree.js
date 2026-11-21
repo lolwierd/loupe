@@ -76,17 +76,17 @@ export function renderTree() {
   } else {
     const node = (n, depth) => [...n.dirs.values()].sort((a, b) => a.name.localeCompare(b.name)).map((d) => {
       const all = collect(d), left = leftIn(all), done = all.every((f) => isViewed(f) || f.kind === 'generated');
-      return `<button class="trow dir${S.dirShut.has(d.path) ? ' shut' : ''}${done ? ' viewed' : ''}" data-d="${esc(d.path)}" style="--d:${depth}">${I.chev}<span class="nm">${esc(d.name)}</span><span class="meta"><span class="lines">${done ? icon('check', '--ok') : left ? left.toLocaleString() : ''}</span></span></button>` +
+      const slash = d.name.lastIndexOf('/') + 1;
+      return `<button class="trow dir${S.dirShut.has(d.path) ? ' shut' : ''}${done ? ' viewed' : ''}" data-d="${esc(d.path)}" style="--d:${depth}" title="${esc(d.path)}" aria-label="${esc(d.path)}">${I.chev}<span class="nm dirname">${slash ? `<span class="parent">${esc(d.name.slice(0, slash))}</span>` : ''}<span class="leaf">${esc(d.name.slice(slash))}</span></span><span class="meta"><span class="lines">${done ? icon('check', '--ok') : left ? left.toLocaleString() : ''}</span></span></button>` +
         (S.dirShut.has(d.path) ? '' : node(d, depth + 1));
     }).join('') + n.files.map((f) => fileRow(f, depth, f.path.split('/').pop())).join('');
     html = files.length ? node(buildTree(files), 0) : '';
   }
-  $('#tlist').innerHTML = html || `<div class="tempty">${q ? '0 matches' : 'No changes.'}</div>`;
+  $('#tlist').innerHTML = q && !files.length
+    ? '<div class="tempty">No matching files. <button class="link" data-act="clearfilter">Clear</button></div>'
+    : html || '<div class="tempty">No changes.</div>';
   markCurrent();
   for (const f of S.files) { const c = cardEl(f.path); if (c) c.hidden = !match(f); }
-  let none = $('#nomatch');
-  if (q && !files.length) { if (!none) { none = document.createElement('div'); none.id = 'nomatch'; none.className = 'state'; $('#cards')?.prepend(none); } none.innerHTML = `<div class="box"><div class="big">No changed file matches “${esc(S.filter)}”</div><div>Clear the filter (esc in the box) to see them all.</div></div>`; }
-  else none?.remove();
 }
 const collect = (d) => [...d.files, ...[...d.dirs.values()].flatMap(collect)];
 

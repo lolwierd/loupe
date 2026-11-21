@@ -7,7 +7,7 @@ import { BIN } from './config.mjs';
 export function git(cwd, argv, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = execFile(BIN.git, ['--no-pager', ...argv], {
-      cwd, maxBuffer: 512 * 1024 * 1024, encoding: opts.encoding || 'utf8', timeout: opts.timeout || 120000,
+      cwd, maxBuffer: opts.maxBuffer ?? 512 * 1024 * 1024, encoding: opts.encoding || 'utf8', timeout: opts.timeout || 120000,
       env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', ...(opts.env || {}) },
     }, (err, stdout, stderr) => {
       if (err) { err.stderr = String(stderr || ''); err.message = `git ${argv[0]}: ${(String(stderr || '').trim().split('\n').pop()) || err.message}`; return reject(err); }

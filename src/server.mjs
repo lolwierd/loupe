@@ -19,7 +19,7 @@ import { stackFor } from './stacks.mjs';
 import { tokens } from './highlight.mjs';
 import { goplsFor, lspState, stopAll, readableExternal, lineAt } from './lsp.mjs';
 import { uid, safeRel } from './util.mjs';
-import { WORKTREE } from './git.mjs';
+import { WORKTREE, searchRepository, citationLine, readAt } from './git.mjs';
 import { git as gitOut } from './util.mjs';
 
 const args = process.argv.slice(2);
@@ -231,6 +231,22 @@ async function route(req, res, url) {
       files: files.map((f) => ({ ...f, viewed: ws.isViewed(f), changedSinceViewed: ws.wasViewed(f) })),
       left: ws.leftFor(files), totals: W.totalsOf(files), untrackedSkipped: files.untrackedSkipped || 0,
     });
+  }
+  if (method === 'GET' && sub === '/search') {
+    const query = (url.searchParams.get('q') || '').trim();
+    if (query.length > 160 || /[\r\n\0]/.test(query)) return send(res, 400, { error: 'Enter up to 160 characters on one line.' });
+    return send(res, 200, await searchRepository(ws.gitDir, ws.range(scope).new, query));
+  }
+  if (method === 'GET' && sub === '/citation') {
+    const p = url.searchParams.get('path'), excerpt = url.searchParams.get('excerpt');
+    const side = url.searchParams.get('side') === 'old' ? 'old' : 'new';
+    const line = Number(url.searchParams.get('line'));
+    if (!safeRel(p) || !excerpt || excerpt.length > 160 || !Number.isSafeInteger(line) || line < 1) return send(res, 400, { error: 'Invalid citation.' });
+    if (!(await ws.readable(scope, p))) return send(res, 200, { line: null });
+    const text = side === 'new' && ws.range(scope).new === WORKTREE
+      ? await readAt(ws.gitDir, WORKTREE, p)
+      : await ws.text(scope, side, p);
+    return send(res, 200, { line: citationLine(text, line, excerpt) });
   }
   if (method === 'GET' && sub === '/diff') {
     const fp = url.searchParams.get('path');

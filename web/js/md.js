@@ -9,7 +9,7 @@ import { esc, S } from './core.js';
 const LOC = /(?<![\w/.-])((?:[\w.@-]+\/)*[\w.@-]+\.(?:go|mod|sum|tmpl|tpl|sql|ya?ml|json|md|j2|[cm]?js|jsx|[cm]?ts|tsx|py|rb|rs|hcl|tf|sh|toml|proto|css|html|swift|kt|java|c|h|cc|cpp|lua|nix|service|conf|ini))(?::(\d+)(?:[-–](\d+))?)?(?![\w])/g;
 // a place is shown by its file name and line (the full path is in its title): a paragraph of refs stays short, and the
 // click still opens the exact file
-const locLink = (m, p, a) => `<a class="loc" data-p="${esc(p)}" data-l="${a}" title="${m}">${m.slice(p.lastIndexOf('/') + 1)}</a>`; // m is already HTML text
+const locLink = (m, p, a, excerpt) => `<a class="loc" role="link" tabindex="0" data-p="${esc(p)}" data-l="${a}"${excerpt ? ` data-excerpt="${esc(excerpt)}"` : ''} title="${m}">${m.slice(p.lastIndexOf('/') + 1)}</a>`; // m is already HTML text
 const linkify = (html) => html.replace(LOC, (m, p, a) => (a ? locLink(m, p, a) : m));
 
 const mk = new Marked({ gfm: true, breaks: false });
@@ -92,11 +92,11 @@ function github(html) {
     .replace(/^<div>|<\/div>$/g, '');
 }
 
-export function md(src, { links = true, images = true } = {}) {
+export function md(src, { links = true, images = true, citations = {} } = {}) {
   let html;
   const text = String(src || '').replace(/<!--[\s\S]*?-->/g, '');
   try { html = github(clean(mk.parse(text), images)); } catch { html = `<p>${esc(text)}</p>`; }
   if (!links) return html;
   // Linkify text outside of <pre> (code blocks are linkified above), including inline code.
-  return html.split(/(<pre>[\s\S]*?<\/pre>|<a [^>]*>[\s\S]*?<\/a>)/).map((part, i) => (i % 2 ? part : part.replace(/>([^<]+)</g, (m, t) => '>' + t.replace(LOC, (mm, p, a) => (a ? locLink(mm, p, a) : mm)) + '<'))).join('');
+  return html.split(/(<pre>[\s\S]*?<\/pre>|<a [^>]*>[\s\S]*?<\/a>)/).map((part, i) => (i % 2 ? part : part.replace(/>([^<]+)</g, (m, t) => '>' + t.replace(LOC, (mm, p, a) => (a ? locLink(mm, p, a, citations[`${p}:${a}`]) : mm)) + '<'))).join('');
 }

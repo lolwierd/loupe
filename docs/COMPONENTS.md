@@ -12,8 +12,11 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   inputs, selects, the scope button, icon buttons), `--r3` 8 (surfaces: lists, cards, menus, dialogs, the palette).
   Nothing is fully round.
 - Heights: 24 (compact: in-row actions, chips, segmented buttons), 28 (standard: every button, input, select and
-  icon button in chrome), 32 (dialog footer buttons). Rows: 28 (menus, palette, file tree), 32 (lists in the panel and
-  dialogs), 52 (home rows).
+  icon button in chrome), 32 (dialog footer buttons), 40 (a large field and the button beside it). Rows: 28 (menus,
+  palette, file tree), 32 (lists in the panel and dialogs), 52 (home rows).
+- Alignment: controls side by side share one height and one centre line; controls stacked in a pane's head share its
+  left and right edges. A key hint for a field sits inside the field. Measure it (the sweep's `misaligned`,
+  `mixed-heights` and `edge` checks), do not eyeball it.
 - Icons: 16 in icon buttons, 14 beside 13 px text, 12 beside 11 px text. Line icons 1.5 stroke. Pixel sprites only:
   the spark (Claude), the check (viewed), avatars.
 
@@ -26,7 +29,7 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
 - Surfaces: `--bg` (code, fields), `--raise` (menus, dialogs), `--glass` (frame), `--hover`, `--press`.
 
 ## Components
-- **Button**, four kinds only. *Primary*: ink fill, on-act text. *Default*: `--bg`, 1 px `--rule-strong`, ink text.
+- **Button**, four kinds only. The frame's top bar carries no primary: its next step is a default button. *Primary*: ink fill, on-act text. *Default*: `--bg`, 1 px `--rule-strong`, ink text.
   *Ghost*: no border, `--ink-2`, hover `--hover`. *Danger*: default with red text; a destructive confirm is a red
   fill. All 28 px (24 in rows, 32 in dialog footers), padding 0 12 (0 8 at 24), 13 px 500, `--r2` (`--r1` at 24).
   A key hint is a `<kbd>` inside the button, after the label.
@@ -38,10 +41,15 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
 - **Segmented control**: 24 px buttons inside a 28 px `--hover` track, `--r2` track, `--r1` buttons; pressed = `--bg` +
   1 px ring `--rule-strong` + ink text. Same everywhere (verdict, Write/Preview tabs are tabs, not segments).
 - **Tabs**: text, 13 px 500, `--ink-3`; selected ink with a 2 px ink underline. Panel tabs and Write/Preview alike.
-- **Chip** (a value you can act on: an attachment, a branch, a ref): 24 px, `--r1`, 1 px `--rule`, 12 px.
+- **Chip** (a value you can act on: an attachment, a branch, a ref): 24 px, `--r1`, 1 px `--rule`, 12 px. A head and
+  its base (`branch → main`) wrap as one unit.
+- **Model picker**: the model and effort as words with a chevron (`Sonnet 5.5 · high ⌄`), 24 px, 13 px 500 `--ink-2`, no
+  box; hover `--hover`. The spark only for Claude models. The same drawing in a line of links and beside a send button.
 - **Pill** (a state you only read: open, draft, test, new, high risk): 18 px, `--r1`, 11 px 500, padding 0 8,
   `--hover` background, `--ink-2` text; semantic variants tint background and text with ok, warn or danger.
-- **Section header**: 11 px 600 caps, tracking 0.05em, `--ink-3`; optional count (11 px mono `--ink-3`) after it, and
+- **Group header in a list** (the file list's guide sections): on the rows' own grid, its number in their glyph column
+  and its title on their text edge, 13 px 600 ink, two lines at most; a 1 px rule and 8 above it. Never caps.
+- **Section header**: 11 px 600 caps (short labels only: caps never carry a sentence), tracking 0.05em, `--ink-3`; optional count (11 px mono `--ink-3`) after it, and
   an optional link button or icon button at the right. 16 above (24 between panel sections), 8 below.
 - **Row** (file tree, menus, palette, Marks list, stack, home): one hover (`--hover`), one current (`--press`), one
   keyboard focus (2 px blue inset ring), `--r1` corners inside lists with padding, square in full-bleed lists.
@@ -54,3 +62,7 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
 - **Empty state**: one line in `--ink-3` 13 px, with the one action that fills it as a link button.
 - **Toast**: bottom centre, `--act` background, on-act text, `--r2`, 13 px; an action in it is underlined text.
 - **Motion**: background and colour 120 ms `--ease`; nothing slides except dialogs (160 ms rise) and menus (none).
+
+## Model-written text
+The map, the guide's heads and the TLDR are prose a person reads. Code in them is the mono face in the text's own
+colour, no chip; a place is shown as `file.go:123` with the full path on hover. Chat answers keep chips.

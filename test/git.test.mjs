@@ -70,3 +70,22 @@ test('an empty untracked file has no added lines or hunks', async () => {
   assert.equal(f.added, 0);
   assert.deepEqual(await fileHunks(repo, range, f), []);
 });
+
+test('repository search uses the compared revision or the current working tree', async () => {
+  const { searchRepository } = await import('../src/git.mjs');
+  const committed = await searchRepository(repo, base, 'bye');
+  assert.equal(committed.revision, base);
+  assert.deepEqual(committed.matches, [{ path: 'gone.txt', line: 1, excerpt: 'bye' }]);
+  assert.deepEqual((await searchRepository(repo, WORKTREE, 'bye')).matches, []);
+  assert.deepEqual((await searchRepository(repo, WORKTREE, '# new')).matches, [{ path: 'fresh.md', line: 1, excerpt: '# new' }]);
+  assert.deepEqual((await searchRepository(repo, WORKTREE, 'tab')).matches, [{ path: 'odd\tname.txt', line: 1, excerpt: 'tab' }]);
+  assert.deepEqual((await searchRepository(repo, base, 'func [')).matches, []);
+});
+
+test('citations move only to a unique nearby excerpt', async () => {
+  const { citationLine } = await import('../src/git.mjs');
+  assert.equal(citationLine('before\nnoise\nfunc  Target() {}\n', 2, 'func Target()'), 3);
+  assert.equal(citationLine('func Target()\nfunc Target()\n', 1, 'func Target()'), null);
+  assert.equal(citationLine('noise\n'.repeat(20) + 'func Target()', 1, 'func Target()'), null);
+  assert.equal(citationLine('func Other()', 1, 'func Target()'), null);
+});

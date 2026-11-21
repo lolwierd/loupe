@@ -12,26 +12,79 @@ export function resolvePath(p) {
   return hit ? hit.path : p;
 }
 
-export async function goLoc(loc) {
-  hideTip(); $('#refs')?.remove();
-  if (loc.external) {
-    if (!loc.readable) return toast(`Defined outside the repository: ${loc.path}:${loc.line}`);
-    return openViewer({ path: loc.path, line: loc.line, ext: true });
+const returns = [];
+let jump = 0;
+function paintReturn() {
+  for (const id of ['#review-back', '#vback']) {
+    const button = $(id);
+    if (button) button.hidden = !returns.length;
   }
-  const p = resolvePath(loc.path);
-  if (!fileOf(p)) return openViewer({ path: p, line: loc.line });
+}
+export function clearReturns() { jump++; returns.length = 0; closeViewer(); paintReturn(); }
+export async function goBack() {
+  const prev = returns.pop();
+  if (!prev) return;
+  const request = ++jump;
+  closeViewer();
+  if (prev.filter !== S.filter) hooks.setFilter?.(prev.filter);
+  if (prev.view) await openViewer(prev.view);
+  if (request !== jump) return;
+  await prev.restore?.();
+  if (request !== jump) return;
+  for (const [id, top, left, offset] of prev.scroll) {
+    const el = $(id);
+    if (!el) continue;
+    const originTop = offset != null && prev.origin?.isConnected ? prev.origin.getBoundingClientRect().top : null;
+    el.scrollTop = originTop === null ? top : el.scrollTop + originTop - el.getBoundingClientRect().top - offset;
+    el.scrollLeft = left;
+  }
+  if (prev.origin?.isConnected) prev.origin.focus({ preventScroll: true });
+  paintReturn();
+}
+
+export async function goLoc(loc, origin, restore) {
+  if (loc.external && !loc.readable) return toast(`Defined outside the repository: ${loc.path}:${loc.line}`);
+  const scope = S.scope, id = S.id;
+  const request = ++jump;
+  const current = () => request === jump && S.scope === scope && S.id === id;
+  if (origin || restore || S.view) {
+    const scroll = ['#center', '#pbody', '#vbody'].flatMap((id) => {
+      const el = $(id);
+      if (!el) return [];
+      const offset = origin && el.contains?.(origin) ? origin.getBoundingClientRect().top - el.getBoundingClientRect().top : null;
+      return [[id, el.scrollTop, el.scrollLeft, offset]];
+    });
+    returns.push({ scroll, origin, restore, view: S.view, filter: S.filter });
+    if (returns.length > 24) returns.shift();
+    paintReturn();
+  }
+  hideTip(); $('#refs')?.remove();
+  if (loc.external) return openViewer({ path: loc.path, line: loc.line, ext: true });
+  const p = loc.exact ? loc.path : resolvePath(loc.path);
+  if (loc.excerpt && loc.line) {
+    const resolved = await api(wsApi('/citation', { path: p, line: loc.line, side: loc.side || 'new', excerpt: loc.excerpt })).catch(() => null);
+    if (!current()) return;
+    const needsCheck = !resolved?.line;
+    origin?.classList.toggle('citation-check', needsCheck);
+    if (needsCheck) toast('Citation needs checking. No unique nearby match.');
+    loc = { ...loc, line: resolved?.line || 0 };
+  }
+  if (!fileOf(p)) return openViewer({ path: p, line: loc.line, side: loc.side });
   closeViewer();
   const card = cardEl(p);
+  if (!card) return openViewer({ path: p, line: loc.line, side: loc.side });
   if (card.hidden) hooks.clearFilter?.();
   if (card.classList.contains('shut')) toggleFold(p, false);
-  await loadFile(p);
+  try { await loadFile(p); } catch (e) { if (current()) toast(e.message); return; }
+  if (!current() || cardEl(p) !== card) return;
   hooks.setCurrent?.(p);
   if (!loc.line) { card.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); return; }
   const side = loc.side === 'old' ? 'old' : 'new';
   let rows = S.rows.get(p);
   if (findRow(rows, { side, line: loc.line }) < 0 && side === 'new') { if (await revealAround(p, loc.line)) renderBody(p); rows = S.rows.get(p); }
+  if (!current() || cardEl(p) !== card) return;
   const i = findRow(rows, { side, line: loc.line });
-  if (i < 0) return openViewer({ path: p, line: loc.line });
+  if (i < 0) return openViewer({ path: p, line: loc.line, side });
   const items = S.items.get(p);
   const k = items.findIndex((it) => it.i === i || it.L === i || it.R === i);
   const el = card.querySelector(`.ln[data-k="${k}"]`);
@@ -56,33 +109,35 @@ export async function goThread(id) {
 }
 
 // ------------------------------------------------------------------ the whole-file viewer
-export async function openViewer(v, push = true) {
+export async function openViewer(v) {
+  const side = v.side === 'old' ? 'old' : 'new';
   let el = $('#viewer');
   if (!el) {
     el = h(`<div class="viewer" id="viewer" role="dialog" aria-label="File"><div class="vhead"><button class="icon sm" id="vback" title="Back" aria-label="Back" hidden>${I.chevL}</button><span class="vpath" id="vpath"></span><span class="faint" id="vnote"></span><span class="sp"></span><button class="btn sm" id="vclose">Close <kbd>esc</kbd></button></div><div class="vbody" id="vbody"></div></div>`);
     document.body.append(el);
     $('#vclose').onclick = closeViewer;
-    $('#vback').onclick = () => { const prev = S.vstack.pop(); if (prev) openViewer(prev, false); };
+    $('#vback').onclick = goBack;
   }
-  if (push && S.view) S.vstack.push(S.view);
   S.view = v;
-  $('#vback').hidden = !S.vstack.length;
+  paintReturn();
   $('#vpath').textContent = v.path;
-  $('#vnote').textContent = v.ext ? 'outside the repository, read-only' : fileOf(v.path) ? 'the whole file, new side' : 'unchanged by this change';
+  $('#vnote').textContent = v.ext ? 'outside the repository, read-only' : fileOf(v.path) ? `the whole file, ${side} side` : 'unchanged by this change';
   const body = $('#vbody');
   body.dataset.p = v.ext ? '' : v.path;
   body.className = 'vbody' + (!v.ext && v.path.endsWith('.go') ? ' golang' : '');
   body.innerHTML = '<div class="loadd">Loading…</div>';
   try {
-    const f = v.ext ? await api(`/api/w/${S.id}/ext?file=${encodeURIComponent(v.path)}`) : await api(wsApi('/file', { side: 'new', path: v.path }));
-    await loadTokens(v.path, 'new', !!v.ext).catch(() => {});
-    const key = (v.ext ? 'ext' : 'new') + ':' + v.path;
-    body.innerHTML = f.lines.map((s, i) => `<div class="ln" data-l="${i + 1}"><span class="no">${i + 1}</span><span class="cd"><span class="tx" data-r="${v.ext ? 'ext' : 'new'}" data-l="${i + 1}">${tokHTML(key, i + 1, s)}</span></span></div>`).join('');
+    const f = v.ext ? await api(`/api/w/${S.id}/ext?file=${encodeURIComponent(v.path)}`) : await api(wsApi('/file', { side, path: v.path }));
+    if (S.view !== v) return;
+    await loadTokens(v.path, side, !!v.ext).catch(() => {});
+    if (S.view !== v) return;
+    const rowSide = v.ext ? 'ext' : side, key = rowSide + ':' + v.path;
+    body.innerHTML = f.lines.map((s, i) => `<div class="ln" data-l="${i + 1}"><span class="no">${i + 1}</span><span class="cd"><span class="tx" data-r="${rowSide}" data-l="${i + 1}">${tokHTML(key, i + 1, s)}</span></span></div>`).join('');
     const row = body.querySelector(`.ln[data-l="${v.line || 1}"]`);
     if (row) { row.scrollIntoView({ block: 'center' }); if (v.line) row.classList.add('flash'); }
   } catch (e) { body.innerHTML = `<div class="loadd err">${esc(e.message)}</div>`; }
 }
-export function closeViewer() { $('#viewer')?.remove(); S.view = null; S.vstack = []; }
+export function closeViewer() { $('#viewer')?.remove(); S.view = null; paintReturn(); }
 
 // ------------------------------------------------------------------ gopls
 let tipTimer = null, tipFor = null;
@@ -119,14 +174,17 @@ document.addEventListener('mousemove', (e) => {
     } catch { /* gopls still loading, or nothing there */ }
   }, 450);
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Meta') document.body.classList.add('cmd'); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Meta') document.body.classList.add('cmd');
+  if (e.key === 'Enter' && e.target.matches?.('a.loc[role="link"]')) { e.preventDefault(); e.target.click(); }
+});
 document.addEventListener('keyup', (e) => { if (e.key === 'Meta') document.body.classList.remove('cmd'); });
 document.addEventListener('mousedown', (e) => { if (e.metaKey && lspTarget(e)) e.preventDefault(); if (!e.target.closest?.('#refs')) $('#refs')?.remove(); }, true);
 document.addEventListener('click', async (e) => {
   const loc = e.target.closest?.('a.loc');
-  if (loc) { e.preventDefault(); return goLoc({ path: loc.dataset.p, line: Number(loc.dataset.l) }); }
+  if (loc && !loc.closest('#mapbig')) { e.preventDefault(); e.stopPropagation(); return goLoc({ path: loc.dataset.p, line: Number(loc.dataset.l), excerpt: loc.dataset.excerpt }, loc); }
   const att = e.target.closest?.('[data-act="goatt"]');
-  if (att && !e.target.closest('.x')) return goLoc({ path: att.dataset.p, line: Number(att.dataset.l), side: att.dataset.side });
+  if (att && !e.target.closest('.x')) return goLoc({ path: att.dataset.p, line: Number(att.dataset.l), side: att.dataset.side }, att);
   if (!e.metaKey) return;
   const t = lspTarget(e);
   if (!t) return;
@@ -141,11 +199,11 @@ document.addEventListener('click', async (e) => {
       box.style.width = '560px';
       box.style.top = Math.min(rect.bottom + 6, innerHeight - box.offsetHeight - 10) + 'px';
       box.style.left = Math.max(8, Math.min(rect.left, innerWidth - 572)) + 'px';
-      box.onclick = (ev) => { const b = ev.target.closest('.mi'); if (b) goLoc(r.locations[Number(b.dataset.i)]); };
+      box.onclick = (ev) => { const b = ev.target.closest('.mi'); if (b) goLoc(r.locations[Number(b.dataset.i)], t.span); };
       return;
     }
     const r = await lspQ('def', t);
     if (!r.locations.length) return toast('gopls found no definition there.');
-    goLoc(r.locations[0]);
+    goLoc(r.locations[0], t.span);
   } catch (err) { toast(/loading|took too long/.test(err.message) ? 'gopls is still loading the module.' : `gopls: ${err.message}`); }
 }, true);

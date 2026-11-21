@@ -27,11 +27,11 @@ export const S = {
   app: null,          // /api/state: models, efforts, defaults, user, display address
   ws: null,           // the change's meta
   id: null,           // the change's id
-  scope: 'all', rangeKey: 'all',
+  scope: 'all', rangeKey: 'all', comparison: null,
   files: [], byPath: new Map(), left: null, totals: null,
   review: { viewed: {}, threads: [], convs: {}, chats: [], brief: null },
   github: { review: [], conversation: [] },
-  rows: new Map(), items: new Map(), tok: new Map(), loaded: new Set(), shut: new Set(), dirShut: new Set(), newText: new Map(), diffs: new Map(), waves: new Map(), commitFiles: null,
+  rows: new Map(), items: new Map(), tok: new Map(), loaded: new Map(), shut: new Set(), dirShut: new Set(), newText: new Map(), diffs: new Map(), waves: new Map(), commitFiles: null,
   sel: null, dragging: false, draft: null, replyDrafts: {},
   layout: pref.get('layout', 'split') === 'unified' ? 'unified' : 'split', // split by default; unified in the View menu
   order: pref.get('order', 'tree'), // tree | guide
@@ -44,7 +44,7 @@ export const S = {
   mark: null,         // the mark open in the inspector
   readFrac: new Map(), // how far down each file you have scrolled, 0..1 (the strip dithers by it)
   unreadAns: new Set(), // questions whose answer arrived and you have not opened yet
-  view: null, vstack: [],
+  view: null,
 };
 
 export const fileOf = (p) => S.byPath.get(p);

@@ -61,12 +61,13 @@ function cardHTML(f) {
 // they came from.
 export const checkKey = (k, j) => `${S.review.brief?.at || 0}:${k}:${j}`;
 function guideHeadHTML(sec, k) {
-  const markdown = { images: modelKind(S.review.brief.model) !== 'codex' };
+  const markdown = { images: modelKind(S.review.brief.model) !== 'codex', citations: S.review.brief.citations };
   const files = sec.files.map(fileOf).filter(Boolean);
   const left = files.filter((f) => !isViewed(f) && f.kind !== 'generated').reduce((n, f) => n + lines(f), 0);
   const checks = (sec.check || []).map((c, j) => {
     const on = !!S.review.checks?.[checkKey(k, j)];
-    return `<button class="gck${on ? ' on' : ''}" data-act="gck" data-key="${esc(checkKey(k, j))}" aria-pressed="${on}"><span class="b">${icon('check', '--on-act')}</span><span class="x">${md(c, markdown).replace(/^<p>|<\/p>\s*$/g, '')}</span></button>`;
+    const label = `check-${k}-${j}`;
+    return `<div class="gck${on ? ' on' : ''}" data-act="gck" data-key="${esc(checkKey(k, j))}"><button class="b" type="button" aria-pressed="${on}" aria-labelledby="${label}">${icon('check', '--on-act')}</button><span class="x" id="${label}">${md(c, markdown).replace(/^<p>|<\/p>\s*$/g, '')}</span></div>`;
   }).join('');
   const n = S.review.brief.sections.length;
   return `<div class="gsec" id="g-${k}"><div class="gmain"><div class="sh"><span>Section ${k + 1} of ${n}</span><span class="dot">·</span><span>${esc(sec.role)}</span><span class="sp"></span><span class="n">${left ? `${left.toLocaleString()} lines left` : 'all viewed'}</span></div><h2 class="tick">${tick(sec.title)}</h2>` +
@@ -74,18 +75,35 @@ function guideHeadHTML(sec, k) {
 }
 
 let io = null;
-export function renderCards() {
+export function renderCards(keepFiles = false) {
   const order = orderedFiles();
   const sections = S.review.brief?.sections || [];
   const cards = $('#cards');
   const banner = bannerHTML();
   // the map of the change comes first: what the code around it does, before any file
-  cards.innerHTML = banner + (order.length ? mapCardHTML(S.review.brief) : '') + (order.length ? order.map(({ f, sec }) => (sec !== null ? guideHeadHTML(sections[sec], sec) : '') + cardHTML(f)).join('')
+  const intro = banner + (order.length ? mapCardHTML(S.review.brief) : '');
+  // Moving every card costs more than drawing them again until many bodies are loaded; keep them when that work is
+  // worth saving, or when a draft is open in one
+  if (keepFiles && (S.draft || S.loaded.size >= 24) && order.length && order.every(({ f }) => cardEl(f.path))) {
+    for (const el of [...cards.children]) if (!el.classList.contains('file')) el.remove();
+    cards.insertAdjacentHTML('afterbegin', intro);
+    // Keep the code, syntax spans and open composers when the same files are rearranged.
+    let before = cards.querySelector(':scope > .file');
+    for (const { f, sec } of order) {
+      const el = cardEl(f.path);
+      if (el !== before) cards.insertBefore(el, before);
+      if (sec !== null) el.insertAdjacentHTML('beforebegin', guideHeadHTML(sections[sec], sec));
+      before = el.nextElementSibling;
+    }
+    paintSel();
+    return;
+  }
+  cards.innerHTML = intro + (order.length ? order.map(({ f, sec }) => (sec !== null ? guideHeadHTML(sections[sec], sec) : '') + cardHTML(f)).join('')
     : `<div class="state"><div class="box"><div class="big">Nothing to review here</div><div>${S.rangeKey === 'wip' ? 'No uncommitted changes.' : 'This scope changes no files.'}</div></div></div>`);
   io?.disconnect();
   io = new IntersectionObserver((ents) => {
     for (const e of ents) if (e.isIntersecting) { const p = e.target.dataset.p; if (!S.shut.has(p)) loadFile(p).catch((err) => bodyError(p, err)); }
-  }, { root: $('#center'), rootMargin: '1600px 0px' });
+  }, { root: $('#center'), rootMargin: '400px 0px' });
   for (const c of $$('.file', cards)) io.observe(c);
   hooks.filterCards?.();
 }
@@ -115,29 +133,43 @@ function bodyError(p, e) { const fb = cardEl(p)?.querySelector('.fb'); if (fb) f
 
 // ------------------------------------------------------------------ loading one file
 export async function loadFile(p) {
-  // drawn again after it loaded: its rows are kept, so fill the new card now (one still loading fills it when done)
-  if (S.loaded.has(p)) { if (S.rows.has(p) && cardEl(p)?.querySelector('.fb > .loadd')) renderBody(p); return; }
   const f = fileOf(p);
   if (!f || f.binary) return;
-  S.loaded.add(p);
-  let d;
+  let pending = S.loaded.get(p);
+  if (!pending) {
+    pending = drawFile(p, f);
+    S.loaded.set(p, pending);
+  }
   try {
-    d = await diffOf(p);
-    if (!fileOf(p)) return; // the scope changed while it loaded
-    S.rows.set(p, buildRows(d));
-    for (const th of threadsAt(p)) await reanchor(p, th);
-    for (const th of threadsAt(p)) if (findRow(S.rows.get(p), th) < 0 && th.side !== 'old') await revealAround(p, th.line);
-    for (const g of githubAt(p)) if (findRow(S.rows.get(p), g) < 0 && g.side !== 'old') await revealAround(p, g.line);
+    await pending;
   } catch (e) {
-    S.loaded.delete(p); // a failed read is tried again the next time the card is opened or comes into view
+    if (S.loaded.get(p) !== pending) return;
+    S.loaded.delete(p);
     throw e;
   }
+  if (fileOf(p) === f && S.rows.has(p) && cardEl(p)?.querySelector('.fb > .loadd:not(.empty-diff)')) renderBody(p);
+}
+
+async function drawFile(p, f) {
+  const current = () => fileOf(p) === f;
+  const d = await diffOf(p);
+  if (!current()) return;
+  S.rows.set(p, buildRows(d));
+  for (const th of threadsAt(p)) {
+    await reanchor(p, th);
+    if (!current()) return;
+  }
+  for (const mark of [...threadsAt(p), ...githubAt(p)]) {
+    if (findRow(S.rows.get(p), mark) < 0 && mark.side !== 'old') await revealAround(p, mark.line);
+    if (!current()) return;
+  }
+  if (!current()) return;
   renderBody(p);
   const jobs = [];
   if (f.status !== 'D') jobs.push(loadTokens(p, 'new'));
   if (f.status !== 'A' && !f.untracked && d.hunks.some((hk) => hk.lines.some((l) => l.t === '-'))) jobs.push(loadTokens(p, 'old'));
-  await Promise.all(jobs).catch(() => {});
-  renderBody(p);
+  await Promise.allSettled(jobs);
+  if (current() && jobs.length) renderBody(p);
 }
 
 // One fetch per file's diff, shared by everything that needs it; cleared when the change is read again.
@@ -228,7 +260,8 @@ export function renderBody(p) {
   const split = S.layout === 'split' && !oneSided;
   fb.classList.toggle('split', split);
   cardEl(p).classList.toggle('split', split); // the card carries it too, so what sits above the code (the guide head, the used-by panel) follows its text edge
-  const items = split ? buildSplit(rows) : rows.map((r, i) => (r.hdr ? { hdr: i } : { i }));
+  const pairs = buildSplit(rows);
+  const items = split ? pairs : rows.map((r, i) => (r.hdr ? { hdr: i } : { i }));
   S.items.set(p, items);
   const keyOf = (a) => {
     const i = findRow(rows, a);
@@ -248,7 +281,9 @@ export function renderBody(p) {
   for (const g of githubAt(p)) { if (!S.marksHidden) put(keyOf(g), githubHTML(g)); else pin(keyOf(g), ghPinOf(g)); }
   const draftK = S.draft?.path === p ? keyOf(S.draft) : -1;
   const hadFocus = S.draft?.path === p && document.activeElement?.closest?.('.draft');
-  const wd = wordRanges(rows);
+  const wd = wordRanges(rows, pairs);
+  fb.classList.toggle('long-diff', items.length > 512);
+  if (items.length > 512) fb.style.setProperty('--diff-height', `${items.length * 20}px`);
   const lastK = items.length - 1;
   // Unified rows carry the marks in the gutter; split rows don't (the gutter is per side).
   fb.innerHTML = items.map((it, k) => {
@@ -258,7 +293,7 @@ export function renderBody(p) {
     for (const x of after.get(k) || []) out += x;
     if (k === draftK) out += draftHTML();
     return out;
-  }).join('') || '<div class="loadd">No text changes (a mode or rename only).</div>';
+  }).join('') || '<div class="loadd empty-diff">No text changes (a mode or rename only).</div>';
   if (draftK >= 0) {
     const ta = fb.querySelector('.draft textarea');
     ta.value = S.draft.value || '';
@@ -389,6 +424,7 @@ $('#root').addEventListener('mousedown', (e) => {
   if (!row || !fb || hit.classList.contains('e')) return;
   e.preventDefault();
   const p = fb.dataset.p, k = Number(row.dataset.k);
+  if (!e.shiftKey && !S.draft && S.sel?.path === p && S.sel.a === k && S.sel.b === k) { S.sel = null; paintSel(); return; } // the same line again: let go
   // In split view, the side you started on is the side you select.
   const cell = hit.classList.contains('no') ? hit : hit.closest('.cd');
   // the side comes from the cell only where the file is drawn split (a one-sided file is drawn as one column)
@@ -397,6 +433,12 @@ $('#root').addEventListener('mousedown', (e) => {
   if (S.draft && S.draft.path === p && e.shiftKey) { const s = selection(); Object.assign(S.draft, s); S.dragging = false; renderBody(p); return; }
   S.dragging = true;
   paintSel();
+});
+// a plain click anywhere else in the code (not on a number, the bar or a draft) lets go of the lines too
+$('#root').addEventListener('mousedown', (e) => {
+  if (!S.sel || S.draft || S.dragging || e.button !== 0 || e.shiftKey) return;
+  if (e.target.closest('.fb .plus, .fb .ln .no, #seltools, .mrow, .menu') || !e.target.closest('#cards')) return;
+  S.sel = null; paintSel();
 });
 $('#root').addEventListener('mouseover', (e) => {
   if (!S.dragging) return;
@@ -513,7 +555,7 @@ $('#root').addEventListener('click', async (e) => {
   const card = b.closest('.file'), p = card?.dataset.p;
   if (act === 'gck') {
     const on = !b.classList.contains('on');
-    for (const x of $$(`.gck[data-key="${CSS.escape(b.dataset.key)}"]`)) { x.classList.toggle('on', on); x.setAttribute('aria-pressed', String(on)); }
+    for (const x of $$(`.gck[data-key="${CSS.escape(b.dataset.key)}"]`)) { x.classList.toggle('on', on); x.querySelector('.b')?.setAttribute('aria-pressed', String(on)); }
     S.review.checks ||= {};
     if (on) S.review.checks[b.dataset.key] = Date.now(); else delete S.review.checks[b.dataset.key];
     if (S.mode === 'guide') hooks.renderTree?.(); // the contents count the ticks
@@ -522,7 +564,7 @@ $('#root').addEventListener('click', async (e) => {
   if (act === 'fold') return toggleFold(p);
   if (act === 'viewed') return setViewed(p, !isViewed(fileOf(p)));
   if (act === 'filemenu') return fileMenu(b, p);
-  if (act === 'open') return hooks.goLoc?.({ path: b.dataset.p, line: Number(b.dataset.l) || 1 });
+  if (act === 'open') return hooks.goLoc?.({ path: b.dataset.p, line: Number(b.dataset.l) || 1 }, b);
   if (act === 'expand') { const hk = b.closest('.hk'); const it = S.items.get(p)[Number(hk.dataset.k)]; await expandGap(p, it.hdr, b.dataset.x); return renderBody(p); }
   if (act === 'sel-ask') return openDraft('ask');
   if (act === 'sel-comment') return openDraft('comment');

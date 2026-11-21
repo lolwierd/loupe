@@ -358,6 +358,10 @@ function toolSummary(root, name, input = {}) {
 const BRIEF_SCHEMA = {
   type: 'object',
   properties: {
+    citations: { type: 'array', description: 'Source anchors for the path:line references in guide prose and diagram nodes. Copy a short distinctive excerpt from each cited source line.', items: {
+      type: 'object', properties: { ref: { type: 'string', description: 'The exact repository-relative path:line used in the text or node.' }, excerpt: { type: 'string', description: 'A literal excerpt from that source line, up to 160 characters.' } },
+      required: ['ref', 'excerpt'],
+    } },
     tldr: { type: 'string', description: 'Markdown, two to four plain sentences, no list: what changes, for whom, and why (the problem it solves), and where in the system it lands. No preamble.' },
     risk: { type: 'string', enum: ['low', 'typical', 'high', 'very high'] },
     riskWhy: { type: 'string', description: 'One sentence: what could break, where, and for whom.' },
@@ -590,7 +594,10 @@ export function normalizeGuide(out, files) {
   const pl = out.plan || {};
   const plan = { start: resolve(pl.start) || resolve(out.startHere), why: str(pl.why, 400), steps: (Array.isArray(pl.steps) ? pl.steps : []).slice(0, 8).map((x) => str(x, 400)).filter(Boolean) };
   const questions = (Array.isArray(out.questions) ? out.questions : []).slice(0, 6).map((x) => str(x, 400)).filter(Boolean);
-  return { tldr: String(tl || ''), risk: out.risk, riskWhy: out.riskWhy || '', startHere: plan.start, context, diagrams, plan, questions, sections, pending: false, error: null, step: null };
+  const citations = Object.fromEntries((Array.isArray(out.citations) ? out.citations : []).slice(0, 64)
+    .map((c) => [str(c?.ref, 250).trim(), str(c?.excerpt, 160).trim()])
+    .filter(([ref, excerpt]) => /:\d+$/.test(ref) && excerpt));
+  return { tldr: String(tl || ''), risk: out.risk, riskWhy: out.riskWhy || '', startHere: plan.start, context, diagrams, plan, questions, sections, citations, pending: false, error: null, step: null };
 }
 
 // ------------------------------------------------------------------ Claude Code sessions on this repository

@@ -243,3 +243,73 @@ test('a file refresh keeps a brief event newer than its review snapshot', async 
   await pending;
   assert.equal(S.review.brief, result);
 });
+
+test('inline edits preserve the common middle and cross syntax token boundaries', async () => {
+  const source = fs.readFileSync(new URL('../web/js/diff.js', import.meta.url), 'utf8');
+  const { wordRanges, tokHTML } = vm.runInNewContext(
+    source.replace(/^import .*$/gm, '').replace(/^export /gm, '') + '\n({ wordRanges, tokHTML })',
+    { S: { tok: new Map([['file', [[['foo(a', 'code'], [', stable, b)', 'punct']]]]]) }, esc: (s) => s },
+  );
+  const ranges = wordRanges([{ t: '-', s: 'foo(a, stable, b)' }, { t: '+', s: 'foo(x, stable, y)' }]);
+  assert.equal(JSON.stringify(ranges.get(0)), '[[4,5],[15,16]]');
+  assert.equal(JSON.stringify(ranges.get(1)), '[[4,5],[15,16]]');
+  assert.match(tokHTML('file', 1, 'foo(a, stable, b)', ranges.get(0)), /class="code wd" data-c="4">a<.*class="punct" data-c="5">, stable, <.*class="punct wd" data-c="15">b</);
+  assert.equal(wordRanges([{ t: '-', s: 'a'.repeat(3000) }, { t: '+', s: 'b'.repeat(3000) }]).size, 0);
+  assert.equal(wordRanges([{ t: '-', s: 'unrelated' }, { t: '+', s: 'different' }]).size, 0);
+});
+
+test('jump history restores two origins and is cleared with the comparison', async () => {
+  const source = fs.readFileSync(new URL('../web/js/nav.js', import.meta.url), 'utf8');
+  const center = { scrollTop: 90, scrollLeft: 0 };
+  const back = {};
+  const S = { id: 'one', scope: 'all', view: null };
+  const nav = vm.runInNewContext(source.slice(source.indexOf('const returns'), source.indexOf('export async function goThread')).replace(/^export /gm, '') + '\n({ goLoc, goBack, clearReturns })', {
+    S, $: (id) => ({ '#center': center, '#review-back': back })[id],
+    hideTip() {}, closeViewer() { S.view = null; },
+    openViewer(v) { S.view = v; center.scrollTop = 0; },
+    resolvePath: (p) => p, fileOf: () => null,
+  });
+  const focus = [];
+  const origin = (n) => ({ isConnected: true, focus: () => focus.push(n) });
+  await nav.goLoc({ path: 'one' }, origin(1));
+  center.scrollTop = 25;
+  await nav.goLoc({ path: 'two' }, origin(2));
+  await nav.goBack();
+  assert.equal(S.view.path, 'one');
+  assert.equal(center.scrollTop, 25);
+  await nav.goBack();
+  assert.equal(S.view, null);
+  assert.equal(center.scrollTop, 90);
+  assert.deepEqual(focus, [2, 1]);
+  await nav.goLoc({ path: 'one' }, origin(1));
+  nav.clearReturns();
+  assert.equal(back.hidden, true);
+  await nav.goBack();
+  assert.equal(S.view, null);
+});
+
+test('two readers share an in-flight diff and a stale response cannot paint a new scope', async () => {
+  const source = fs.readFileSync(new URL('../web/js/cards.js', import.meta.url), 'utf8');
+  const S = { loaded: new Map(), rows: new Map() };
+  let file = { status: 'D' }, requests = 0, draws = 0, resolve;
+  const loadFile = vm.runInNewContext(source.slice(source.indexOf('export async function loadFile'), source.indexOf('// One fetch per file')).replace('export ', '') + '\nloadFile', {
+    S, fileOf: () => file, cardEl: () => null, buildRows: (diff) => diff.hunks,
+    diffOf() { requests++; return new Promise((r) => { resolve = r; }); },
+    threadsAt: () => [], githubAt: () => [], renderBody() { draws++; },
+  });
+  const first = loadFile('a');
+  let secondDone = false;
+  const second = loadFile('a').then(() => { secondDone = true; });
+  await Promise.resolve();
+  assert.equal(secondDone, false);
+  assert.equal(requests, 1);
+  file = { status: 'D' };
+  S.loaded.clear();
+  resolve({ hunks: [] });
+  await Promise.all([first, second]);
+  assert.equal(draws, 0);
+  const current = loadFile('a');
+  resolve({ hunks: [] });
+  await current;
+  assert.equal(draws, 1);
+});

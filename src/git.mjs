@@ -5,6 +5,53 @@ import path from 'node:path';
 import { git, Lru, safeRel } from './util.mjs';
 
 export const WORKTREE = 'WORKTREE';
+const SEARCH_MAX = 60;
+
+export function citationLine(text, line, excerpt) {
+  if (!text || !Number.isSafeInteger(line) || line < 1 || !excerpt?.trim()) return null;
+  const lines = text.split('\n');
+  const needle = excerpt.trim().replace(/\s+/g, ' ');
+  let match = null;
+  for (let i = Math.max(0, line - 13); i < Math.min(lines.length, line + 12); i++) {
+    if (!lines[i].trim().replace(/\s+/g, ' ').includes(needle)) continue;
+    if (match !== null) return null;
+    match = i + 1;
+  }
+  return match;
+}
+
+export async function searchRepository(root, rev, query) {
+  const result = { revision: rev === WORKTREE ? 'Working tree' : rev, matches: [], more: false };
+  if (!query) return result;
+  const worktree = rev === WORKTREE;
+  // -z keeps colons, tabs and newlines in file names distinct from the line number.
+  const args = ['-c', 'grep.column=false', '-c', 'grep.fullName=true', 'grep', '-I', '-n', '-z', '-F', '--no-color', '--no-textconv',
+    '--no-recurse-submodules', '--max-count=61', ...(worktree ? ['--untracked', '--exclude-standard'] : []),
+    '-e', query, ...(worktree ? [] : [rev]), '--'];
+  let out;
+  try {
+    out = await git(root, args, { timeout: 3500, maxBuffer: 4 * 1024 * 1024 });
+  } catch (e) {
+    if (e.code === 1 && !e.stderr) return result;
+    if (e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || e.killed) throw new Error('Search exceeded its limit. Use a more specific query.');
+    throw e;
+  }
+  for (let i = 0; i < out.length;) {
+    const pathEnd = out.indexOf('\0', i), lineEnd = out.indexOf('\0', pathEnd + 1);
+    if (pathEnd < 0 || lineEnd < 0) break;
+    const end = out.indexOf('\n', lineEnd + 1);
+    const p = out.slice(i + (worktree ? 0 : rev.length + 1), pathEnd);
+    const line = Number(out.slice(pathEnd + 1, lineEnd));
+    const text = out.slice(lineEnd + 1, end < 0 ? undefined : end);
+    i = end < 0 ? out.length : end + 1;
+    if (!safeRel(p) || line < 1) continue;
+    if (result.matches.length === SEARCH_MAX) { result.more = true; break; }
+    const start = Math.max(0, text.indexOf(query) - 50);
+    const excerpt = (start ? '…' : '') + text.slice(start, start + 160).trim() + (text.length > start + 160 ? '…' : '');
+    result.matches.push({ path: p, line, excerpt });
+  }
+  return result;
+}
 const UNTRACKED_MAX = 5000;
 const ZERO = /^0+$/;
 

@@ -5,24 +5,27 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
 ![Reviewing a branch in loupe](docs/img/review.png)
 
 - **Read the change.** A split or unified diff of a PR, a branch, or your uncommitted work, one file after another,
-  with what is left to read in the top bar.
+  with what is left to read in the top bar. Jump to a definition, a reference or a search hit, and `[` brings you back
+  to where you were.
 - **A map of the change.** Before the first file, the model reads the code around the change and explains how that part
   of the system works, what was there before and after, the words you will meet, and where to start reviewing. It draws
-  the parts involved with the change marked on them, and the runtime path as numbered steps.
+  the parts involved with the change marked on them, and the runtime path as numbered steps. A `file:line` it cites
+  opens at the line it quoted, even when the number is a few lines off.
 - **Ask about lines.** Select lines and press `a`. The answer sits at the lines and opens beside the code. The model
   can read the repository and run read-only git; it cannot change anything.
 - **Claude or Codex.** One picker lists the newest model of each line from both, taken from your own accounts and kept
   current as new ones ship. A conversation stays with the kind of model it started on.
-- **A guide.** The change as a few sections in reading order, each with what to check. Regenerate it, and the map,
-  with any model.
+- **A guide.** The change as a few sections in reading order, each with what to check. The file list switches between
+  tree and guide order. Regenerate the guide, and the map, with any model.
 - **Review on GitHub.** Press `c` on lines to add a comment to your pending review, then Comment, Approve or Request
   changes. A review started on GitHub shows up here, and the other way round.
 - **Ship your own work.** Commit the files you pick, push, and open the PR, with the message drafted in the
   repository's style.
-- **Keyboard first.** `⌘K` finds any file, commit or action; `?` lists the keys.
+- **Keyboard first.** `⌘K` finds any file, commit or action; `f` searches the whole repository at the reviewed
+  revision; `?` lists the keys.
 
-Mote, the small beetle floating in the corner (drag him anywhere), shows what the desk is doing: working while an answer or the map
-is being written, and jumping when you have read the last file.
+Mote, the small beetle floating in the corner (drag him anywhere), shows what the desk is doing: working while an
+answer or the map is being written, and jumping when you have read the last file.
 
 ![The map of a change](docs/img/map.png)
 
@@ -58,6 +61,8 @@ Swap `github.com` for `loupe.local` (or `l.local`) in a pull request link to ope
 |---|---|
 | `j` `k` | next and previous file |
 | `]` | done with this file: mark it viewed and go to the next |
+| `[` | back to where you were before a jump |
+| `/` `f` | find a file, search the repository |
 | `v` `o` | mark viewed, fold |
 | `a` `c` | on selected lines: ask, comment for your review |
 | `s` `g` | split or unified, guide order |

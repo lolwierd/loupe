@@ -95,7 +95,7 @@ export function renderGo() {
   S.acts = acts;
   const a = acts[0];
   if (!a) { el.innerHTML = ''; return; }
-  const tone = a.tone === 'danger' ? 'danger' : 'primary';
+  const tone = a.tone === 'danger' ? 'danger' : ''; // a plain button: the frame is chrome, a filled slab shouts in it
   el.innerHTML = `<button class="btn ${tone}${acts.length > 1 ? ' l' : ''}" data-act="next"${a.disabled ? ` disabled title="${esc(a.disabled)}"` : ''}>${esc(a.label)}</button>` +
     (acts.length > 1 ? `<button class="btn ${tone} r" data-act="nextmenu" aria-label="Everything you can do next" title="Everything you can do next">${I.chev}</button>` : '');
 }

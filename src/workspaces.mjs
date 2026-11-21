@@ -517,8 +517,11 @@ export class Workspace {
     if (!safeRel(p)) return false;
     if (await this.file(scope, p)) return true;
     const r = this.range(scope);
-    const rev = r.new === WORKTREE ? 'HEAD' : r.new;
-    return gitOk(this.gitDir, ['cat-file', '-e', `${rev}:${p}`]);
+    if (r.new === WORKTREE) {
+      const paths = await git(this.gitDir, ['--literal-pathspecs', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', p]);
+      return paths.split('\0').includes(p);
+    }
+    return gitOk(this.gitDir, ['cat-file', '-e', `${r.new}:${p}`]);
   }
   async relatedOf(scope, p) {
     const r = this.range(scope);

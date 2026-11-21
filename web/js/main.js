@@ -4,7 +4,7 @@ import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, brie
 import { renderCards, renderBody, renderAllBodies, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment } from './cards.js';
 import { renderTree, markCurrent, nextUnviewed } from './tree.js';
 import { renderPanel, setTab, renderTabs, openChat, paintMessage } from './panel.js';
-import { goLoc, goThread, openViewer, closeViewer, hideTip } from './nav.js';
+import { goLoc, goThread, openViewer, closeViewer, hideTip, goBack, clearReturns } from './nav.js';
 import { renderProgress, paintProgress, renderGo, renderStack, doAct } from './acts.js';
 import { menu, closeMenu, shimmerSync, refreshRunButtons } from './ui.js';
 import { hooks } from './hooks.js';
@@ -85,6 +85,7 @@ function frame() {
     <a class="btn ghost mark" href="/home" title="Home: everything open here, and whose move it is">${icon('loupe', '--pencil')}<span>loupe</span></a>
     <span class="crumb-sep">/</span>
     <button class="btn ghost wsbtn" data-act="palette" title="Switch, open, or do anything (⌘K)" id="wsbtn"><span class="t">…</span></button>
+    <button class="icon" id="review-back" title="Return to where you were ([)" aria-label="Return to where you were" hidden>${I.chevL}</button>
     <span class="sp"></span>
     <span class="lsp" id="lsp"></span>
     <button class="btn ghost tally" id="tally" data-act="nextleft"></button>
@@ -93,12 +94,13 @@ function frame() {
     <span class="layout-toggles"><button class="icon" data-act="togglebin" title="Files (t)">${I.sidebarL}</button><button class="icon" data-act="togglepanel" title="Inspector (p)">${I.sidebarR}</button></span></span>
   </header>
   <div class="main" id="main">
-    <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd title="Focus it">/</kbd></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="resizer" data-resize="bin"></div></aside>
+    <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><span class="fwrap"><input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd class="fkey" aria-hidden="true">/</kbd></span><span id="ordseg"></span></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="resizer" data-resize="bin"></div></aside>
     <main class="viewer-col"><div class="scroller" id="center"><div class="cards" id="cards"><div class="loadd">Loading…</div></div></div>
       <button class="aifab" id="aifab" data-act="askai" title="Ask about the selected lines or the whole change (a)"><span class="aispark">${spark(32, true)}</span><span class="ail">Ask</span></button></main>
     <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon sm" data-act="keys" title="Keys (?)"><kbd>?</kbd></button></div><div class="pbody" id="pbody"></div></aside><div class="motefloat" id="motedock"></div>
   </div></div>`;
   applyMode(S.mode, true);
+  $('#review-back').onclick = goBack;
   // only a width you dragged is set here; the defaults live in the style sheet, where the narrow-window rule can change them
   for (const [v, k] of [['--bin-w', 'binW'], ['--panel-w', 'panelW']]) { const w = pref.get(k, null); if (w) document.documentElement.style.setProperty(v, w + 'px'); }
   for (const b of $$('.ptabs .tab')) b.setAttribute('aria-selected', String(b.dataset.tab === S.tab));
@@ -146,6 +148,9 @@ async function loadFiles(reason) {
     [files, review] = await Promise.all([api(wsApi('/files')), api(`/api/w/${S.id}/review`)]);
   } catch (e) { if (current()) showState('Could not read the change', e.message, true); return; }
   if (!current()) return;
+  const comparison = `${files.old}:${files.new}`;
+  if (S.comparison && S.comparison !== comparison) clearReturns();
+  S.comparison = comparison;
   S.rangeKey = files.scope;
   S.untrackedSkipped = files.untrackedSkipped || 0;
   S.files = files.files.map((f, i) => ({ ...f, i }));
@@ -224,8 +229,10 @@ function renderScopebar() {
   $('#scopebar').classList.toggle('steps', k >= 0);
   $('#scopebar').innerHTML = `<button class="scopebtn" data-act="scopemenu" title="What to compare: ${esc(scopeLabel())}"><span class="l">${esc(scopeLabel())}</span>${I.chev}</button>${step}` +
     `<span class="what"><span class="num">${plural(S.files.length, 'file')}</span><span class="delta"><span class="add num">+${t.add.toLocaleString()}</span><span class="del num">−${t.del.toLocaleString()}</span></span>` +
-    // the list is a tree or the guide's sections; the way back is here, not only on g
-    (S.review.brief?.sections?.length ? `<span class="sp"></span><button class="link ord" data-act="treeorder" title="Files in ${S.order === 'guide' ? 'tree' : "the guide's"} order (g)">${S.order === 'guide' ? 'Tree' : 'Guide order'}</button>` : '') + `</span>`;
+    `</span>`;
+  // the list is a tree or the guide's sections: a switch beside the filter, the same height, when there is a guide (g)
+  const ord = $('#ordseg');
+  if (ord) ord.innerHTML = S.review.brief?.sections?.length ? `<span class="seg" role="group" aria-label="Order of the files">${[['tree', 'Tree'], ['guide', 'Guide']].map(([o, l]) => `<button data-act="setorder" data-o="${o}" aria-pressed="${S.order === o}" title="Files in ${o === 'tree' ? 'tree' : "the guide's"} order (g)">${l}</button>`).join('')}</span>` : '';
 }
 // Animate the floating spark while Claude is answering.
 function renderFab() {
@@ -262,6 +269,7 @@ function renderLsp() {
 
 async function setScope(scope) {
   if (!scope || scope === S.rangeKey || scope === S.scope) return;
+  clearReturns();
   S.scope = scope; S.sel = null; S.draft = null;
   const u = new URL(location.href);
   if (scope === 'all') u.searchParams.delete('scope'); else u.searchParams.set('scope', scope);
@@ -272,7 +280,7 @@ async function setScope(scope) {
 function setOrder(o) {
   if (o === S.order) return;
   S.order = o; pref.set('order', o);
-  renderScopebar(); renderTree(); renderCards(); renderProgress(); if (S.tab === 'overview') renderPanel();
+  renderScopebar(); renderTree(); renderCards(true); renderProgress(); if (S.tab === 'overview') renderPanel();
   $('#center').scrollTop = 0;
   requestAnimationFrame(spyNow);
 }
@@ -298,20 +306,26 @@ async function restoreSpot(s) {
 function spyNow() {
   const c = $('#center');
   if (!c) return;
-  const line = c.getBoundingClientRect().top + 90;
-  let cur = null, after = false;
-  for (const el of $$('#cards > .file:not([hidden]), #cards > .gsec')) {
-    if (el.getBoundingClientRect().top > line) { if (after && el.classList.contains('file')) cur = el; break; }
-    if (el.classList.contains('gsec')) after = true; else { cur = el; after = false; }
+  const { top, bottom } = c.getBoundingClientRect(), line = top + 90;
+  const cards = $$('#cards > .file:not([hidden]), #cards > .gsec');
+  let lo = 0, hi = cards.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (cards[mid].getBoundingClientRect().top <= line) lo = mid + 1; else hi = mid;
   }
+  const el = cards[lo - 1];
+  const cur = el?.classList.contains('gsec') ? cards[lo] : el;
   const p = cur?.dataset.p || orderedFiles()[0]?.f.path || null;
   if (p !== S.current) { S.current = p; markCurrent(); paintProgress(); }
   // How far into each open file the bottom of the screen has reached: the strip shows it as a dither.
-  const bottom = c.getBoundingClientRect().bottom;
   let moved = false;
-  for (const el of $$('#cards > .file:not(.shut):not([hidden])')) {
+  let start = lo - 1;
+  while (start > 0 && cards[start].getBoundingClientRect().top > top) start--;
+  for (let i = Math.max(start, 0); i < cards.length; i++) {
+    const el = cards[i];
     const r = el.getBoundingClientRect();
-    if (r.top > bottom || r.bottom < c.getBoundingClientRect().top) continue;
+    if (r.top > bottom) break;
+    if (!el.classList.contains('file') || el.classList.contains('shut') || r.bottom < top) continue;
     const f = Math.max(0, Math.min(1, (bottom - r.top) / Math.max(1, r.height)));
     if (f > (S.readFrac.get(el.dataset.p) || 0) + 0.02) { S.readFrac.set(el.dataset.p, f); moved = true; }
   }
@@ -331,7 +345,8 @@ function nextLeft() {
   if (to) setTimeout(() => goLoc({ path: to, line: 0 }), 60); else toast('Every file is viewed.');
 }
 hooks.nextLeft = nextLeft;
-hooks.clearFilter = () => { S.filter = ''; const f = $('#filter'); if (f) f.value = ''; renderTree(); };
+hooks.setFilter = (value) => { S.filter = value; const f = $('#filter'); if (f) f.value = value; renderTree(); };
+hooks.clearFilter = () => hooks.setFilter('');
 hooks.setCurrent = (p) => { if (p && p !== S.current) { S.current = p; markCurrent(); paintProgress(); } };
 const visibleFiles = () => orderedFiles().map(({ f }) => f.path).filter((p) => !cardEl(p)?.hidden);
 function stepFile(d) {
@@ -356,7 +371,7 @@ function applyMode(mode, first) {
   if (mode === 'panes') { setPane('bin', pref.get('binShown', true)); setPane('panel', pref.get('panelOpen', true)); }
   else { $('#main').classList.remove('no-bin'); $('#main').classList.add('no-panel'); }
   if (mode === 'guide' && S.review?.brief?.sections?.length && S.order !== 'guide') { S.order = 'guide'; pref.set('order', 'guide'); }
-  if (!first) { renderTree(); renderCards(); renderProgress(); requestAnimationFrame(spyNow); }
+  if (!first) { renderTree(); renderCards(true); renderProgress(); requestAnimationFrame(spyNow); }
 }
 hooks.applyMode = applyMode;
 const paneOpen = (which) => !$('#main').classList.contains(PANE[which][0]);
@@ -452,7 +467,7 @@ function listenWs() {
     if (d.pending && was?.pending) { hooks.briefStep?.(); hooks.mapStep?.(); return; }
     renderFab(); if (S.ws) renderScopebar();
     if (S.tab === 'overview') renderPanel(); else renderTabs();
-    if (S.order === 'guide') { renderTree(); renderCards(); renderProgress(); } else hooks.mapChanged?.();
+    if (S.order === 'guide') { renderTree(); renderCards(true); renderProgress(); } else hooks.mapChanged?.();
   });
   on('github', async () => { S.github = await api(`/api/w/${S.id}/github`).catch(() => S.github); hooks.githubChanged(); if (S.ws) $('#wsbtn').innerHTML = wsTitle(); });
   on('page', () => location.reload());
@@ -503,6 +518,7 @@ function commands() {
   const ghUrl = $('#ghlink')?.hidden === false ? $('#ghlink').href : null;
   const c = [
     ...next,
+    { group: 'READ', label: 'Search the repository', key: 'f', run: openRepositorySearch },
     { group: 'READ', label: 'Done with this file: mark it viewed, go to the next left', key: ']', run: () => nextLeft() },
     cur && { group: 'READ', label: `${isViewed(cur) ? 'Unmark' : 'Mark'} ${name} viewed`, key: 'v', run: () => setViewed(S.current, !isViewed(cur)) },
     { group: 'READ', label: 'Next file', key: 'j', run: () => stepFile(1) },
@@ -551,6 +567,71 @@ function commands() {
 // The palette draws this many rows and says how many more there are, so a change of 300 files stays instant.
 const PAL_ROWS = 60;
 let palClose = null, keysClose = null;
+function openRepositorySearch(snapshot = {}) {
+  palClose?.();
+  keysClose?.();
+  closeMenu();
+  const scrim = h(`<div class="scrim" role="dialog" aria-label="Search the repository"><div class="palette"><input placeholder="Search the repository" aria-label="Search the repository" maxlength="160" autocomplete="off"><div class="list"></div><div class="foot"><span><kbd>↵</kbd> open</span><span><kbd>↑</kbd><kbd>↓</kbd> pick</span><span><kbd>esc</kbd> close</span><span class="sp"></span><span class="revision"></span></div></div></div>`);
+  document.body.append(scrim);
+  const input = $('input', scrim), list = $('.list', scrim);
+  const scope = S.scope;
+  let selected = snapshot.selected ?? 0, result, timer, request;
+  const close = () => { clearTimeout(timer); request?.abort(); scrim.remove(); palClose = null; };
+  palClose = close;
+  const pick = () => {
+    list.querySelector('[aria-selected="true"]')?.setAttribute('aria-selected', 'false');
+    const row = list.children[selected];
+    row?.setAttribute('aria-selected', 'true');
+    row?.scrollIntoView({ block: 'nearest' });
+  };
+  const draw = (r) => {
+    result = r;
+    const rev = $('.revision', scrim);
+    rev.title = r.revision;
+    rev.textContent = r.revision === 'Working tree' ? r.revision : r.revision.slice(0, 12);
+    list.innerHTML = r.matches.map((m, i) => `<button class="mi repo-hit" data-i="${i}" aria-selected="false">${I.file}<span class="mono where" title="${esc(m.path)}:${m.line}">${esc(m.path)}:${m.line}</span><span class="mono excerpt" title="${esc(m.excerpt)}">${esc(m.excerpt)}</span></button>`).join('')
+      + (r.more ? '<div class="more">First 60 matches. Keep typing to narrow them.</div>' : '');
+    if (!r.matches.length) list.innerHTML = `<div class="none">${input.value.trim() ? 'No matches.' : 'Type text to find in source.'}</div>`;
+    if (r.matches.length) { selected = Math.min(selected, r.matches.length - 1); pick(); }
+  };
+  const search = () => {
+    result = null;
+    clearTimeout(timer);
+    request?.abort();
+    list.innerHTML = '<div class="none">Searching…</div>';
+    timer = setTimeout(async () => {
+      const controller = request = new AbortController();
+      try {
+        const r = await api(wsApi('/search', { q: input.value.trim() }), { signal: controller.signal });
+        if (!controller.signal.aborted && scope === S.scope) draw(r);
+      } catch (e) {
+        if (!controller.signal.aborted) list.innerHTML = `<div class="none err">${esc(e.message)}</div>`;
+      }
+    }, 150);
+  };
+  const open = (i) => {
+    const match = result?.matches[i];
+    if (!match) return;
+    const back = { query: input.value, result, selected: i, scroll: list.scrollTop };
+    close();
+    return goLoc({ ...match, exact: true }, null, () => openRepositorySearch(back));
+  };
+  input.value = snapshot.query || '';
+  input.addEventListener('input', () => { selected = 0; search(); });
+  scrim.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'Enter' && e.target === input) { e.preventDefault(); open(selected); }
+    else if (result?.matches.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      selected = Math.max(0, Math.min(result.matches.length - 1, selected + (e.key === 'ArrowDown' ? 1 : -1)));
+      pick();
+    }
+  });
+  list.onclick = (e) => { const row = e.target.closest('.mi'); if (row) open(Number(row.dataset.i)); };
+  scrim.onmousedown = (e) => { if (e.target === scrim) close(); };
+  if (snapshot.result) { draw(snapshot.result); list.scrollTop = snapshot.scroll; } else search();
+  input.focus();
+}
 function openPalette() {
   if (palClose) return palClose();
   keysClose?.();
@@ -770,7 +851,7 @@ function keySheet() {
   // a mouse action is not a key: the modifier is a key, the click or hover is a word
   const m = (mods, action, what) => `<span class="k">${mods.map((x) => `<kbd>${x}</kbd>`).join('')}<span class="mouse">${action}</span></span><span>${what}</span>`;
   const scrim = h(`<div class="scrim"><div class="palette keysheet"><div class="keys">
-    <h3 class="sh">MOVING</h3>${k(['j'], 'next file')}${k(['k'], 'previous file')}${k([']'], 'done with this file: mark it viewed, go to the next left')}${k(['/'], 'find a file')}${k(['⌘', 'K'], 'open or do anything')}
+    <h3 class="sh">MOVING</h3>${k(['j'], 'next file')}${k(['k'], 'previous file')}${k([']'], 'done with this file: mark it viewed, go to the next left')}${k(['['], 'return to where you were')}${k(['/'], 'find a file')}${k(['f'], 'search the repository')}${k(['⌘', 'K'], 'open or do anything')}
     <h3 class="sh">REVIEWING</h3>${k(['v'], 'mark the file viewed, or not viewed again')}${k(['o'], 'fold or unfold the file')}${k(['s'], 'unified or split')}${k(['g'], 'guide order or file order')}${k(['m'], 'hide or show the marks in the code')}
     <h3 class="sh">ON SELECTED LINES</h3>${k(['a'], 'ask Claude there')}${k(['c'], 'comment for your GitHub review (pending until you submit)')}${k(['l'], 'add them to the chat')}${k(['⌘', '↵'], 'send')}${k(['esc'], 'cancel')}
     <h3 class="sh">PANELS</h3>${k(['1'], 'overview')}${k(['2'], 'chat')}${k(['3'], 'marks')}${k(['t'], 'files')}${k(['p'], 'inspector')}${k(['r'], 'read the change again')}
@@ -812,7 +893,7 @@ function scopeMenu(btn) {
 // ------------------------------------------------------------------ clicks in the frame
 document.addEventListener('click', async (e) => {
   const b = e.target.closest?.('[data-act]');
-  if (b && b.closest('.top, #scopebar, .ptabs, .state, #aifab')) { // the scope bar sits in the file list's head
+  if (b && b.closest('.top, #scopebar, .tree-head, .ptabs, .state, #aifab')) { // the scope bar and order switch sit in the file list's head
     const act = b.dataset.act;
     if (act === 'palette') openPalette();
     if (act === 'layout') setLayout(b.dataset.l);
@@ -841,7 +922,7 @@ document.addEventListener('click', async (e) => {
     if (act === 'togglepanel') setPane('panel', !paneOpen('panel'));
     if (act === 'keys') keySheet();
     if (act === 'scopemenu') scopeMenu(b);
-    if (act === 'treeorder') setOrder(S.order === 'guide' ? 'tree' : 'guide');
+    if (act === 'setorder') setOrder(b.dataset.o);
     if (act === 'scope') setScope(b.dataset.scope);
     if (act === 'askai') return askAi();
     if (act === 'gochat') { setPane('panel', true); S.chat = b.dataset.conv; setTab('chat'); }
@@ -854,6 +935,7 @@ document.addEventListener('click', async (e) => {
   if (gs) { const g = document.getElementById('g-' + gs.dataset.k); const first = S.review.brief?.sections?.[Number(gs.dataset.k)]?.files?.[0]; return first ? goLoc({ path: first, line: 0 }) : g?.scrollIntoView({ block: 'start' }); }
   const wb = e.target.closest?.('#tlist [data-act="writebrief"]');
   if (wb) { setPane('panel', true); setTab('overview'); return hooks.rebrief?.(); }
+  if (e.target.closest?.('#tlist [data-act="clearfilter"]')) { hooks.clearFilter(); $('#filter').focus(); return; }
   const tr = e.target.closest?.('.trow');
   if (tr) {
     if (tr.dataset.d !== undefined) { S.dirShut.has(tr.dataset.d) ? S.dirShut.delete(tr.dataset.d) : S.dirShut.add(tr.dataset.d); return renderTree(); }
@@ -880,7 +962,9 @@ document.addEventListener('keydown', (e) => {
   if (S.sel && !S.draft && (key === 'a' || key === 'l')) { e.preventDefault(); return key === 'l' ? attachSelection() : openDraft('ask'); }
   if (S.sel && !S.draft && key === 'c' && canComment(S.sel.path)) { e.preventDefault(); return openDraft('comment'); }
   if (key === 'a' && !S.sel) { e.preventDefault(); return askAi(); }
-  if (key === 'j') stepFile(1);
+  if (key === '[') goBack();
+  else if (key === 'f') openRepositorySearch();
+  else if (key === 'j') stepFile(1);
   else if (key === 'k') stepFile(-1);
   else if (key === ']') nextLeft();
   else if (key === 'v' && S.current) { const on = !isViewed(fileOf(S.current)); const next = on ? nextUnviewed() : null; setViewed(S.current, on); if (next && next !== S.current) setTimeout(() => go(next), 60); }

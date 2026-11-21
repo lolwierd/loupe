@@ -69,14 +69,14 @@ function headHTML() {
   if (m.kind === 'pr') {
     const t = p || m.pr;
     return `<div class="prhead"><div class="row">${p ? prState(p) : ''}${p ? checksPill(p) : ''}${p ? decisionPill(p) : ''}<span class="sp"></span><a href="${esc(t.url)}" target="_blank" rel="noopener" title="Open on GitHub" class="link">${I.github} GitHub</a></div><h1>${esc(t.title)}</h1>` +
-      `<div class="row"><span class="by">#${t.number} by ${avatar(t.author)}<b>${esc(t.author)}</b></span><span class="chip" title="${esc(t.headRefName)}">${esc(t.headRefName)}</span><span class="faint">→</span><span class="chip" title="${esc(t.baseRefName)}">${esc(t.baseRefName)}</span></div>` +
+      `<div class="row"><span class="by">#${t.number} by ${avatar(t.author)}<b>${esc(t.author)}</b></span><span class="brs"><span class="chip" title="${esc(t.headRefName)}">${esc(t.headRefName)}</span><span class="faint">→</span><span class="chip" title="${esc(t.baseRefName)}">${esc(t.baseRefName)}</span></span></div>` +
       (p ? reviewersHTML(p) : '') + (p ? `<div class="row">${mergeLine(p)}</div>` : '') +
       (t.labels?.length ? `<div class="row">${t.labels.map((l) => `<span class="pill">${esc(l)}</span>`).join('')}</div>` : '') + `</div>`;
   }
   const behind = p && p.headRefOid !== m.headFull ? `<div class="warnline">GitHub has ${p.headRefOid.slice(0, 7)}, this checkout is at ${m.head.slice(0, 7)}</div>` : '';
   const prCard = p ? `<div class="card prcard"><div class="row"><span class="by">${I.pr}<b>#${p.number}</b>${avatar(p.author)}<span>${p.viewerIsAuthor ? 'you' : esc(p.author || '')}</span></span><span class="sp"></span><button class="btn sm" data-act="openprws" title="Open the pull request as GitHub has it">Open the PR</button></div>` +
     `<div class="row">${prState(p)}${checksPill(p)}${decisionPill(p)}</div><div class="ptitle" title="${esc(p.title)}">${esc(p.title)}</div>${behind}</div>` : '';
-  return `<div class="prhead"><h1>${esc(m.branch)}</h1><div class="row"><span>into</span><button class="chip" data-act="basemenu" title="Compare with another branch">${esc(m.base)}${I.chev}</button><span>${plural(m.commits.length, 'commit')}</span>${m.dirty ? `<span class="pill warn">${plural(m.dirty, 'uncommitted file')}</span>` : ''}</div><div class="path" title="${esc(m.root)}"><bdi dir="ltr">${esc(m.root)}</bdi></div></div>${prCard}`;
+  return `<div class="prhead"><h1>${esc(m.branch)}</h1><div class="row"><span>into</span><button class="runpick mono" data-act="basemenu" title="Compare with another branch"><span>${esc(m.base)}</span>${I.chev}</button><span>${plural(m.commits.length, 'commit')}</span>${m.dirty ? `<span class="pill warn">${plural(m.dirty, 'uncommitted file')}</span>` : ''}</div><div class="path" title="${esc(m.root)}"><bdi dir="ltr">${esc(m.root)}</bdi></div></div>${prCard}`;
 }
 // A brief written before 20 Nov can hold its TLDR as a JSON array of sentences.
 const tldrText = (t) => {
@@ -87,14 +87,14 @@ const tldrText = (t) => {
 function tldrHTML() {
   const b = S.review.brief;
   const write = (label) => `<div class="row"><button class="link" data-act="brief">${label}</button>${briefRunBtn()}</div>`;
-  if (b?.pending) return `<div class="card tldr"><div class="working big">${modelKind(briefRun().model) === 'claude' ? spark(32) : ''}<span class="shimmer" style="${shimmerSync()}">${b.step ? `Reading ${esc(b.step)}` : `Reading the change and the code around it${b.tldr ? ' again' : ''}…`}</span></div>${b.tldr ? `<div class="md">${md(tldrText(b.tldr), { images: modelKind(b.model) !== 'codex' })}</div>` : ''}</div>`;
+  if (b?.pending) return `<div class="card tldr"><div class="working big">${modelKind(briefRun().model) === 'claude' ? spark(32) : ''}<span class="shimmer" style="${shimmerSync()}">${b.step ? `Reading ${esc(b.step)}` : `Reading the change and the code around it${b.tldr ? ' again' : ''}…`}</span></div>${b.tldr ? `<div class="md">${md(tldrText(b.tldr), { images: modelKind(b.model) !== 'codex', citations: b.citations })}</div>` : ''}</div>`;
   if (!b?.tldr) {
     return `<div class="card tldr"><div class="empty"><p class="big">No brief yet.</p><p>The model you pick reads the change and the code around it, then writes what it does and why, how that part of the system works, a map with the change marked on it, and how to review it.</p>${b?.error ? `<p class="err">${esc(b.error)}</p>` : ''}</div>${write('Write the brief')}</div>`;
   }
   const risk = { low: 'ok', typical: '', high: 'warn', 'very high': 'danger' }[b.risk] ?? '';
   return `<div class="card tldr">` +
     (b.stale ? `<div class="banner warn tight"><span>Written for an earlier version of the change.</span><span class="sp"></span><button class="btn sm" data-act="brief">Regenerate</button></div>` : '') +
-    `<div class="md">${md(tldrText(b.tldr), { images: modelKind(b.model) !== 'codex' })}</div><div class="risk"><span class="pill ${risk}">${esc(b.risk)} risk</span><span>${md(b.riskWhy || '', { images: modelKind(b.model) !== 'codex' }).replace(/^<p>|<\/p>\s*$/g, '')}</span></div>` +
+    `<div class="md">${md(tldrText(b.tldr), { images: modelKind(b.model) !== 'codex', citations: b.citations })}</div><div class="risk"><span class="pill ${risk}">${esc(b.risk)} risk</span><span>${md(b.riskWhy || '', { images: modelKind(b.model) !== 'codex', citations: b.citations }).replace(/^<p>|<\/p>\s*$/g, '')}</span></div>` +
     (b.startHere ? `<div class="risk"><span class="faint">Start with</span><button class="chip" data-act="gofile" data-p="${esc(b.startHere)}"><span>${esc(b.startHere)}</span></button></div>` : '') +
     (b.context?.system || b.diagrams?.length ? `<div class="risk"><button class="link" data-act="gomap">The map of this change, above the code</button></div>` : '') +
     `<div class="mfoot"><span>${esc(modelName(b.model))} · ${esc(b.effort)}${b.ms ? ' · ' + (b.ms / 1000).toFixed(0) + ' s' : ''}${b.cost ? ' · $' + b.cost.toFixed(2) : ''} · ${ago(b.at)}</span></div>` +
@@ -123,7 +123,7 @@ function conversationHTML() {
   const badge = { APPROVED: pill('ok', 'approved'), CHANGES_REQUESTED: pill('danger', 'requested changes'), COMMENTED: pill('', 'reviewed'), DISMISSED: pill('', 'dismissed') };
   const items = p.timeline.map((t) => `<div class="card tl"><div class="mmeta">${avatar(t.author)}<span class="who">${esc(t.author)}</span>${t.kind === 'review' ? badge[t.state] || '' : ''}<span class="t">${ago(Date.parse(t.at))}</span><span class="sp"></span>${t.url ? `<a class="link" href="${esc(t.url)}" target="_blank" rel="noopener" title="On GitHub">${I.ext}</a>` : ''}</div>${t.body?.trim() ? `<div class="md">${md(t.body)}</div>` : ''}</div>`).join('');
   const canComment = p.state === 'OPEN' || p.state === 'CLOSED';
-  return `<div class="sect"><div class="sh">CONVERSATION<span class="n">${p.timeline.length}</span><span class="sp"></span><button class="link" data-act="ghrefresh" title="Read GitHub again">${I.refresh}</button></div>${items || '<div class="faint">No comments yet.</div>'}` +
+  return `<div class="sect"><div class="sh">CONVERSATION<span class="n">${p.timeline.length}</span><span class="sp"></span><button class="icon sm" data-act="ghrefresh" title="Read GitHub again" aria-label="Read GitHub again">${I.refresh}</button></div>${items || '<div class="faint">No comments yet.</div>'}` +
     (canComment ? `<div class="composer" id="commentbox"><textarea rows="2" placeholder="Comment on #${p.number}…" aria-label="Comment on the pull request">${esc(S.commentDraft || '')}</textarea><div class="row"><span class="hint">posted on GitHub as ${esc(p.viewer || 'you')}</span><span class="sp"></span><button class="btn sm primary" data-act="ghcomment">Comment <kbd>⌘↵</kbd></button></div></div>` : '') + `</div>`;
 }
 function renderOverview(body) {
@@ -340,7 +340,7 @@ function renderReview(body) {
   const ghAll = S.github?.threads || [];
   const counts = { open: S.review.threads.filter(live).length + ghAll.filter((x) => !x.resolved).length, resolved: S.review.threads.filter((t) => !live(t)).length + ghAll.filter((x) => x.resolved).length };
   body.innerHTML = `<div class="pane"><div class="sect"><div class="bar"><span class="seg"><button data-act="nshow" data-v="open" aria-pressed="${show === 'open'}">Open ${counts.open}</button><button data-act="nshow" data-v="resolved" aria-pressed="${show === 'resolved'}">Resolved ${counts.resolved}</button></span><span class="sp"></span>` +
-    `<button class="btn sm ghost" data-act="markshide" title="${S.marksHidden ? 'Show the marks in the code' : 'Hide the marks in the code; the gutter ticks stay'} (m)">${S.marksHidden ? 'Show in code' : 'Hide in code'}</button>` +
+    `<button class="link" data-act="markshide" title="${S.marksHidden ? 'Show the marks in the code' : 'Hide the marks in the code; the gutter ticks stay'} (m)">${S.marksHidden ? 'Show in code' : 'Hide in code'}</button>` +
     `</div>` +
     (ths.length ? `<div>${ths.map(markRow).join('')}</div>` : gh.length ? '' : `<div class="empty"><p>${show === 'resolved' ? 'Nothing resolved yet.' : 'No open marks.'}</p><p>Select lines (drag the <b>+</b> or click line numbers), then <kbd>a</kbd> to ask about them.</p></div>`) + `</div>` +
     githubThreadsHTML(show) + `</div>`;

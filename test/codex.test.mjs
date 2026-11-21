@@ -33,7 +33,7 @@ if (stdin.trimEnd().endsWith('simulate turn failure')) {
   // a value for every field of a strict schema, so the brief parses however its schema grows
   const fill = (s) => s.type === 'object' ? Object.fromEntries(Object.entries(s.properties).map(([k, v]) => [k, fill(v)])) : s.type === 'array' ? [fill(s.items)] : s.enum ? s.enum[0] : s.type === 'integer' || s.type === 'number' ? (s.minimum ?? 0) : s.type === 'boolean' ? false : '';
   const out = schema.properties.tldr
-    ? { ...fill(schema), tldr: 'Adds a check.', risk: 'low', riskWhy: 'Local only.', plan: { ...fill(schema.properties.plan), start: 'file.txt' }, sections: [
+    ? { ...fill(schema), tldr: 'Adds a check.', risk: 'low', riskWhy: 'Local only.', citations: [{ ref: 'file.txt:1', excerpt: 'new' }], plan: { ...fill(schema.properties.plan), start: 'file.txt' }, sections: [
         { ...fill(schema.properties.sections.items), title: 'Check', role: 'core', why: 'Read it.', check: ['Check it.'], files: ['file.txt', 'made-up.txt'] },
       ] }
     : stdin.includes('Write the pull request')
@@ -209,6 +209,7 @@ test('Codex uses structured schemas for briefs and both kinds of draft', async (
   assert.equal(brief.tldr, 'Adds a check.');
   assert.equal(brief.startHere, 'file.txt');
   assert.deepEqual(brief.sections[0].files, ['file.txt']);
+  assert.deepEqual(brief.citations, { 'file.txt:1': 'new' });
   const briefCall = calls().at(-1);
   assertInvocation(briefCall, 'gpt-6.2-astra', 'medium');
   assert.equal(briefCall.schema.additionalProperties, false);

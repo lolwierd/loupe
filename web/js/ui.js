@@ -56,7 +56,7 @@ export function menu(anchor, items, onPick, { align = 'left', width } = {}) {
 export const runLabel = (r) => `${modelName(r.model)} · ${r.effort}`;
 export const briefRunBtn = () => runBtn(briefRun(), { purpose: 'brief' });
 export const modelKind = (model) => S.app?.models.find((m) => m.id === model)?.kind || (/^gpt-/.test(model || '') ? 'codex' : 'claude');
-const runContent = (r) => `${modelKind(r.model) === 'claude' ? I.spark : ''}<span>${esc(runLabel(r))}</span>`;
+const runContent = (r) => `${modelKind(r.model) === 'claude' ? I.spark : ''}<span>${esc(runLabel(r))}</span>${I.chev}`;
 const convKind = (conv) => (conv?.linked || conv?.sessionId ? 'claude' : conv?.modelKind || conv?.messages.find((m) => m.role !== 'user')?.role);
 function availableModel(model, conv, fallback) {
   const kind = convKind(conv) || modelKind(model);
@@ -67,7 +67,7 @@ function availableModel(model, conv, fallback) {
 }
 export function runBtn(r, { conv, purpose = '' } = {}) {
   r = { ...r, model: availableModel(r.model, conv, purpose === 'brief' ? S.app.defaults?.briefModel : S.app.defaults?.model) };
-  return `<button type="button" class="chip" data-act="run" data-model="${esc(r.model)}" data-effort="${esc(r.effort)}" data-run-conv="${esc(conv?.id || '')}" data-purpose="${esc(purpose)}" title="Model and effort">${runContent(r)}</button>`;
+  return `<button type="button" class="runpick" data-act="run" data-model="${esc(r.model)}" data-effort="${esc(r.effort)}" data-run-conv="${esc(conv?.id || '')}" data-purpose="${esc(purpose)}" title="Model and effort">${runContent(r)}</button>`;
 }
 export function refreshRunButtons() {
   for (const btn of $$('[data-act="run"]')) {
