@@ -134,29 +134,42 @@ function wsTitle() {
   return `${icon}<span class="t" title="${esc(title)}">${esc(title)}</span>${by}<span class="r" title="${esc(sub)}">${esc(sub)}</span>${I.chev}`;
 }
 
-// The change's meta, then its files and review state. Called again whenever the change moves.
-// Answers draw in the order they arrive: one that waited on the opening's roll gives way to a newer answer, and a read
-// that failed outright draws only if no answer came while it was out and none waits. A drawn state stops a files read.
-let wsLoad = 0, readyWaiting = 0;
-async function loadWorkspace(reason) {
-  const id = S.id, before = wsLoad;
+// The change's meta, then its files and review state. Called again whenever the change moves. One read of the meta
+// runs at a time: a call while one runs asks for one more after it (the calls in between fold into it, keeping a
+// change's reason), so answers never cross and the newest is drawn last. The files are read outside the queue (their
+// own request number keeps the newest), so a slow one never holds the next read back.
+let wsRun = null, wsNext = null;
+function loadWorkspace(reason) {
+  if (wsRun) { wsNext = { reason: reason ?? wsNext?.reason }; return wsRun; }
+  wsRun = (async () => {
+    let files = null;
+    try {
+      for (let n = { reason }; n; n = wsNext, wsNext = null) {
+        try { files = (await readWorkspace(n.reason))?.files || files; } catch (e) { console.error(e); } // one read that throws never drops the next
+      }
+    } finally { wsRun = null; }
+    await files;
+  })();
+  return wsRun;
+}
+async function readWorkspace(reason) {
+  const id = S.id;
   let m;
-  try { m = await api(`/api/w/${id}`); } catch (e) { if (S.id === id && !readyWaiting && wsLoad === before) { ++wsLoad; fileRequest++; showState('Could not open this', e.message, true); } return; }
-  const seq = ++wsLoad, latest = () => seq === wsLoad && S.id === id;
+  try { m = await api(`/api/w/${id}`); } catch (e) { if (S.id === id) showState('Could not open this', e.message, true); return; }
   if (S.id !== id) return;
   if (m.status !== 'ready' || !m.headFull && m.kind === 'pr') {
-    fileRequest++;
     S.opening = { ...m, id: S.id }; // what the state box can show while it waits: a pull request's size, the refs of one that failed
     $('#wsbtn').innerHTML = `${m.kind === 'pr' ? I.pr : I.branch}<span class="t">${esc(m.rec?.pr?.title || m.rec?.slug || '')}</span>`;
     return showState(m.status === 'error' ? 'Could not open this' : 'Opening…', m.progress || '', m.status === 'error');
   }
   // the opening's roll finishes its pass before the change is drawn over it
-  readyWaiting++;
-  try { await endOpening(); } finally { readyWaiting--; }
-  if (!latest()) return;
+  await endOpening();
+  if (S.id !== id) return;
   S.ws = m; S.opening = null;
   $('#wsbtn').innerHTML = wsTitle();
-  await loadFiles(reason);
+  const files = loadFiles(reason);
+  files.catch((e) => console.error(e)); // a read that a newer one replaced is still said, never left unhandled
+  return { files };
 }
 // a daemon's or git's message, said as a sentence: capitalised, with its full stop
 // (a program's name leading it, "gh: …" or "git fetch: …", keeps its case)
@@ -838,7 +851,7 @@ function openPalette() {
       if (c) return head + `<button class="mi" ${sel}>${palGlyph()}<span class="ml" title="${esc(c.label)}">${esc(c.label)}</span>${palTrail(c.key ? `<kbd>${esc(c.key)}</kbd>` : c.on ? I.check : c.sub ? esc(c.sub) : '')}</button>`;
       const w = x.ws, left = w.left ? (w.left.lines ? w.left.lines.toLocaleString() : icon('check', '--ok')) : '';
       const repo = w.repo && w.repo !== w.title ? `<span class="rp">${esc(w.repo)}</span>` : '';
-      return head + `<button class="mi" ${sel}>${palGlyph(w.kind === 'pr' ? I.pr : I.branch)}<span class="ml" title="${esc(w.title)}${w.repo ? ` · ${esc(w.repo)}` : ''}">${w.kind === 'pr' ? `#${w.number} ` : ''}${esc(w.title)}${repo}</span>${palTrail(left)}</button>`;
+      return head + `<button class="mi" ${sel}>${palGlyph(w.kind === 'pr' ? I.pr : I.branch)}<span class="ml" title="${esc(w.title)}${w.repo ? ` · ${esc(w.repo)}` : ''}">${w.kind === 'pr' && !w.title.endsWith(`#${w.number}`) ? `#${w.number} ` : ''}${esc(w.title)}${repo}</span>${palTrail(left)}</button>`;
     }).join('') || `<div class="none">${q ? `Nothing matches “${esc(input.value.trim())}”.` : 'Nothing to show.'}</div>`;
     if (more > 0) list.insertAdjacentHTML('beforeend', `<div class="more">and ${more.toLocaleString()} more: keep typing to narrow them</div>`);
     list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -972,7 +985,7 @@ async function renderHome(error) {
       ...(gh ? [{ label: 'Open on GitHub', value: 'gh' }] : []),
       // hiding needs a daemon that keeps the list (settings.hiddenOrgs); an older one does not offer it
       ...(owner && Array.isArray(st.settings?.hiddenOrgs) ? [{ label: `Hide ${owner}'s pull requests`, value: 'hide' }] : []),
-      ...(ws ? [{ sep: true }, { label: 'Close it here', sub: 'its marks stay for next time', value: 'close' }] : []),
+      ...(ws ? [{ sep: true }, { label: 'Close it here', sub: 'its marks stay for next time', value: 'close', confirm: ws.startsWith('pr-') ? "Close it? loupe's checkout of it goes" : 'Close it? Its marks stay' }] : []),
     ], async (it) => {
       if (it.value === 'gh') open(gh, '_blank', 'noopener');
       if (it.value === 'hide') setHidden([...hidden, owner.toLowerCase()]);

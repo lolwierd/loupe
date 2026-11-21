@@ -151,7 +151,7 @@ const SHEETS = {
         items: [
           'Takes it off home and out of ⌘K',
           n.length ? `Keeps its ${n.join(' and ')} for when you open it again` : 'Nothing to keep: no marks or chats yet',
-          pr ? "Removes loupe's own checkout of the pull request; opening it again fetches a fresh one" : 'Your checkout and its branch are untouched',
+          pr ? "Removes loupe's own checkout of the pull request, with anything edited in it; opening it again fetches a fresh one" : 'Your checkout and its branch are untouched',
         ],
         where: 'Back to home after', confirm: 'Close',
       };
