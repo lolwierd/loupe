@@ -98,7 +98,8 @@ export function markCurrent() {
   if (p) $(`.trow[data-p="${CSS.escape(p)}"]`)?.setAttribute('aria-current', 'true');
 }
 
-// The tab says what is left (title and favicon ring), and the moment the last file is viewed, the strip flashes.
+// The tab says what is left (title and favicon ring), and the moment the last file is viewed a toast says so (the meter
+// in the top bar sends its glint across the board, acts.js).
 let lastLeft = null;
 export function progressMarks(total, left) {
   const done = total ? (total - left) / total : 1;
@@ -111,8 +112,6 @@ export function progressMarks(total, left) {
   if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.append(link); }
   link.type = 'image/svg+xml'; link.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
   if (lastLeft > 0 && left === 0 && total > 0 && lastLeft !== null) {
-    const el = $('#tally');
-    if (el) { el.classList.remove('sweep'); void el.offsetWidth; el.classList.add('sweep'); }
     import('./core.js').then(({ toast }) => toast('Every file viewed.'));
   }
   lastLeft = left;

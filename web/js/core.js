@@ -45,6 +45,7 @@ export const S = {
   readFrac: new Map(), // how far down each file you have scrolled, 0..1 (the strip dithers by it)
   unreadAns: new Set(), // questions whose answer arrived and you have not opened yet
   view: null,
+  opening: null,      // the record of a change that is not ready yet (a pull request's size while it is fetched)
 };
 
 export const fileOf = (p) => S.byPath.get(p);
@@ -69,6 +70,7 @@ export const freshModel = (id, d) => {
 };
 export const lastRun = () => ({ model: freshModel(pref.get('model', S.app?.defaults.model), S.app?.defaults.model), effort: pref.get('effort', S.app?.defaults.effort) });
 export const briefRun = () => ({ model: freshModel(pref.get('briefModel', S.app?.defaults.briefModel), S.app?.defaults.briefModel), effort: pref.get('briefEffort', S.app?.defaults.briefEffort) });
+export const notesRun = () => ({ model: freshModel(pref.get('notesModel', S.app?.defaults.notesModel), S.app?.defaults.notesModel), effort: pref.get('notesEffort', S.app?.defaults.notesEffort) });
 export const rememberRun = (r) => { if (r.model) pref.set('model', r.model); if (r.effort) pref.set('effort', r.effort); };
 
 export const ago = (t) => {
@@ -113,6 +115,8 @@ export const I = {
   ask: P('<circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.3"/><path d="M8 11.6h0" stroke-width="2"/>'),
   note: P('<path d="M3 13l1-3.5L10.5 3a1.4 1.4 0 0 1 2 2L6 11.5z"/><path d="M9.5 4l2 2"/>'),
   chat: P('<path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/><path d="M5.5 6.5h5M5.5 8.5h3"/>'),
+  // Codex's mark beside Claude's spark: a terminal's prompt, since Codex is the command-line agent
+  codex: P('<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M4.75 6.25 6.5 8l-1.75 1.75M8.25 10h3"/>'),
   link: P('<path d="M6.5 9.5l3-3"/><path d="M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1"/>'),
   sidebarL: P('<rect class="pn" x="2" y="2.5" width="4" height="11" rx="1.5"/><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M6 2.5v11"/>'),
   sidebarB: P('<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 9.5h12"/>'),

@@ -157,7 +157,7 @@ function renderChat(body) {
     (conv?.messages.length ? `<div data-conv="${conv.id}">${conv.messages.map((m) => msgHTML(m)).join('')}</div>` : empty) + `</div>` +
     `<div class="chatfoot">${attachHTML()}<div class="composer" id="chatbox"><textarea rows="2" placeholder="${linked ? 'Ask the session…' : 'Ask about the change…'}" aria-label="Question about the change"></textarea>` +
     `<div class="row">${linked?.live ? '<span class="hint">the live session picks its own model</span>' : runBtn(conv?.model ? { model: conv.model, effort: conv.effort } : lastRun(), { conv })}<span class="sp"></span>` +
-    `<button class="btn sm primary" data-act="chatsend">Send <kbd>⌘↵</kbd></button></div></div></div></div>`;
+    `<button class="btn sm primary" data-act="chatsend">Send <kbd>↵</kbd></button></div></div></div></div>`;
   const log = $('#chatlog');
   log.scrollTop = log.scrollHeight;
   const ta = $('#chatbox textarea');
@@ -176,10 +176,31 @@ function attachHTML() {
 }
 export function openChat() { S.focusChat = true; setTab('chat'); }
 
+// Following the conversation: sending pins its log to the bottom, so your question and the answer under it stay in view as
+// the answer comes in. Scrolling up lets go (data-follow 0), and only coming all the way back to the bottom follows again;
+// a log nobody has sent in yet follows while it is within 80px of its bottom, as before.
+function follow(log) {
+  if (!log) return;
+  log.dataset.follow = '1';
+  log.scrollTo({ top: log.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+}
+const fromEnd = (log) => log.scrollHeight - log.scrollTop - log.clientHeight;
+function following(log) {
+  const f = log.dataset.follow;
+  if (f === '0' && fromEnd(log) < 2) log.dataset.follow = '1';
+  return log.dataset.follow === '1' || (f === undefined && fromEnd(log) < 80);
+}
+const letGo = (e) => { const log = e.target.closest?.('.chatlog'); if (log) log.dataset.follow = '0'; };
+document.addEventListener('wheel', (e) => { if (e.deltaY < 0) letGo(e); }, { passive: true });
+document.addEventListener('keydown', (e) => { if (['PageUp', 'Home', 'ArrowUp'].includes(e.key)) letGo(e); });
+
+let chatSending = false;
 async function chatSend() {
   const ta = $('#chatbox textarea');
   const text = ta.value.trim();
-  if (!text) return;
+  if (!text || chatSending) return; // one question per send, even while a new chat is still being made
+  chatSending = true;
+  follow($('#chatlog'));
   let conv = convOf(S.chat);
   const run = conv?.linked?.live ? {} : runOf($('#chatbox'));
   rememberRun(run);
@@ -194,6 +215,7 @@ async function chatSend() {
     S.attach = []; S.chatDraft = ''; ta.value = '';
     await api(`/api/w/${S.id}/convs/${conv.id}/messages`, { method: 'POST', body: { text, attachments, ...run } });
   } catch (e) { toast(e.message); ta.value = text; }
+  finally { chatSending = false; }
 }
 
 function chatPicker(btn) {
@@ -284,7 +306,7 @@ function renderMark(body) {
     `<div data-conv="${th.conv}">${conv.messages.map((m) => msgHTML(m)).join('')}</div></div>` +
     `<div class="chatfoot"><div class="composer" id="markbox" data-t="${th.id}"><textarea rows="2" placeholder="Ask a follow-up" aria-label="Follow-up question">${esc(S.replyDrafts[th.id] || '')}</textarea>` +
     `<div class="row">${runBtn(conv.model ? { model: conv.model, effort: conv.effort } : lastRun(), { conv })}<span class="sp"></span>` +
-    `<button class="btn sm primary" data-act="markask">Ask <kbd>⌘↵</kbd></button>` +
+    `<button class="btn sm primary" data-act="markask">Ask <kbd>↵</kbd></button>` +
     `</div></div></div></div>`;
   const log = $('#marklog'); log.scrollTop = 0;
   const ta = $('#markbox textarea'); grow(ta);
@@ -325,6 +347,7 @@ async function markReply(ask) {
   if (!th || !text) return ta?.focus();
   const run = runOf($('#markbox')); rememberRun(run);
   ta.value = ''; grow(ta); delete S.replyDrafts[th.id];
+  follow($('#marklog'));
   try { await api(`/api/w/${S.id}/convs/${th.conv}/messages`, { method: 'POST', body: { text, ask, ...run, scope: S.scope } }); }
   catch (e) { toast(e.message); ta.value = text; }
 }
@@ -356,7 +379,7 @@ export function rebrief() {
   const refresh = () => {
     if (S.tab === 'overview') renderPanel(); else renderTabs();
     hooks.briefPending?.();
-    hooks.renderFab?.();
+    hooks.syncMote?.();
   };
   refresh();
   return api(wsApi('/brief'), { method: 'POST', body: run }).catch((err) => {
@@ -436,8 +459,9 @@ $('#root').addEventListener('click', async (e) => {
     return renderBody(ght.path);
   }
 });
-function focusComment() { setTab('overview'); requestAnimationFrame(() => { const ta = $('#commentbox textarea'); ta?.scrollIntoView({ block: 'center' }); ta?.focus(); }); }
-function showChecks() { setTab('overview'); requestAnimationFrame(() => { const d = $('#checks'); if (d) { d.open = true; d.scrollIntoView({ block: 'start' }); } }); }
+// both open the side panel first: from the top bar's act or the palette it may be folded away
+function focusComment() { hooks.showPanel?.(); setTab('overview'); requestAnimationFrame(() => { const ta = $('#commentbox textarea'); ta?.scrollIntoView({ block: 'center' }); ta?.focus(); }); }
+function showChecks() { hooks.showPanel?.(); setTab('overview'); requestAnimationFrame(() => { const d = $('#checks'); if (d) { d.open = true; d.scrollIntoView({ block: 'start' }); } }); }
 // the palette reaches the chat from anywhere: a new one, or linking a session (its menu opens under the chat's picker)
 const linkSession = () => { hooks.showPanel?.(); setTab('chat'); requestAnimationFrame(() => { const b = $('#panel [data-act="chatpick"]') || $('#panel [data-act="linkpick"]'); if (b) linkPicker(b); }); };
 Object.assign(hooks, { focusComment, showChecks, newChat: () => { hooks.showPanel?.(); setTab('chat'); return newChat(); }, linkSession });
@@ -449,23 +473,27 @@ document.addEventListener('input', (e) => {
   if (e.target.closest?.('#chatbox')) S.chatDraft = e.target.value;
   if (e.target.closest?.('#commentbox')) S.commentDraft = e.target.value;
 });
+// Asking a model is a chat: ↵ sends and ⇧↵ starts a new line (⌘↵ sends too; an input method's ↵ while composing is its own).
+// Writing for GitHub is kept as GitHub keeps it, and it posts in public from here: ↵ is a new paragraph, ⌘↵ posts.
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey)) return;
-  if (e.target.closest?.('#chatbox')) { e.preventDefault(); chatSend(); }
-  if (e.target.closest?.('#commentbox')) { e.preventDefault(); $('[data-act="ghcomment"]')?.click(); }
-  if (e.target.closest?.('#markbox')) { e.preventDefault(); const th = S.review.threads.find((t) => t.id === S.mark); markReply(true); }
-  if (e.target.closest?.('#ghbox')) { e.preventDefault(); $('[data-act="ghreply"]')?.click(); }
+  if (e.key !== 'Enter' || e.repeat || e.target.tagName !== 'TEXTAREA') return;
+  const ask = !e.shiftKey && !e.isComposing && e.keyCode !== 229, post = e.metaKey || e.ctrlKey;
+  if (ask && e.target.closest?.('#chatbox')) { e.preventDefault(); chatSend(); }
+  if (ask && e.target.closest?.('#markbox')) { e.preventDefault(); markReply(true); }
+  if (post && e.target.closest?.('#commentbox')) { e.preventDefault(); $('[data-act="ghcomment"]')?.click(); }
+  if (post && e.target.closest?.('#ghbox')) { e.preventDefault(); $('[data-act="ghreply"]')?.click(); }
 });
 
 // A message changed: draw it wherever its conversation is on screen (its thread inline, or the chat).
 export function paintMessage(convId, msg) {
   for (const box of $$(`[data-conv="${convId}"]`)) {
     const el = box.querySelector(`.msg[data-m="${CSS.escape(msg.id)}"]`);
-    const log = box.closest('#chatlog');
-    const atBottom = log && log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    const log = box.closest('.chatlog'); // the chat's log, or a question's follow-ups
+    const keep = log && following(log);
     const was = el?.querySelector('.mmeta canvas.spark:not(.still)');
     if (el) el.outerHTML = msgHTML(msg); else box.insertAdjacentHTML('beforeend', msgHTML(msg));
     if (was && !msg.pending) box.querySelector(`.msg[data-m="${CSS.escape(msg.id)}"] .mmeta canvas.spark`)?.classList.add('landed');
-    if (log && atBottom) log.scrollTop = log.scrollHeight;
+    // a new message glides into view; a message growing as it streams keeps its bottom in view without a glide
+    if (keep) { if (el) log.scrollTop = log.scrollHeight; else follow(log); }
   }
 }

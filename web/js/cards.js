@@ -1,15 +1,16 @@
 // The diff column: every changed file as a card in one scroll (tree order, or the guide's), loaded as it nears the
 // viewport. Selecting lines, the composer under them, and the threads anchored to them live here.
-import { S, $, $$, esc, tick, h, api, wsApi, I, pref, toast, fileOf, convOf, threadsAt, lastRun, rememberRun, plural, ago } from './core.js';
+import { S, $, $$, esc, tick, h, api, wsApi, I, pref, toast, fileOf, convOf, threadsAt, lastRun, rememberRun, plural, ago, reducedMotion } from './core.js';
 import { buildRows, buildSplit, wordRanges, findRow, revealAround, expandGap, loadTokens, tokHTML, headText, rangeLabel, selText } from './diff.js';
 import { md } from './md.js';
 import { modelKind, msgHTML, runBtn, runOf, grow, menu, shimmerSync } from './ui.js';
 import { hooks } from './hooks.js';
 import { mapCardHTML } from './map.js';
 import { spark, icon } from './pixel.js';
+import { eligibleForNotes, fileNoteKey } from './file-notes.js';
 
 // the glyph of a question: Claude's spark, or a plain bubble for Codex (the spark and orange are Claude's alone)
-const askGlyph = (r) => (modelKind(r?.model) === 'codex' ? I.chat : spark(16, true));
+const askGlyph = (r) => (modelKind(r?.model) === 'codex' ? I.codex : spark(16, true));
 
 export const cardEl = (p) => document.getElementById('f-' + (fileOf(p)?.i ?? 'x'));
 const isGo = (p) => p.endsWith('.go');
@@ -41,6 +42,30 @@ export function orderedFiles() {
 const STATUS = { A: 'added', D: 'deleted', M: 'modified', R: 'renamed', C: 'copied', T: 'type changed' };
 export function statusGlyph(f) { const s = f.untracked ? 'A' : f.status; return `<span class="st ${s}" title="${STATUS[s] || s}${f.untracked ? ', untracked' : ''}">${s}</span>`; }
 
+function fileNoteHTML(f) {
+  const notes = S.review.notes;
+  const entry = notes?.files?.[f.path];
+  if (!entry?.note || !eligibleForNotes(f)) return '';
+  const stale = entry.key !== fileNoteKey(f);
+  if (stale && notes.pending && !notes.error) return '';
+  return tick(entry.note) + (stale ? ' <span class="file-note-stale">Written for an earlier version.</span>' : '');
+}
+
+export function updateFileNotes(before) {
+  for (const f of S.files) {
+    const card = cardEl(f.path);
+    const note = card?.querySelector('.file-note');
+    if (!note) continue;
+    const html = fileNoteHTML(f);
+    if (note.innerHTML !== html) note.innerHTML = html;
+    const saved = S.review.notes?.files?.[f.path], was = before?.files?.[f.path];
+    const landed = saved?.key === fileNoteKey(f) && (saved.key !== was?.key || saved.note !== was?.note);
+    if (landed && html && !S.shut.has(f.path) && !reducedMotion()) {
+      note.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'ease-out' });
+    }
+  }
+}
+
 function cardHTML(f) {
   const k = f.path.lastIndexOf('/');
   const tags = [f.untracked ? '<span class="pill warn">untracked</span>' : f.status === 'A' ? '<span class="pill">new</span>' : '', f.status === 'D' ? '<span class="pill">deleted</span>' : '',
@@ -54,7 +79,7 @@ function cardHTML(f) {
     `<span class="faint" data-cc>${n ? `${I.cmt} ${n}` : ''}</span>` +
     `<button class="icon sm" data-act="filemenu" aria-label="More" title="More">${I.more}</button>` +
     `<button class="btn sm viewedbox${countedOnly(f) ? ' counted' : ''}" data-act="viewed" aria-pressed="${isViewed(f)}" title="${isStale(f) ? 'Changed since you viewed it' : countedOnly(f) ? `Counted as viewed: ${f.kind} files are, until you untick one. Turn it off in ⌘K or the View menu.` : 'Mark viewed (v)'}"><span class="box">${icon('check', '--on-act')}</span>${isStale(f) ? 'Changed' : 'Viewed'}</button></div>` +
-    `<div class="relp" hidden></div><div class="fb${S.layout === 'split' ? ' split' : ''}" data-p="${esc(f.path)}"><div class="loadd">${f.binary ? 'Binary file: no text diff.' : 'Loading…'}</div></div></section>`;
+    `<p class="file-note">${fileNoteHTML(f)}</p><div class="relp" hidden></div><div class="fb${S.layout === 'split' ? ' split' : ''}" data-p="${esc(f.path)}"><div class="loadd">${f.binary ? 'Binary file: no text diff.' : 'Loading…'}</div></div></section>`;
 }
 
 // A chapter head: the guide's section, written once where you read it. Its checks tick in place, kept with the brief
@@ -271,7 +296,7 @@ export function renderBody(p) {
   const after = new Map();
   const put = (k, html) => { if (k >= 0) (after.get(k) || after.set(k, []).get(k)).push(html); };
   const marks = new Map();
-  // With the marks hidden, each one keeps its glyph in a narrow lane left of the line numbers, at its line.
+  // With the marks hidden, each one keeps its glyph at its line, over the left edge of the line-number gutter.
   const pins = new Map();
   const pin = (k, x) => { if (k >= 0) (pins.get(k) || pins.set(k, []).get(k)).push(x); };
   for (const th of threadsAt(p)) {
@@ -288,7 +313,7 @@ export function renderBody(p) {
   // Unified rows carry the marks in the gutter; split rows don't (the gutter is per side).
   fb.innerHTML = items.map((it, k) => {
     let out = it.hdr !== undefined ? hdrHTML(rows[it.hdr], k, k === 0, k === lastK) : split ? splitRowHTML(p, rows, it, k, wd) : rowHTML(p, rows[it.i], k, wd.get(it.i), marks);
-    // the lane goes last in the row, so the cells keep their places (split view finds a side by its index)
+    // the pin goes last in the row, so the cells keep their places (split view finds a side by its index)
     if (pins.has(k) && out.endsWith('</div>')) out = out.slice(0, -6) + laneHTML(pins.get(k)) + '</div>';
     for (const x of after.get(k) || []) out += x;
     if (k === draftK) out += draftHTML();
@@ -305,7 +330,7 @@ export function renderBody(p) {
 }
 export function renderAllBodies() { for (const p of S.rows.keys()) renderBody(p); }
 
-// A hidden mark in the lane: the same glyph as its line in the code (Claude's spark, GitHub's mark),
+// A hidden mark's pin: the same glyph as its line in the code (Claude's spark, GitHub's mark),
 // its first words in the title, Claude's pixel when an answer waits unread, and a count when a line holds more.
 function pinOf(th) {
   const conv = convOf(th.conv) || { messages: [] }, mine = conv.messages.find((m) => m.role === 'user');
@@ -332,7 +357,7 @@ export function markHTML(th) {
   const mine = conv.messages.filter((m) => m.role === 'user'), answers = conv.messages.filter((m) => m.role !== 'user');
   const on = S.mark === th.id ? ' on' : '', done = th.resolved ? ' done' : '';
   const ans = answers.at(-1), busy = busyConv(conv);
-  return `<div class="mrow ask${ans?.role === 'codex' ? ' codex' : ''}${done}${on}" data-t="${th.id}" data-act="mark-open" role="button" tabindex="0" title="Open the conversation"><span class="mg">${ans?.role === 'codex' ? I.chat : spark(16, !busy, 'Claude')}</span><span class="mq" title="${esc(oneLine(mine[0]?.text, 600))}">${esc(oneLine(mine[0]?.text, 140))}</span>` +
+  return `<div class="mrow ask${ans?.role === 'codex' ? ' codex' : ''}${done}${on}" data-t="${th.id}" data-act="mark-open" role="button" tabindex="0" title="Open the conversation"><span class="mg">${ans?.role === 'codex' ? I.codex : spark(16, !busy, 'Claude')}</span><span class="mq" title="${esc(oneLine(mine[0]?.text, 600))}">${esc(oneLine(mine[0]?.text, 140))}</span>` +
     (ans?.text ? `<span class="ma" title="${esc(oneLine(ans.text, 600))}"><span>${esc(oneLine(ans.text, 260))}</span></span>` : '') +
     (busy ? `<span class="mst working shimmer" style="${shimmerSync()}">answering</span>` : !ans ? '<span class="mst">no answer yet</span>' : '') +
     (conv.messages.length > 2 ? `<span class="mn">${plural(conv.messages.length - 2, 'more', 'more')}</span>` : '') + `<span class="mo">${I.chevR}</span></div>`;
@@ -343,16 +368,30 @@ function githubHTML(t) {
   return `<div class="mrow gh${t.resolved ? ' done' : ''}${t.pending ? ' pending' : ''}${on}" data-gh="${esc(t.id)}" data-act="mark-open" role="button" tabindex="0" title="${t.pending ? 'Your pending review comment: only you see it until you submit the review' : 'Open the thread'}"><span class="mg">${I.github}</span><span class="mq">${esc(first?.author || '')}</span><span class="ma" title="${esc(oneLine(first?.body, 600))}">${esc(oneLine(first?.body, 260))}</span>` +
     (n > 1 ? `<span class="mn">${plural(n - 1, 'reply', 'replies')}</span>` : '') + (t.pending ? '<span class="mst pend">pending</span>' : t.resolved ? '<span class="mst">resolved</span>' : '') + `<span class="mo">${I.chevR}</span></div>`;
 }
-// Asking at the lines, or commenting for your GitHub review: one slim field there. Type, ⌘↵.
+// Asking at the lines, or commenting for your GitHub review: one slim field there. A question is sent with ↵, like a chat;
+// a comment is GitHub writing, kept as GitHub keeps it: ↵ is a new paragraph and ⌘↵ adds it. The send is drawn like the
+// selection bar's buttons, quiet until there is something to send.
+const draftSend = (label, empty, gh) => `<button class="btn ghost sm send" data-act="draft-send"${empty ? ' disabled' : ''} title="${gh ? '⌘↵ adds it to your review' : '↵ sends, ⇧↵ starts a new line'}"><span>${label}</span><kbd>${gh ? '⌘↵' : '↵'}</kbd></button>`;
+const askWho = (run) => (modelKind(run?.model) === 'codex' ? 'Codex' : 'Claude');
 function draftHTML() {
-  const d = S.draft;
+  const d = S.draft, empty = !d.value?.trim();
   if (d.kind === 'comment') return `<div class="mrow draft gh"><span class="mg">${I.github}</span>` +
     `<textarea rows="1" placeholder="Comment on ${esc(d.label)}: it waits in your review until you submit" title="Only you see it on GitHub until you submit your review" aria-label="Review comment"></textarea>` +
-    `<span class="mdk"><button class="btn sm primary" data-act="draft-send">Add to review <kbd>⌘↵</kbd></button></span></div>`;
-  return `<div class="mrow draft ask"><span class="mg">${askGlyph(d.run || lastRun())}</span>` +
-    `<textarea rows="1" placeholder="Ask about ${esc(d.label)}" aria-label="Review question"></textarea>` +
-    `<span class="mdk">${runBtn(d.run || lastRun())}<button class="btn sm primary" data-act="draft-send">Ask <kbd>⌘↵</kbd></button></span></div>`;
+    `<span class="mdk">${draftSend('Add to review', empty, true)}</span></div>`;
+  const run = d.run || lastRun();
+  return `<div class="mrow draft ask${modelKind(run.model) === 'codex' ? ' codex' : ''}"><span class="mg">${askGlyph(run)}</span>` +
+    `<textarea rows="1" placeholder="Ask ${askWho(run)} about ${esc(d.label)}" aria-label="Review question"></textarea>` +
+    `<span class="mdk">${runBtn(run)}${draftSend('Ask', empty)}</span></div>`;
 }
+// Picking another model in the draft turns its mark and its words to that model.
+document.addEventListener('runpicked', (e) => {
+  const row = e.target.closest?.('.mrow.draft.ask');
+  if (!row || !S.draft) return;
+  S.draft.run = { ...e.detail };
+  row.classList.toggle('codex', modelKind(e.detail.model) === 'codex');
+  row.querySelector('.mg').innerHTML = askGlyph(e.detail);
+  const ta = row.querySelector('textarea'); ta.placeholder = `Ask ${askWho(e.detail)} about ${S.draft.label}`; ta.focus();
+});
 
 // Hide the marks in the code (their gutter ticks stay, and the Marks tab lists them), or show them again.
 document.documentElement.classList.toggle('marks-hidden', !!S.marksHidden);
@@ -603,7 +642,12 @@ export function deleteMark(th) {
   return api(`/api/w/${S.id}/threads/${th.id}`, { method: 'DELETE' }).catch((err) => toast(err.message));
 }
 // The draft's text survives the redraws a live update causes.
-document.addEventListener('input', (e) => { if (e.target.closest?.('.draft') && S.draft) S.draft.value = e.target.value; });
+document.addEventListener('input', (e) => {
+  const row = e.target.closest?.('.mrow.draft');
+  if (!row || !S.draft) return;
+  S.draft.value = e.target.value;
+  row.querySelector('.send')?.toggleAttribute('disabled', !e.target.value.trim());
+});
 document.addEventListener('keydown', (e) => {
   const box = e.target.closest?.('.mrow.draft');
   if (!box || e.target.tagName !== 'TEXTAREA') {
@@ -612,6 +656,9 @@ document.addEventListener('keydown', (e) => {
     if (mk && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); mk.click(); }
     return;
   }
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); return sendDraft(); }
+  // a question: ↵ sends (⌘↵ too, from habit) and ⇧↵ is a new line; a review comment: ⌘↵ adds it, ↵ is a new paragraph.
+  // ↵ while an input method is still composing belongs to it.
+  const send = S.draft?.kind === 'comment' ? e.metaKey || e.ctrlKey : !e.shiftKey && !e.isComposing && e.keyCode !== 229;
+  if (e.key === 'Enter' && send) { e.preventDefault(); if (!e.repeat) sendDraft(); return; }
   if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); return cancelDraft(); }
 });

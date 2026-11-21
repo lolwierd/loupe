@@ -54,6 +54,8 @@ export async function pullRequest(owner, repo, number) {
     createdAt: pr.createdAt, updatedAt: pr.updatedAt, mergedAt: pr.mergedAt, closedAt: pr.closedAt, crossRepo: pr.isCrossRepository,
     checks, checkSummary: { pass: checks.filter((c) => c.kind === 'pass').length, fail: checks.filter((c) => c.kind === 'fail').length, run: checks.filter((c) => c.kind === 'run').length, skip: checks.filter((c) => c.kind === 'skip').length },
     reviewers, timeline, viewer: me, viewerIsAuthor: !!me && me === pr.author?.login,
+    assignees: (pr.assignees || []).map((a) => a.login).filter(Boolean),
+    viewerIsAssignee: !!me && (pr.assignees || []).some((a) => a.login === me),
   };
 }
 

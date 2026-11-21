@@ -78,17 +78,20 @@ export function refreshRunButtons() {
     btn.innerHTML = runContent(run);
   }
 }
-export function pickRun(btn) {
-  const cur = { model: btn.dataset.model, effort: btn.dataset.effort };
+export function pickRun(btn, choice) {
+  const cur = choice ? { ...choice.run } : { model: btn.dataset.model, effort: btn.dataset.effort };
   const kind = convKind(S.review?.convs?.[btn.dataset.runConv]);
   const items = [{ header: 'MODEL' }, ...S.app.models.filter((m) => !kind || m.kind === kind).map((m) => ({ label: m.label, value: { model: m.id }, current: m.id === cur.model })),
     { sep: true }, { header: 'EFFORT' }, ...S.app.efforts.map((e) => ({ label: e, value: { effort: e }, current: e === cur.effort, sub: { low: 'fastest', max: 'slowest' }[e] || '' }))];
   menu(btn, items, (it) => {
     Object.assign(cur, it.value);
-    btn.dataset.model = cur.model; btn.dataset.effort = cur.effort;
-    btn.innerHTML = runContent(cur);
-    const purpose = btn.dataset.purpose;
+    if (!choice) {
+      btn.dataset.model = cur.model; btn.dataset.effort = cur.effort;
+      btn.innerHTML = runContent(cur);
+    }
+    const purpose = choice?.purpose || btn.dataset.purpose;
     if (purpose) { pref.set(`${purpose}Model`, cur.model); pref.set(`${purpose}Effort`, cur.effort); } else rememberRun(cur);
+    btn.dispatchEvent(new CustomEvent('runpicked', { bubbles: true, detail: { ...cur } }));
     // the brief's pickers (in the Overview and on the map) are one choice: every one shows it
     if (purpose === 'brief') for (const b of document.querySelectorAll('[data-act="run"][data-purpose="brief"]')) { b.dataset.model = cur.model; b.dataset.effort = cur.effort; b.innerHTML = runContent(cur); }
   }, { align: 'right', width: 220 });
@@ -97,7 +100,7 @@ export const runOf = (root) => { const b = root?.querySelector('[data-act="run"]
 
 // ------------------------------------------------------------------ composer
 export function grow(ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.4) + 'px'; }
-document.addEventListener('input', (e) => { if (e.target.matches?.('.composer textarea')) grow(e.target); });
+document.addEventListener('input', (e) => { if (e.target.matches?.('.composer textarea, .mrow.draft textarea')) grow(e.target); });
 
 // ------------------------------------------------------------------ messages
 const toolsLine = (tools) => {

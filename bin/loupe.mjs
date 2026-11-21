@@ -32,7 +32,7 @@ const HELP = `${bold('loupe')}: a local review desk for PRs, branches and uncomm
   ${bold('loupe doctor')}               check the tools, the sign-ins, the daemon, loupe.local and l.local
   ${bold('loupe service')} install|uninstall|restart|status|logs
                             keep the daemon running (a LaunchAgent; starts at login)
-  ${bold('loupe serve')} [--watch] [--no-80] [--no-mdns]
+  ${bold('loupe serve')} [--dev|--watch] [--no-80] [--no-mdns]
                             run the daemon in this terminal (--no-80: no ports 80 or 443)
 
 Options for opening: --base <ref> (compare a checkout with another branch), --no-open (print the URL only),
@@ -219,7 +219,7 @@ async function cmdService(op) {
 
 // ------------------------------------------------------------------ serve: the daemon, optionally restarting itself when its code changes
 async function cmdServe() {
-  if (!has('--watch') || process.env.LOUPE_CHILD) {
+  if ((!has('--watch') && !has('--dev')) || process.env.LOUPE_CHILD) {
     const { start } = await import('../src/server.mjs');
     try { await start(); } catch (e) {
       console.error(`loupe: ${e.code === 'EADDRINUSE' ? `port ${PORT} is taken (is loupe already running? loupe status)` : e.message}`);
@@ -250,21 +250,26 @@ async function cmdServe() {
   // reports a file under src/ when a copy only sets the folder's times (an rsync that changed nothing restarted the
   // daemon), and a touched file has nothing new to load either.
   const SRC = path.join(ROOT, 'src');
+  const WEB_JS = path.join(ROOT, 'web/js');
+  const NOTES_MODULE = 'file-notes.js';
   const prints = () => {
     const out = new Map();
+    const fingerprint = (p) => {
+      try { out.set(path.relative(ROOT, p), crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex')); } catch { /* gone while we looked */ }
+    };
     const walk = (d) => {
       for (const e of fs.readdirSync(d, { withFileTypes: true })) {
         const p = path.join(d, e.name);
         if (e.isDirectory()) walk(p);
-        else if (e.name.endsWith('.mjs')) { try { out.set(path.relative(SRC, p), crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex')); } catch { /* gone while we looked */ } }
+        else if (e.name.endsWith('.mjs')) fingerprint(p);
       }
     };
     walk(SRC);
+    fingerprint(path.join(WEB_JS, NOTES_MODULE));
     return out;
   };
   let seen = prints(), timer = null;
-  fs.watch(SRC, { recursive: true }, (_, f) => {
-    if (!String(f).endsWith('.mjs')) return;
+  const scheduleRestart = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
       const now = prints();
@@ -274,7 +279,9 @@ async function cmdServe() {
       console.log(`loupe: ${changed.join(', ')} changed, restarting`);
       if (child) { restarting = true; child.kill('SIGTERM'); } else { backoff = 1000; run(); }
     }, 250);
-  });
+  };
+  fs.watch(SRC, { recursive: true }, (_, f) => { if (String(f).endsWith('.mjs')) scheduleRestart(); });
+  fs.watch(WEB_JS, (_, f) => { if (!f || f === NOTES_MODULE) scheduleRestart(); });
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopping = true; restarting = false; clearTimeout(retry); if (child) child.kill(sig); else process.exit(0); });
 }
 

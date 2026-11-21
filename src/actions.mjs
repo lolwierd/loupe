@@ -222,8 +222,7 @@ export { uid };
 
 // ------------------------------------------------------------------ shipping a checkout: commit, push, open the PR
 
-// Literal pathspecs: a picked file named "*" or ":(glob)x" means that file and nothing else.
-const g = (ws, argv, opts = {}) => gitRun(ws.rec.root, argv, { ...opts, env: { GIT_LITERAL_PATHSPECS: '1', ...(opts.env || {}) } });
+const g = (ws, argv, opts = {}) => gitRun(ws.rec.root, argv, opts);
 const local = (ws) => { if (ws.rec.kind !== 'local') throw fail('commit and push from the checkout, not the PR page'); return ws; };
 
 // Where the branch stands, read from git now, never from the page's cache: the head, the branch, where a push goes

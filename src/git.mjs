@@ -2,6 +2,7 @@
 // A range's new side is a revision or WORKTREE (the files on disk, uncommitted and untracked ones included).
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { git, Lru, safeRel } from './util.mjs';
 
 export const WORKTREE = 'WORKTREE';
@@ -129,17 +130,22 @@ export async function changedFiles(root, range) {
     // Untracked files are part of uncommitted work too: added in full.
     const others = (await git(root, ['ls-files', '-z', '--others', '--exclude-standard'])).split('\0').filter(Boolean);
     if (others.length > UNTRACKED_MAX) files.untrackedSkipped = others.length - UNTRACKED_MAX;
+    const format = others.length ? (await git(root, ['rev-parse', '--show-object-format'])).trim() : null;
     for (const p of others.slice(0, UNTRACKED_MAX)) {
-      const text = readWorktree(root, p);
-      const binary = text === null || text.includes('\0');
-      files.push({ path: p, status: 'A', untracked: true, oldBlob: null, blob: null, added: binary ? 0 : lineCount(text), deleted: 0, binary });
+      const bytes = readWorktreeBytes(root, p);
+      const text = bytes?.toString('utf8');
+      const binary = text === undefined || text.includes('\0') || text.includes('\uFFFD');
+      const blob = bytes && hashBlob(bytes, format);
+      files.push({ path: p, status: 'A', untracked: true, oldBlob: null, blob, added: binary ? 0 : lineCount(text), deleted: 0, binary });
     }
     // The working tree side has no blob id in git's output: hash what is on disk, so "viewed" can key to content.
-    const need = files.filter((f) => !f.blob && f.status !== 'D');
+    const need = files.filter((f) => !f.untracked && !f.blob && f.status !== 'D');
     if (need.length) {
       // On stdin, so no argument list grows past the system's limit. A file that can't be hashed gets a key of
       // its size and mtime, so it still un-views when it changes.
-      const out = await git(root, ['hash-object', '--stdin-paths'], { input: need.map((f) => f.path).join('\n') + '\n' }).catch(() => '');
+      // hash-object accepts C-quoted paths, so a newline in a name can't split the list.
+      const input = need.map(({ path }) => '"' + path.replace(/["\\\n]/g, (c) => c === '\n' ? '\\n' : '\\' + c) + '"\n').join('');
+      const out = await git(root, ['hash-object', '--stdin-paths'], { input }).catch(() => '');
       const hashes = out.split('\n').filter(Boolean);
       need.forEach((f, k) => {
         if (hashes.length === need.length) f.blob = hashes[k].trim();
@@ -155,6 +161,14 @@ export async function changedFiles(root, range) {
 export const lineCount = (text) => (text ? text.split('\n').length - (text.endsWith('\n') ? 1 : 0) : 0);
 
 export function readWorktree(root, p) {
+  return readWorktreeBytes(root, p)?.toString('utf8') ?? null;
+}
+
+function hashBlob(bytes, format) {
+  return crypto.createHash(format).update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+}
+
+function readWorktreeBytes(root, p) {
   if (!safeRel(p)) return null;
   const abs = path.join(root, p);
   try {
@@ -162,34 +176,43 @@ export function readWorktree(root, p) {
     if (!real.startsWith(fs.realpathSync(root) + path.sep)) return null; // a symlink out of the repository
     const st = fs.statSync(real);
     if (!st.isFile() || st.size > 8 * 1024 * 1024) return null;
-    return fs.readFileSync(real, 'utf8');
+    return fs.readFileSync(real);
   } catch { return null; }
 }
 
 // File contents, by blob id when known (content-addressed, so the cache never goes stale), else by revision.
 const blobCache = new Lru(1500);
 export async function readAt(root, rev, p, blob) {
+  if (rev === WORKTREE) return readWorktree(root, p);
   if (blob && blobCache.has(blob)) return blobCache.get(blob);
   let text = null;
-  if (rev === WORKTREE) text = readWorktree(root, p);
-  else {
-    try { text = blob ? await git(root, ['cat-file', 'blob', blob]) : await git(root, ['show', `${rev}:${p}`]); } catch { text = null; }
-  }
+  try { text = blob ? await git(root, ['cat-file', 'blob', blob]) : await git(root, ['show', `${rev}:${p}`]); } catch { text = null; }
   if (blob && text !== null) blobCache.set(blob, text);
   return text;
 }
 
 // One file's unified diff, as hunks of typed lines with old and new numbers.
-export async function fileHunks(root, range, f) {
+export async function fileHunks(root, range, f, { verifyBlobs = false } = {}) {
   if (f.untracked) {
-    const text = (await readAt(root, WORKTREE, f.path, f.blob)) ?? '';
+    const bytes = readWorktreeBytes(root, f.path);
+    if (!bytes || !f.blob || hashBlob(bytes, f.blob.length === 64 ? 'sha256' : 'sha1') !== f.blob) return [];
+    const text = bytes.toString('utf8');
     if (!text) return [];
     const lines = text.split('\n'); if (text.endsWith('\n')) lines.pop();
     return lines.length ? [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: lines.length, context: '', lines: lines.map((s, k) => ({ t: '+', n: k + 1, s })) }] : [];
   }
   const ends = range.new === WORKTREE ? [range.old] : [range.old, range.new];
   const paths = f.oldPath ? [f.oldPath, f.path] : [f.path];
-  const out = await git(root, ['diff', '--no-color', '--no-ext-diff', '-M', '-U3', ...ends, '--', ...paths]);
+  const out = await git(root, ['diff', '--no-color', '--no-ext-diff',
+    ...(verifyBlobs ? ['--full-index', '--no-textconv'] : []), '-M', '-U3', ...ends, '--', ...paths]);
+  if (verifyBlobs) {
+    // The patch's index line identifies the bytes Git diffed, even if a watcher has yet to see an edit.
+    const patches = out.split(/^diff --git /m);
+    const index = /^index ([a-f0-9]+)\.\.([a-f0-9]+)/m.exec(out);
+    if (patches.length !== 2 || !index ||
+        (ZERO.test(index[1]) ? null : index[1]) !== f.oldBlob ||
+        (ZERO.test(index[2]) ? null : index[2]) !== f.blob) return [];
+  }
   return parseHunks(out);
 }
 
@@ -234,11 +257,11 @@ export async function related(root, rev, p, hunks, changed) {
     const argv = ['grep', '-n', '-w', '-I', '--no-color', '--full-name'];
     for (const x of idents) argv.push('-e', x);
     if (rev !== WORKTREE) argv.push(rev);
-    argv.push('--', '*.go');
+    argv.push('--');
     const out = await git(root, argv).catch(() => '');
     for (const line of out.split('\n')) {
       const m = (rev !== WORKTREE ? /^[^:]+:([^:]+):(\d+):(.*)$/ : /^([^:]+):(\d+):(.*)$/).exec(line);
-      if (!m || m[1] === p || /^\s*\/\//.test(m[3])) continue;
+      if (!m || !m[1].endsWith('.go') || m[1] === p || /^\s*\/\//.test(m[3])) continue;
       const hit = idents.find((x) => new RegExp(`\\b${x}\\b`).test(m[3]));
       if (!hit || new RegExp(`^func (\\([^)]*\\) )?${hit}\\(`).test(m[3])) continue;
       if (!users.has(m[1])) users.set(m[1], []);

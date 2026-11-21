@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,6 +29,38 @@ before(async () => {
   throw new Error('the daemon did not come up');
 });
 after(() => child?.kill());
+
+test('serve --dev restarts its child when the shared file-notes module changes', { timeout: 10000 }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-dev-'));
+  for (const dir of ['bin', 'src', 'web/js']) fs.mkdirSync(path.join(root, dir), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, 'bin/loupe.mjs'), path.join(root, 'bin/loupe.mjs'));
+  const shared = path.join(root, 'web/js/file-notes.js');
+  fs.writeFileSync(shared, 'export const version = 1;\n');
+  fs.writeFileSync(path.join(root, 'src/server.mjs'), `
+    import { version } from '../web/js/file-notes.js';
+    export function start() { console.log('child version ' + version); setInterval(() => {}, 1000); }
+  `);
+  const dev = spawn(process.execPath, [path.join(root, 'bin/loupe.mjs'), 'serve', '--dev'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const exited = once(dev, 'exit');
+  let output = '';
+  for (const stream of [dev.stdout, dev.stderr]) stream.on('data', (chunk) => { output += chunk; });
+  const waitFor = async (line) => {
+    for (let i = 0; i < 80 && !output.includes(line) && dev.exitCode === null; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(output.includes(line), output);
+  };
+  try {
+    await waitFor('child version 1');
+    fs.writeFileSync(shared, 'export const version = 2;\n');
+    await waitFor('child version 2');
+    assert.match(output, /web\/js\/file-notes\.js changed, restarting/);
+  } finally {
+    dev.kill();
+    await exited;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('l.local redirects to the same path on loupe.local, and only that', async () => {
   const r = await req('GET', '/acme/widgets/pull/123?x=1', { host: 'l.local' });

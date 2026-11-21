@@ -128,7 +128,7 @@ async function route(req, res, url) {
     // The list is checked before anything changes, so a bad one leaves every setting as it was.
     const orgs = b.hiddenOrgs === undefined ? undefined : ownerList(b.hiddenOrgs);
     if (orgs === null) return send(res, 400, { error: 'hiddenOrgs must be a list of GitHub owner names' });
-    for (const k of ['autoView', 'autoBrief']) if (typeof b[k] === 'boolean') st[k] = b[k];
+    for (const k of ['autoView', 'autoBrief', 'autoNotes']) if (typeof b[k] === 'boolean') st[k] = b[k];
     if (orgs) st.hiddenOrgs = orgs;
     W.registry.save();
     for (const ws of W.all()) ws.emit('settings', st);
@@ -206,7 +206,7 @@ async function route(req, res, url) {
   if (method === 'DELETE' && sub === '') { await W.close(ws.id); homeEmit('workspaces', {}); return send(res, 200, { closed: true }); }
   if (method === 'GET' && sub === '/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(`event: hello\ndata: ${JSON.stringify({ boot: BOOT, status: ws.status, progress: ws.progress, ...modelState() })}\n\n`);
+    res.write(`event: hello\ndata: ${JSON.stringify({ boot: BOOT, status: ws.status, progress: ws.progress, pr: ws.openingPr(), ...modelState() })}\n\n`);
     ws.addClient(res);
     req.on('close', () => ws.removeClient(res));
     ws.ready().catch(() => {});
@@ -228,7 +228,7 @@ async function route(req, res, url) {
     const files = await ws.files(scope);
     const r = ws.range(scope);
     return send(res, 200, {
-      scope: r.key, old: r.old, new: r.new === WORKTREE ? 'worktree' : r.new,
+      scope: r.key, old: r.old, new: r.new === WORKTREE ? 'worktree' : r.new, key: W.contentKey(files),
       files: files.map((f) => ({ ...f, viewed: ws.isViewed(f), changedSinceViewed: ws.wasViewed(f) })),
       left: ws.leftFor(files), totals: W.totalsOf(files), untrackedSkipped: files.untrackedSkipped || 0,
     });
@@ -437,6 +437,12 @@ async function route(req, res, url) {
     C.brief(ws, { model: b.model, effort: b.effort });
     return send(res, 200, { started: true });
   }
+  if (method === 'POST' && sub === '/notes') {
+    const b = await readBody(req);
+    const result = await C.notes(ws, { model: b.model, effort: b.effort, again: b.auto !== true && b.again === true,
+      expectedKey: b.auto === true ? String(b.key || '') : undefined });
+    return send(res, 200, result);
+  }
   // Writes: a preview first (what, where, against which state), then the run, which checks that state still holds.
   t = /^\/actions\/([a-z]+)(\/preview)?$/.exec(sub);
   if (t && method === 'POST') {
@@ -470,7 +476,7 @@ async function reviewOut(ws) {
   const d = ws.review.data, v = ws.visibleReview();
   const convs = {};
   for (const [id, c] of Object.entries(v.convs)) convs[id] = { ...c, busy: C.isBusy(id) };
-  return { viewed: d.viewed, unviewed: d.unviewed || {}, checks: d.checks || {}, threads: v.threads, convs, chats: v.chats, brief: await briefOut(ws), seenHead: d.seenHead };
+  return { viewed: d.viewed, unviewed: d.unviewed || {}, checks: d.checks || {}, threads: v.threads, convs, chats: v.chats, brief: await briefOut(ws), notes: d.notes || null, seenHead: d.seenHead };
 }
 // The brief, marked stale when the change it was written for is no longer the change.
 export async function briefOut(ws) {

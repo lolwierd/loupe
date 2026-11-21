@@ -94,6 +94,7 @@ export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const DEFAULTS = {
   model: 'claude-opus-5-5', effort: 'xhigh', // a question, until the page remembers what you last picked
   briefModel: 'claude-sonnet-5-5', briefEffort: 'high', // the map of a change: it reads around the change, so it gets room to think
+  notesModel: 'claude-haiku-5-5', notesEffort: 'low',
 };
 // put a new list in place; the defaults follow their lines (a question on the newest Opus, the map on the newest Sonnet)
 export function setModels(claude, codex) {
@@ -101,6 +102,7 @@ export function setModels(claude, codex) {
   CODEX_MODELS.clear(); for (const [id] of codex) CODEX_MODELS.add(id);
   DEFAULTS.model = claude.find(([id]) => lineOf(id) === 'opus')?.[0] || claude[0]?.[0] || DEFAULTS.model;
   DEFAULTS.briefModel = claude.find(([id]) => lineOf(id) === 'sonnet')?.[0] || DEFAULTS.model;
+  DEFAULTS.notesModel = claude.find(([id]) => lineOf(id) === 'haiku')?.[0] || DEFAULTS.model;
 }
 export const claudeFixed = () => CLAUDE_FIXED;
 setModels(CLAUDE_FIXED, codexModels());

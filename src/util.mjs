@@ -6,7 +6,7 @@ import { BIN } from './config.mjs';
 // git with no pager, no optional locks (a read never rewrites the index), output as a string.
 export function git(cwd, argv, opts = {}) {
   return new Promise((resolve, reject) => {
-    const child = execFile(BIN.git, ['--no-pager', ...argv], {
+    const child = execFile(BIN.git, ['--no-pager', '--literal-pathspecs', ...argv], {
       cwd, maxBuffer: opts.maxBuffer ?? 512 * 1024 * 1024, encoding: opts.encoding || 'utf8', timeout: opts.timeout || 120000,
       env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', ...(opts.env || {}) },
     }, (err, stdout, stderr) => {

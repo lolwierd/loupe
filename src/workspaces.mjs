@@ -10,12 +10,14 @@ import { WORKTREE, resolveBase, revParse, commitsBetween, changedFiles, fileHunk
 import { goplsFor } from './lsp.mjs';
 import * as GH from './github.mjs';
 import { localParent } from './stacks.mjs';
+import { fileNoteKey } from '../web/js/file-notes.js';
 
 export const registry = new JsonFile(path.join(STATE_DIR, 'state.json'), { workspaces: [], last: null, clones: {}, ownSessions: [] });
 // Daemon-wide preferences, shown in the page's settings menu.
 // hiddenOrgs: owners whose PRs home leaves out (the page filters; the daemon only keeps the list).
 export const settings = () => {
   const st = (registry.data.settings ||= { autoView: true, autoBrief: false });
+  st.autoNotes ??= true;
   if (!Array.isArray(st.hiddenOrgs)) st.hiddenOrgs = [];
   return st;
 };
@@ -165,11 +167,16 @@ export class Workspace {
   constructor(rec) {
     this.rec = rec;
     this.review = new JsonFile(path.join(STATE_DIR, 'ws', rec.id, 'review.json'), () => ({ viewed: {}, threads: [], convs: {}, chats: [], brief: null, seenHead: null }));
-    // An answer or a brief that was being written when the daemon stopped will never finish: say so.
+    // Work that was in flight when the daemon stopped will never finish: say so.
     for (const c of Object.values(this.review.data.convs || {})) for (const m of c.messages || []) {
       if (m.pending) { m.pending = false; m.queued = false; if (!m.text) m.error = 'Interrupted: loupe restarted before the answer came back. Ask again.'; }
     }
     if (this.review.data.brief?.pending) { this.review.data.brief.pending = false; this.review.data.brief.error ||= 'Interrupted: loupe restarted while writing it.'; }
+    if (this.review.data.notes?.pending) {
+      this.review.data.notes.pending = false;
+      this.review.data.notes.error ||= 'Interrupted: loupe restarted while writing file notes.';
+      this.review.save(true);
+    }
     this.meta = null;
     this.clients = new Set();
     this.cache = new Lru(64);        // scope key -> files
@@ -217,7 +224,13 @@ export class Workspace {
     const line = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const res of this.clients) res.write(line);
   }
-  setProgress(text) { this.progress = text; this.emit('progress', { status: this.status, text }); }
+  setProgress(text) { this.progress = text; this.emit('progress', { status: this.status, text, pr: this.openingPr() }); }
+  // what the page can draw of a change still opening (its record is answered only once it is ready): the pull
+  // request's size and refs, from the moment GitHub has given them
+  openingPr() {
+    const p = this.rec.pr;
+    return p ? { additions: p.additions, deletions: p.deletions, changedFiles: p.changedFiles, baseRefName: p.baseRefName, headRefName: p.headRefName } : null;
+  }
 
   // Make the workspace answerable: read the checkout, or for a PR reuse what an earlier run fetched
   // (a background ls-remote catches new pushes) and fetch only what is missing.
@@ -266,6 +279,7 @@ export class Workspace {
         }).catch(() => null);
         const pr = JSON.parse(await view);
         this.rec.pr = { ...pr, author: pr.author?.login, labels: (pr.labels || []).map((l) => l.name) };
+        this.setProgress(this.progress); // the line as it stands, now with the PR's size: the page draws it while the clone and fetch run
         const clone = await cloneP;
         this.rec.clone = clone.path; this.rec.remote = clone.remote;
         registry.save();
@@ -315,8 +329,7 @@ export class Workspace {
     this.setProgress('');
     this.emit('changed', { reason: 'worktree ready' });
   }
-  // Notes were removed on 20 Nov 2026. Any left in review.json stay on disk as they were (removing the feature should
-  // not destroy what was written), but nothing shows them: this is the review as the page sees it.
+  // Handwritten note threads were removed on 20 Nov 2026. Leave them on disk and hide them from the page.
   visibleReview() {
     const d = this.review.data;
     const notes = new Set(d.threads.filter((t) => t.kind === 'note').map((t) => t.conv));
@@ -483,8 +496,9 @@ export class Workspace {
   }
   scopeKey(scope) { try { const r = this.range(scope); return `${r.key}:${r.old}:${r.new}:${r.new === WORKTREE ? this.version : ''}`; } catch { return ''; } }
 
-  async files(scope = 'all') {
+  async files(scope = 'all', { fresh = false } = {}) {
     const r = this.range(scope);
+    if (fresh) return changedFiles(this.gitDir, r);
     const key = this.scopeKey(scope);
     const hit = this.cache.get(key);
     if (hit) return hit;
@@ -499,10 +513,11 @@ export class Workspace {
     const r = this.range(scope);
     const f = await this.file(scope, p);
     if (!f) return null;
-    const key = `${r.old}:${r.new}:${f.blob}:${f.oldBlob}:${p}`;
-    if (!this.hunkCache.has(key)) this.hunkCache.set(key, await fileHunks(this.gitDir, r, f));
+    const key = `${r.old}:${r.new}:${fileNoteKey(f)}`;
+    const hunks = f.untracked ? await fileHunks(this.gitDir, r, f) : this.hunkCache.get(key) ?? await fileHunks(this.gitDir, r, f);
+    if (!f.untracked) this.hunkCache.set(key, hunks);
     const text = f.status === 'D' ? null : await this.text(scope, 'new', p);
-    return { path: p, oldPath: f.oldPath, status: f.status, hunks: this.hunkCache.get(key), newLen: lineCount(text) };
+    return { path: p, oldPath: f.oldPath, status: f.status, hunks, newLen: lineCount(text) };
   }
   // Text of a file at one side of the scope. The new side of a local workspace is the working tree.
   async text(scope, side, p) {
@@ -518,7 +533,7 @@ export class Workspace {
     if (await this.file(scope, p)) return true;
     const r = this.range(scope);
     if (r.new === WORKTREE) {
-      const paths = await git(this.gitDir, ['--literal-pathspecs', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', p]);
+      const paths = await git(this.gitDir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', p]);
       return paths.split('\0').includes(p);
     }
     return gitOk(this.gitDir, ['cat-file', '-e', `${r.new}:${p}`]);
@@ -655,6 +670,8 @@ export function totalsOf(files) {
 }
 
 // A digest of what a scope changes, by content: the brief is keyed to it.
+// The change's fingerprint, which saved briefs and the write guards are checked against. It stays this formula so a brief
+// written before keeps matching; a file note has its own, finer key (fileNoteKey, which also counts a rename's source).
 export function contentKey(files) {
   return crypto.createHash('sha1').update(files.map((f) => `${f.path}:${f.blob}:${f.oldBlob}`).join('\n')).digest('hex').slice(0, 16);
 }

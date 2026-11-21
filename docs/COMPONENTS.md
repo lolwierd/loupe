@@ -64,12 +64,35 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   title). One quiet line at the foot says what else the field takes. Home and windows under 760 px get it centred.
 - **List box** (files in a dialog, commits, home lists): 1 px `--rule`, `--r3`, rows divided by 1 px `--rule`.
 - **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`.
+- **File note**: a caption between an unfolded file's header and diff, aligned to the code's text edge where room permits.
+  14 px `--ink-2` prose, 8 px above and below, with inline code in mono and the same colour. An earlier version is
+  marked in 11 px amber. New notes fade in once over 120 ms, with reduced motion shown immediately.
 - **Message** (chat and marks): who (13 px 600; Claude in orange), model meta 11 px `--ink-3`, body 14 px.
 - **Status**: M / A / D / R letters (11 px mono 600: amber, green, red, ink-2); the pixel check for viewed; counts as
   tabular figures.
 - **Empty state**: one line in `--ink-3` 13 px, with the one action that fills it as a link button.
 - **Toast**: bottom centre, `--act` background, on-act text, `--r2`, 13 px; an action in it is underlined text.
 - **Motion**: background and colour 120 ms `--ease`; nothing slides except dialogs (160 ms rise) and menus (none).
+
+## Print textures
+A few states are drawn as a print shop would show them instead of in flat colour. They are the only textures in the
+app, and they follow one set of rules (screens in `web/js/dither.js`).
+- **Where**: only where nothing is being read. The opening state (the forme), the state of a change that could not
+  open (the moiré), the dim behind a write's dialog (the tone screen), and the desk under Mote (the lens's light).
+  Never behind code, prose or glass, with one exception: Mote floats over the diff's bottom-right corner, so his light,
+  no wider than his feet, can land on the end of a line (drag him off it).
+- **What draws them**: the change's own state, never a picture. The forme has one dot per changed line (past 2,560 a
+  dot stands for several), as GitHub counts them before the fetch; the daemon sends the counts on its progress lines. The moiré's two screens are turned by the base's and the head's names. The tone's
+  weight is how hard the write is to undo: local 25%, public 37.5%, destructive 56%, each a quarter heavier in dark,
+  nearly even (a little lighter round the dialog).
+  The lens's spot gathers as the share of lines left falls.
+- **Screens**: the app's 4×4 Bayer matrix (`--d0`..`--d16`, one cell to a device pixel, or to an art pixel on Mote's
+  grid; the tone screen uses 1 CSS px cells, a fine screen rather than a grey), hairline line screens, and letterpress
+  dots. Every one is drawn at device pixels, never scaled or smoothed.
+- **Ink**: the page's own (`--ink`, `--ink-3`, black under dark dialogs, `--hi` for light). Red only for a
+  destructive write. Blue and orange keep their one job: no texture uses them.
+- **Motion**: frame-stepped, at 12 fps at most (the brayer's passes; the tone screen alone fades in, with its dialog). With
+  reduced motion each is the still that says the same thing.
 
 ## Model-written text
 The map, the guide's heads and the TLDR are prose a person reads. Code in them is the mono face in the text's own

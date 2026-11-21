@@ -29,6 +29,13 @@ if (stdin.trimEnd().endsWith('simulate turn failure')) {
   emit('turn.failed', { error: { message: 'fake model failure' } });
 } else if (stdin.trimEnd().endsWith('simulate truncated stream')) {
   msg('item.updated', 'Unfinished');
+} else if (schema?.properties.notes) {
+  const paths = schema.properties.notes.items.properties.path.enum;
+  const wait = fs.existsSync(process.env.FAKE_CODEX_CALLS + '.slow-notes');
+  setTimeout(() => {
+    msg('item.completed', JSON.stringify({ notes: paths.filter((p) => !p.endsWith('omitted.js')).map((path) => ({ path, note: 'Handles requests.' })) }));
+    done();
+  }, wait ? (paths.includes('batch-00.js') ? 250 : 900) : 0);
 } else if (schema) {
   // a value for every field of a strict schema, so the brief parses however its schema grows
   const fill = (s) => s.type === 'object' ? Object.fromEntries(Object.entries(s.properties).map(([k, v]) => [k, fill(v)])) : s.type === 'array' ? [fill(s.items)] : s.enum ? s.enum[0] : s.type === 'integer' || s.type === 'number' ? (s.minimum ?? 0) : s.type === 'boolean' ? false : '';
@@ -214,6 +221,7 @@ test('Codex uses structured schemas for briefs and both kinds of draft', async (
   assertInvocation(briefCall, 'gpt-6.2-astra', 'medium');
   assert.equal(briefCall.schema.additionalProperties, false);
   assert.ok(briefCall.schema.properties.sections.items.required.includes('check'));
+  assert.equal(Object.hasOwn(briefCall.schema.properties, 'fileNotes'), false);
   assert.match(briefCall.stdin, /-old\n\+new/);
 
   const draftRun = { model: 'gpt-6.2-sol', effort: 'low' };
@@ -275,4 +283,62 @@ test('stopping a Codex turn preserves partial text and clears pending', async ()
   assert.equal(stopped.text, 'Partial');
   assert.equal(stopped.foot, 'stopped');
   assert.equal(stopped.error, undefined);
+});
+
+test('file notes run separately, persist each batch, and resend only changed or missing paths', async () => {
+  const run = { model: 'gpt-6.2-sol', effort: 'low' };
+  const noteCalls = () => calls().filter((c) => c.schema?.properties.notes);
+  const review = () => wsApi('/review').then((r) => r.notes);
+  const saved = () => JSON.parse(fs.readFileSync(path.join(temp, 'state', 'ws', workspace.split('/').at(-1), 'review.json'), 'utf8')).notes;
+  const state = await api('/api/state');
+  assert.equal(state.defaults.notesModel, 'claude-haiku-5-5');
+  assert.equal(state.defaults.notesEffort, 'low');
+  assert.equal(state.settings.autoNotes, true);
+  const initial = await wsApi('/files');
+  await api('/api/settings', { autoNotes: false });
+  assert.deepEqual(await wsApi('/notes', { ...run, auto: true, key: initial.key }), { started: false });
+  assert.equal(await review(), null);
+
+  const batchPaths = Array.from({ length: 81 }, (_, i) => `batch-${String(i).padStart(2, '0')}.js`);
+  for (const p of [...batchPaths, 'omitted.js', 'package-lock.json']) fs.writeFileSync(path.join(root, p), 'new code\n');
+  await wsApi('/refresh', {});
+  fs.writeFileSync(callsFile + '.slow-notes', '');
+  try {
+    await Promise.all([wsApi('/notes', run), wsApi('/notes', run)]);
+    await until(() => noteCalls().length >= 2);
+    assert.equal(noteCalls().length, 2);
+    assert.equal(saved().pending, true);
+    const first = await until(() => Object.keys(saved().files).length === 40 && saved());
+    assert.equal(first.pending, true);
+    const result = await until(async () => { const n = await review(); return n && !n.pending && n; });
+    assert.equal(result.error, null);
+    assert.deepEqual(result, saved());
+    const batches = noteCalls();
+    const paths = (call) => call.schema.properties.notes.items.properties.path.enum;
+    assert.deepEqual(batches.map((call) => paths(call).length).sort((a, b) => a - b), [3, 40, 40]);
+    assert.deepEqual(batches.flatMap(paths).sort(), [...batchPaths, 'file.txt', 'omitted.js'].sort());
+    for (const call of batches) assertInvocation(call, run.model, run.effort);
+    assert.equal(result.files['omitted.js'].note, null);
+    assert.equal(result.files['file.txt'].note, 'Handles requests.');
+    const before = result.files['batch-00.js'];
+    fs.writeFileSync(path.join(root, 'file.txt'), 'changed again\n');
+    fs.writeFileSync(path.join(root, 'missing.js'), 'new code\n');
+    await wsApi('/refresh', {});
+    fs.unlinkSync(callsFile + '.slow-notes');
+    await api('/api/settings', { autoNotes: true });
+    await wsApi('/notes', { ...run, auto: true, key: (await wsApi('/files')).key });
+    const updated = await until(async () => { const n = await review(); return !n.pending && n.files['missing.js'] && n; });
+    assert.deepEqual(paths(noteCalls().at(-1)), ['file.txt', 'missing.js']);
+    assert.deepEqual(updated.files['batch-00.js'], before);
+    assert.notEqual(updated.files['file.txt'].key, result.files['file.txt'].key);
+
+    const count = noteCalls().length;
+    await api('/api/settings', { autoNotes: false });
+    await wsApi('/notes', { ...run, again: true });
+    await until(async () => noteCalls().length === count + 3 && !(await review()).pending);
+    assert.deepEqual(noteCalls().slice(count).flatMap(paths).sort(),
+      [...batchPaths, 'file.txt', 'missing.js', 'omitted.js'].sort());
+  } finally {
+    fs.rmSync(callsFile + '.slow-notes', { force: true });
+  }
 });

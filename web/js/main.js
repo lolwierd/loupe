@@ -1,23 +1,35 @@
 // The page: which change this URL is, the frame around it (top bar; bin | diff | inspector), live
 // updates from the daemon, keys, the palette and home. One URL per change; "/" goes back to the last one.
-import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, briefRun } from './core.js';
-import { renderCards, renderBody, renderAllBodies, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment, statusGlyph } from './cards.js';
+import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, briefRun, notesRun } from './core.js';
+import { renderCards, renderBody, renderAllBodies, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment, statusGlyph, updateFileNotes } from './cards.js';
+import { attemptFileNotes, filesNeedingNotes, resetNotesAttempt } from './file-notes.js';
 import { renderTree, markCurrent, nextUnviewed } from './tree.js';
 import { renderPanel, setTab, renderTabs, openChat, paintMessage } from './panel.js';
 import { goLoc, goThread, openViewer, closeViewer, hideTip, goBack, clearReturns } from './nav.js';
 import { renderProgress, paintProgress, renderGo, renderStack, doAct } from './acts.js';
-import { menu, closeMenu, shimmerSync, refreshRunButtons } from './ui.js';
+import { menu, closeMenu, shimmerSync, refreshRunButtons, pickRun, runLabel } from './ui.js';
 import { hooks } from './hooks.js';
 import './actions.js';
 import { loadShip, sheetOpen, closeSheet } from './sheets.js';
 import './eggs.js';
 import { moteHTML, wakeMotes } from './mote.js';
 import { spark, icon, avatar } from './pixel.js';
+import { decorateState, endOpening } from './press.js';
 
 // Every part that shows the review's state, redrawn together, so no part ever disagrees with another. The inspector is
 // not one of them: the Overview says nothing about what is viewed, and redrawing it (the PR's description and its
 // conversation, as markdown) on every v and ] was the biggest cost of a keypress on a PR.
-function progress() { renderTree(); paintProgress(); renderGo(); hooks.mote?.progress(S.files.length > 0 && !nextUnviewed()); }
+function progress() { renderTree(); paintProgress(); renderGo(); hooks.mote?.progress(allViewed(), leftShare()); }
+// Mote's two readings of the review, from the same files (every file but the generated ones, whatever the filter shows):
+// is every one viewed, and the share of their lines not yet viewed, 0..1 (its lens gathers its light by it). A change of
+// no lines (renames only) is all left until every file is viewed, then none.
+const reviewed = () => S.files.filter((f) => f.kind !== 'generated');
+const allViewed = () => S.files.length > 0 && reviewed().every(isViewed);
+function leftShare() {
+  const fs = reviewed(), total = fs.reduce((n, f) => n + lines(f), 0);
+  if (!total) return fs.every(isViewed) ? 0 : 1;
+  return fs.filter((f) => !isViewed(f)).reduce((n, f) => n + lines(f), 0) / total;
+}
 Object.assign(hooks, {
   goLoc, goThread, openViewer, renderTree, renderPanel, openChat, progress,
   loadStack: () => loadStack(), setScope: (s) => setScope(s), setOrder: (o) => setOrder(o),
@@ -95,8 +107,7 @@ function frame() {
   </header>
   <div class="main" id="main">
     <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><span class="fwrap"><input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd class="fkey" aria-hidden="true">/</kbd></span><span id="ordseg"></span></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="resizer" data-resize="bin"></div></aside>
-    <main class="viewer-col"><div class="scroller" id="center"><div class="cards" id="cards"><div class="loadd">Loading…</div></div></div>
-      <button class="aifab" id="aifab" data-act="askai" title="Ask about the selected lines or the whole change (a)"><span class="aispark">${spark(32, true)}</span><span class="ail">Ask</span></button></main>
+    <main class="viewer-col"><div class="scroller" id="center"><div class="cards" id="cards"><div class="loadd">Loading…</div></div></div></main>
     <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon sm" data-act="keys" title="Keys (?)"><kbd>?</kbd></button></div><div class="pbody" id="pbody"></div></aside><div class="motefloat" id="motedock"></div>
   </div></div>`;
   applyMode(S.mode, true);
@@ -124,15 +135,17 @@ async function loadWorkspace(reason) {
   let m;
   try { m = await api(`/api/w/${S.id}`); } catch (e) { return showState('Could not open this', e.message); }
   if (m.status !== 'ready' || !m.headFull && m.kind === 'pr') {
+    S.opening = { ...m, id: S.id }; // what the state box can show while it waits: a pull request's size, the refs of one that failed
     $('#wsbtn').innerHTML = `${m.kind === 'pr' ? I.pr : I.branch}<span class="t">${esc(m.rec?.pr?.title || m.rec?.slug || '')}</span>`;
     return showState(m.status === 'error' ? 'Could not open this' : 'Opening…', m.progress || '', m.status === 'error');
   }
-  S.ws = m;
+  S.ws = m; S.opening = null; endOpening();
   $('#wsbtn').innerHTML = wsTitle();
   await loadFiles(reason);
 }
 function showState(title, text, error) {
-  $('#cards').innerHTML = `<div class="state"><div class="box">${error ? moteHTML('failed') : ''}<div class="big">${esc(title)}</div>${error ? `<div class="err">${esc(text)}</div><button class="link" data-act="retry">Try again</button>` : `<div class="working"><span class="shimmer" style="${shimmerSync()}">${esc(text || 'Reading the change…')}</span></div>`}</div></div>`;
+  $('#cards').innerHTML = `<div class="state${error ? ' failed' : ''}"><div class="box">${error ? moteHTML('failed') : ''}<div class="big">${esc(title)}</div>${error ? `<div class="err">${esc(text)}</div><button class="link" data-act="retry">Try again</button>` : `<div class="working"><span class="shimmer" style="${shimmerSync()}">${esc(text || 'Reading the change…')}</span></div>`}</div></div>`;
+  decorateState($('#cards > .state'), { error, m: S.opening?.id === S.id ? S.opening : null });
   wakeMotes($('#cards'));
 }
 
@@ -141,6 +154,7 @@ async function loadFiles(reason) {
   const id = S.id, request = ++fileRequest;
   const current = () => id === S.id && request === fileRequest;
   const briefAtRequest = S.review.brief;
+  const notesAtRequest = S.review.notes;
   const spot = reason ? scrollSpot() : null;
   let files, review;
   const ghReq = api(`/api/w/${S.id}/github`).catch(() => null);
@@ -155,12 +169,13 @@ async function loadFiles(reason) {
   S.untrackedSkipped = files.untrackedSkipped || 0;
   S.files = files.files.map((f, i) => ({ ...f, i }));
   S.byPath = new Map(S.files.map((f) => [f.path, f]));
-  // A brief event can land while the files request is still in flight.
+  // A model result can land while the files request is still in flight.
   if (S.review.brief !== briefAtRequest) review.brief = S.review.brief;
+  if (S.review.notes !== notesAtRequest) review.notes = S.review.notes;
   S.review = review;
   S.github ||= { pr: null, threads: [] };
   // GitHub's side (the PR, its checks, its threads) is never waited for: it lands when it lands.
-  ghReq.then((gh) => { if (gh && current()) { S.github = gh; hooks.githubChanged(); renderGo(); renderFab(); renderGhLink(); $('#wsbtn').innerHTML = wsTitle(); } });
+  ghReq.then((gh) => { if (gh && current()) { S.github = gh; hooks.githubChanged(); renderGo(); syncMote(); renderGhLink(); $('#wsbtn').innerHTML = wsTitle(); } });
   S.wsWip = new Set(S.ws.wipPaths || []);
   S.rows.clear(); S.items.clear(); S.tok.clear(); S.loaded.clear(); S.newText.clear(); S.diffs.clear();
   // Generated files, and files you have viewed, start folded.
@@ -168,8 +183,8 @@ async function loadFiles(reason) {
   if (S.order === 'guide' && !S.review.brief?.sections?.length) S.order = 'tree';
   if (S.mode === 'guide' && S.review.brief?.sections?.length) S.order = 'guide';
   if (!S.current || !fileOf(S.current)) S.current = orderedFiles()[0]?.f.path || null;
-  renderScopebar(); renderTree(); renderCards(); renderPanel(); renderLsp(); renderFab(); renderGhLink();
-  renderProgress(); renderGo(); renderStack(); hooks.moteMount?.(S.files.length > 0 && !nextUnviewed());
+  renderScopebar(); renderTree(); renderCards(); renderPanel(); renderLsp(); syncMote(); renderGhLink();
+  renderProgress(); renderGo(); renderStack(); hooks.moteMount?.(allViewed(), leftShare());
   requestAnimationFrame(spyNow);
   if (spot) requestAnimationFrame(() => restoreSpot(spot));
   else if (location.hash.length > 1) {
@@ -179,6 +194,15 @@ async function loadFiles(reason) {
   }
   if (reason) toast(reason);
   maybeAutoBrief();
+  const whole = files.scope === 'all' ? files : await api(`/api/w/${id}/files?scope=all`).catch(() => null);
+  if (!current()) return;
+  if (whole) {
+    if (notesChange?.key !== whole.key || notesChange?.id !== id) {
+      notesChange = { id, key: whole.key, quietAt: Date.now() + (S.ws.kind === 'local' ? 20000 : 0) };
+    }
+    notesChange.files = whole.files;
+    maybeAutoNotes();
+  }
   loadStack();
   if (S.ws.kind === 'local') loadShip(true);
 }
@@ -211,6 +235,25 @@ function maybeAutoBrief() {
   });
 }
 
+// Keep the quiet period tied to the whole change, even while viewing an individual commit.
+let notesChange, notesTimer;
+function maybeAutoNotes() {
+  clearTimeout(notesTimer);
+  const change = notesChange;
+  if (!change || change.id !== S.id || S.app.settings?.autoNotes === false || S.review.notes?.pending ||
+      change.request || change.attempted || !filesNeedingNotes(change.files, S.review.notes?.files || {}).length) return;
+  notesTimer = setTimeout(async () => {
+    if (notesChange !== change || changedT || S.app.settings?.autoNotes === false || S.review.notes?.pending) return;
+    const retryAt = await attemptFileNotes(change, () => writeNotes({ auto: true, key: change.key }));
+    if (retryAt && notesChange === change) maybeAutoNotes();
+  }, Math.max(0, Math.max(change.quietAt, change.retryAt || 0) - Date.now()));
+}
+
+function writeNotes(options) {
+  return api(`/api/w/${S.id}/notes`, { method: 'POST', body: { ...notesRun(), ...options } })
+    .catch((e) => { if (!options.auto) toast(e.message); });
+}
+
 // ------------------------------------------------------------------ the top bar: what you are looking at
 function scopeLabel() {
   const k = S.rangeKey;
@@ -234,19 +277,9 @@ function renderScopebar() {
   const ord = $('#ordseg');
   if (ord) ord.innerHTML = S.review.brief?.sections?.length ? `<span class="seg" role="group" aria-label="Order of the files">${[['tree', 'Tree'], ['guide', 'Guide']].map(([o, l]) => `<button data-act="setorder" data-o="${o}" aria-pressed="${S.order === o}" title="Files in ${o === 'tree' ? 'tree' : "the guide's"} order (g)">${l}</button>`).join('')}</span>` : '';
 }
-// Animate the floating spark while Claude is answering.
-function renderFab() {
-  const cv = $('#aifab canvas.spark');
-  if (!cv) return;
-  const busy = Object.values(S.review?.convs || {}).some((c) => c.busy || c.messages?.some((m) => m.pending)) || !!S.review?.brief?.pending;
-  const claudeBusy = Object.values(S.review?.convs || {}).some((c) => c.messages?.some((m) => m.role === 'claude' && m.pending));
-  cv.classList.toggle('still', !claudeBusy);
-  $('#aifab').classList.toggle('busy', busy);
-  $('#aifab').title = busy ? 'An answer is in progress. Click to ask something else (a)' : 'Ask about the selected lines or the whole change (a)';
-  hooks.mote?.sync();
-  if (claudeBusy) cv.dispatchEvent(new Event('spark-wake', { bubbles: true }));
-}
-hooks.renderFab = renderFab;
+// Mote shows when an answer or the brief is being written; a is how you ask
+function syncMote() { hooks.mote?.sync(); }
+hooks.syncMote = syncMote;
 function askAi() {
   if (S.sel && !S.draft) return openDraft('ask');
   setPane('panel', true);
@@ -408,17 +441,36 @@ function listenWs() {
   es.addEventListener('error', () => { S.lost = true; });
   on('hello', (d) => {
     models(d);
-    if (S.boot && S.boot !== d.boot) loadWorkspace('loupe restarted; the change is read again');
-    else if (S.lost && S.ws) loadWorkspace();
+    if (S.boot && S.boot !== d.boot) {
+      notesChange = undefined;
+      loadWorkspace('loupe restarted; the change is read again');
+    } else if (S.lost && S.ws) {
+      resetNotesAttempt(notesChange);
+      loadWorkspace();
+    } else if (d.status && d.status !== 'ready' && d.progress) opening({ status: d.status, text: d.progress, pr: d.pr }); // opened mid-fetch
     S.lost = false; S.boot = d.boot;
   });
-  on('progress', (d) => { if (!S.ws || S.ws.status !== 'ready') { if (d.status === 'ready' && !d.text) loadWorkspace(); else if (d.text) showState(d.status === 'error' ? 'Could not open this' : 'Opening…', d.text, d.status === 'error'); } });
+  // A line from a change still opening. Once GitHub has said how big the pull request is (and its refs), every line
+  // carries that, so the state box can draw it while the fetch runs (the change's record waits for the fetch).
+  function opening(d) {
+    if (S.ws && S.ws.status === 'ready') return;
+    if (d.status === 'ready') { if (!d.text) loadWorkspace(); return; } // a line after it opened (its worktree) is not an opening line
+    if (!d.text) return;
+    if (d.pr) S.opening = { id: S.id, status: d.status, rec: { pr: d.pr } };
+    showState(d.status === 'error' ? 'Could not open this' : 'Opening…', d.text, d.status === 'error');
+  }
+  on('progress', opening);
   on('changed', (d) => {
     if (!S.ws) return loadWorkspace();
     clearTimeout(changedT);
-    changedT = setTimeout(() => loadWorkspace(d.reason === 'files changed' || d.reason === 'worktree ready' ? '' : `${d.reason[0].toUpperCase()}${d.reason.slice(1)}: the diff is updated`), 150);
+    clearTimeout(notesTimer);
+    if (d.reason === 'files changed' && notesChange?.id === S.id) notesChange.quietAt = Date.now() + 20000;
+    changedT = setTimeout(async () => {
+      changedT = null;
+      await loadWorkspace(d.reason === 'files changed' || d.reason === 'worktree ready' ? '' : `${d.reason[0].toUpperCase()}${d.reason.slice(1)}: the diff is updated`);
+    }, 150);
   });
-  on('settings', (st) => { S.app.settings = st; for (const f of S.files) updateCard(f.path); progress(); });
+  on('settings', (st) => { S.app.settings = st; for (const f of S.files) updateCard(f.path); progress(); maybeAutoNotes(); });
   on('review', (d) => {
     if (d.viewed) S.review.viewed = d.viewed;
     if (d.unviewed) S.review.unviewed = d.unviewed;
@@ -452,22 +504,29 @@ function listenWs() {
       if (!d.busy && d.msg.role !== 'user' && !d.msg.pending && S.mark !== th.id) { S.unreadAns.add(th.id); renderTree(); }
       updateMark(th); if (!d.busy && S.tab === 'review' && S.mark !== th.id) renderPanel();
     }
-    renderTabs(); renderFab();
+    renderTabs(); syncMote();
   });
   on('chat', (d) => {
     if (d.deleted) { delete S.review.convs[d.deleted]; S.review.chats = S.review.chats.filter((x) => x !== d.deleted); if (S.chat === d.deleted) S.chat = null; }
     else { S.review.convs[d.conv.id] = { ...d.conv, messages: mergeMsgs(S.review.convs[d.conv.id]?.messages, d.conv.messages) }; if (!S.review.chats.includes(d.conv.id)) S.review.chats.push(d.conv.id); }
     if (S.tab === 'chat' && !document.activeElement?.closest?.('#chatbox')) renderPanel(); else renderTabs();
-    renderGo(); renderFab();
+    renderGo(); syncMote();
   });
   on('brief', (d) => {
     const was = S.review.brief;
     S.review.brief = d;
     // while it is being written, only the line that says what it is reading changes
     if (d.pending && was?.pending) { hooks.briefStep?.(); hooks.mapStep?.(); return; }
-    renderFab(); if (S.ws) renderScopebar();
+    syncMote(); if (S.ws) renderScopebar();
     if (S.tab === 'overview') renderPanel(); else renderTabs();
     if (S.order === 'guide') { renderTree(); renderCards(true); renderProgress(); } else hooks.mapChanged?.();
+  });
+  on('notes', (d) => {
+    const before = S.review.notes;
+    S.review.notes = d;
+    if (!d.pending && d.error) resetNotesAttempt(notesChange);
+    updateFileNotes(before);
+    maybeAutoNotes();
   });
   on('github', async () => { S.github = await api(`/api/w/${S.id}/github`).catch(() => S.github); hooks.githubChanged(); if (S.ws) $('#wsbtn').innerHTML = wsTitle(); });
   on('page', () => location.reload());
@@ -533,12 +592,14 @@ function commands() {
     ...m.commits.filter((x) => x.sha !== S.rangeKey).map((x) => ({ group: 'COMPARE', label: `Commit ${x.short.slice(0, 7)} ${x.subject}`, sub: ago(x.at), typed: true, run: () => setScope(x.sha) })),
     { group: 'REVIEW', label: 'Ask about the whole change', key: 'a', run: () => { setPane('panel', true); openChat(); } },
     { group: 'REVIEW', label: S.review.brief?.tldr ? 'Regenerate the guide and map' : 'Write the guide and map', run: () => { setPane('panel', true); setTab('overview'); hooks.rebrief?.(); } },
+    { group: 'REVIEW', label: 'File notes model…', sub: runLabel(notesRun()), run: () => pickRun($('#wsbtn'), { purpose: 'notes', run: notesRun() }) },
+    { group: 'REVIEW', label: 'Write the file notes again', run: () => writeNotes({ again: true }) },
     { group: 'REVIEW', label: 'New chat', run: () => hooks.newChat?.() },
     { group: 'REVIEW', label: 'Link a Claude Code session…', run: () => hooks.linkSession?.() },
     { group: 'VIEW', label: 'Overview tab', key: '1', run: panel('overview') },
     { group: 'VIEW', label: 'Chat tab', key: '2', run: panel('chat') },
     { group: 'VIEW', label: 'Marks tab', key: '3', run: panel('review') },
-    isPr && pr && !pr.viewerIsAuthor && { group: 'REVIEW', label: 'Submit your review…', run: () => hooks.openSheet?.('review') },
+    isPr && pr && (!(pr.viewerIsAuthor || pr.viewerIsAssignee) || S.github?.pending?.comments?.length) && { group: 'REVIEW', label: 'Submit your review…', run: () => hooks.openSheet?.('review') },
     isPr && pr && { group: 'REVIEW', label: `Comment on #${pr.number}`, run: () => hooks.focusComment?.() },
     (pr?.checks?.length || S.github?.checks?.length) && { group: 'REVIEW', label: 'Show the checks', run: () => hooks.showChecks?.() },
     local && { group: 'SHIP', label: 'Commit…', run: () => hooks.openSheet?.('commit') },
@@ -900,7 +961,7 @@ function keySheet() {
   const scrim = h(`<div class="scrim"><div class="palette keysheet"><div class="keys">
     <h3 class="sh">MOVING</h3>${k(['j'], 'next file')}${k(['k'], 'previous file')}${k([']'], 'done with this file: mark it viewed, go to the next left')}${k(['['], 'return to where you were')}${k(['/'], 'find a file')}${k(['f'], 'search the repository')}${k(['⌘', 'K'], 'open or do anything')}
     <h3 class="sh">REVIEWING</h3>${k(['v'], 'mark the file viewed, or not viewed again')}${k(['o'], 'fold or unfold the file')}${k(['s'], 'unified or split')}${k(['g'], 'guide order or file order')}${k(['m'], 'hide or show the marks in the code')}
-    <h3 class="sh">ON SELECTED LINES</h3>${k(['a'], 'ask Claude there')}${k(['c'], 'comment for your GitHub review (pending until you submit)')}${k(['l'], 'add them to the chat')}${k(['⌘', '↵'], 'send')}${k(['esc'], 'cancel')}
+    <h3 class="sh">ON SELECTED LINES</h3>${k(['a'], 'ask there')}${k(['c'], 'comment for your GitHub review (pending until you submit)')}${k(['l'], 'add them to the chat')}${k(['↵'], 'send a question (⇧↵ for a new line)')}${k(['⌘', '↵'], 'add a comment to your review')}${k(['esc'], 'cancel')}
     <h3 class="sh">PANELS</h3>${k(['1'], 'overview')}${k(['2'], 'chat')}${k(['3'], 'marks')}${k(['t'], 'files')}${k(['p'], 'inspector')}${k(['r'], 'read the change again')}
     <h3 class="sh">GO</h3>${m([], 'hover', 'Go docs')}${m(['⌘'], 'click', 'definition')}${m(['⇧', '⌘'], 'click', 'references')}${k(['⌥'], 'hold over code for the loupe')}
   </div><div class="foot"><span><kbd>esc</kbd> close</span></div></div></div>`);
@@ -940,7 +1001,7 @@ function scopeMenu(btn) {
 // ------------------------------------------------------------------ clicks in the frame
 document.addEventListener('click', async (e) => {
   const b = e.target.closest?.('[data-act]');
-  if (b && b.closest('.top, #scopebar, .tree-head, .ptabs, .state, #aifab')) { // the scope bar and order switch sit in the file list's head
+  if (b && b.closest('.top, #scopebar, .tree-head, .ptabs, .state')) { // the scope bar and order switch sit in the file list's head
     const act = b.dataset.act;
     if (act === 'palette') openPalette();
     if (act === 'layout') setLayout(b.dataset.l);
@@ -955,7 +1016,8 @@ document.addEventListener('click', async (e) => {
         { sep: true }, { header: 'SHOW' }, { label: 'Marks in the code', key: 'm', value: { marks: true }, on: !S.marksHidden },
         { sep: true }, { header: 'REVIEW' },
         { label: 'Count tests and generated files as viewed', value: { autoView: !st.autoView }, on: !!st.autoView },
-        { label: 'Write the brief when a PR opens', value: { autoBrief: !st.autoBrief }, on: !!st.autoBrief }], async (it) => {
+        { label: 'Write the brief when a PR opens', value: { autoBrief: !st.autoBrief }, on: !!st.autoBrief },
+        { label: 'Write file notes when a change opens', value: { autoNotes: st.autoNotes === false }, on: st.autoNotes !== false }], async (it) => {
         if (it.value.theme) { pref.set('theme', it.value.theme); applyTheme(it.value.theme); b.innerHTML = it.value.theme === 'dark' ? I.moon : I.sun; return; }
         if (it.value.layout) return setLayout(it.value.layout);
         if (it.value.mode) return applyMode(it.value.mode);
@@ -963,6 +1025,7 @@ document.addEventListener('click', async (e) => {
         try { S.app.settings = await api('/api/settings', { method: 'POST', body: it.value }); } catch (err) { return toast(err.message); }
         for (const f of S.files) updateCard(f.path);
         progress();
+        maybeAutoNotes();
       }, { align: 'right', width: 340 });
     }
     if (act === 'togglebin') setPane('bin', !paneOpen('bin'));
@@ -971,7 +1034,6 @@ document.addEventListener('click', async (e) => {
     if (act === 'scopemenu') scopeMenu(b);
     if (act === 'setorder') setOrder(b.dataset.o);
     if (act === 'scope') setScope(b.dataset.scope);
-    if (act === 'askai') return askAi();
     if (act === 'gochat') { setPane('panel', true); S.chat = b.dataset.conv; setTab('chat'); }
     if (act === 'retry') { await api(`/api/w/${S.id}/refresh`, { method: 'POST' }).catch(() => {}); loadWorkspace(); }
     return;

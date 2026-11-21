@@ -11,9 +11,10 @@ import { query, createSdkMcpServer, tool, listSessions } from '@anthropic-ai/cla
 import { z } from 'zod';
 import * as codex from './codex.mjs';
 import { BIN, GO_ROOTS, MODELS, EFFORTS, DEFAULTS, STATE_DIR, HOME as HOME_DIR, modelKind, codexDefault, currentModel } from './config.mjs';
-import { registry, contentKey, totalsOf } from './workspaces.mjs';
-import { uid } from './util.mjs';
-import { WORKTREE, readWorktree } from './git.mjs';
+import { registry, contentKey, totalsOf, settings } from './workspaces.mjs';
+import { git, uid } from './util.mjs';
+import { WORKTREE, changedFiles, fileHunks, readWorktree } from './git.mjs';
+import { eligibleForNotes, fileNoteKey, filesNeedingNotes } from '../web/js/file-notes.js';
 
 // a model still offered, or the newest of its line (the list moves on as providers ship); else the default
 const pickModel = (m, d = DEFAULTS.model) => currentModel(m) || (modelKind(m) === 'codex' ? codexDefault() : d);
@@ -49,7 +50,7 @@ export function gitArgsProblem(args) {
 }
 function runGit(cwd, args) {
   const sub = args[0];
-  const argv = ['--no-pager', sub, ...(['diff', 'show', 'log', 'whatchanged'].includes(sub) ? ['--no-ext-diff', '--no-textconv'] : []), ...args.slice(1)];
+  const argv = ['--no-pager', '--literal-pathspecs', sub, ...(['diff', 'show', 'log', 'whatchanged'].includes(sub) ? ['--no-ext-diff', '--no-textconv'] : []), ...args.slice(1)];
   return new Promise((resolve) => {
     const env = { ...process.env, GIT_PAGER: 'cat', PAGER: 'cat', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' };
     delete env.GIT_EXTERNAL_DIFF;
@@ -451,20 +452,24 @@ const BRIEF_SCHEMA = {
   required: ['tldr', 'risk', 'riskWhy', 'context', 'diagrams', 'plan', 'sections'],
 };
 
-async function diffText(ws, files, budget = 180000) {
+async function diffText(ws, files, budget = 180000, prepared) {
   const order = ['code', 'test', 'docs'];
   const pick = files.filter((f) => f.kind !== 'generated').sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || (b.added + b.deleted) - (a.added + a.deleted));
+  const fileBudget = prepared ? Math.min(40000, Math.floor(budget / files.length)) : 40000;
   let out = '', left = [];
   for (const f of pick) {
     if (out.length > budget) { left.push(f); continue; }
-    const d = await ws.hunks('all', f.path).catch(() => null);
+    const d = prepared ? prepared.get(f.path) : await ws.hunks('all', f.path).catch(() => null);
     if (!d || f.binary) { out += `\n### ${f.path} (${f.binary ? 'binary' : 'no text diff'})\n`; continue; }
     let body = `\n### ${f.status} ${f.oldPath ? f.oldPath + ' -> ' : ''}${f.path} (+${f.added} -${f.deleted}${f.untracked ? ', untracked' : ''})\n`;
     for (const h of d.hunks) {
       body += `@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@ ${h.context || ''}\n`;
       body += h.lines.map((l) => `${l.t}${l.s}`).join('\n') + '\n';
     }
-    if (body.length > 40000) body = body.slice(0, 40000) + '\n… (file cut at 40,000 characters)\n';
+    if (body.length > fileBudget) {
+      const cut = `\n… (file cut at ${fileBudget.toLocaleString('en-US')} characters)\n`;
+      body = body.slice(0, prepared ? fileBudget - cut.length : fileBudget) + cut;
+    }
     out += body;
   }
   if (left.length) out += `\nNot shown, for length (${left.length} files): ${left.map((f) => `${f.path} +${f.added} -${f.deleted}`).join(', ')}\n`;
@@ -550,6 +555,231 @@ ${files.map((f) => f.path).join('\n')}`;
   })().finally(() => briefRuns.delete(ws.id));
   briefRuns.set(ws.id, p);
   return p;
+}
+
+const NOTES_APPEND = "You write file notes for a code reviewer: one or two plain sentences that sit above a file's diff and say what part of the system the file is and what this change does to it. Exact, plain, short. Answer only through the structured output.";
+
+function notesPrompt(change, layout, files, diff) {
+  return `A reviewer is about to read this change one file at a time. They are a senior engineer who is new to this repository.
+Above each file's diff you get one note, so that before they read the file they know what part of the system it is
+and what the change does there.
+
+${change}
+The repository, top two levels (\`git ls-files\`, folders with file counts, capped at 80 lines):
+${layout}
+
+The changed files to consider:
+${files.map((f) => `${f.status} ${f.path} +${f.added} -${f.deleted} ${f.kind}`).join('\n')}
+
+The diff:
+${diff}
+
+Write a note only where it helps the reviewer. Code files usually get one. A test, config or docs file gets one only
+when its role is not obvious from its path. Leave out:
+- files whose diff is only formatting, renames of imports or a reordering;
+- one-line version or dependency bumps;
+- fixtures and test data;
+- anything whose note would only restate its path.
+
+Leaving a file out is better than a note that says nothing.
+
+Each note is one or two sentences, 40 words at most:
+1. The file's role in the repository, as a newcomer needs it: what part of the system this is and what uses it.
+2. What this change does here, concretely: the behaviour before and after, not a list of edits.
+
+For example: "The HTTP client's retry loop; every request goes through it. It now stops on a 429 and waits for
+\`Retry-After\` instead of backing off blindly."
+
+Don't:
+- repeat the file's name or path, or open with "This file" or "Here";
+- restate the pull request's title;
+- judge the change ("properly", "cleanly", "important");
+- name more than one function or type (put it in backticks).
+
+If you know the file's role only from its name, keep that part short rather than guess, and say "likely" if you must
+infer it. You may use the read-only tools for at most six calls, and only where a file's role is unclear from the diff
+and the layout: read the top of the file, or grep for who calls a changed function. Do not read widely.`;
+}
+
+function notesSchema(files) {
+  return {
+    type: 'object', additionalProperties: false, required: ['notes'],
+    properties: {
+      notes: {
+        type: 'array',
+        items: {
+          type: 'object', additionalProperties: false, required: ['path', 'note'],
+          properties: { path: { type: 'string', enum: files.map((f) => f.path) }, note: { type: 'string' } },
+        },
+      },
+    },
+  };
+}
+
+export function normalizeNotes(out, files) {
+  // A successful omission is kept for this key so opening the change won't keep asking about it.
+  const notes = new Map(files.map((f) => [f.path, { key: fileNoteKey(f), note: null }]));
+  for (const entry of Array.isArray(out.notes) ? out.notes : []) {
+    const saved = notes.get(entry?.path);
+    if (!saved || saved.note || typeof entry.note !== 'string') continue;
+    const note = entry.note.trim().replace(/\s+/g, ' ')
+      .replace(/^(?:this|the) file(?:\s+(?:is|holds|contains|defines|implements|has))?\b[\s:,.…–—-]*(.?)/iu, (_, first) => first.toUpperCase())
+      .slice(0, 300).trimEnd();
+    if (note) saved.note = note;
+  }
+  return Object.fromEntries(notes);
+}
+
+async function notesLayout(ws) {
+  const list = await git(ws.root || ws.gitDir, ['ls-files', '-z']).catch(() => '');
+  const folders = new Map();
+  for (const file of new Set(list.split('\0').filter(Boolean))) {
+    const parts = file.split('/');
+    for (const folder of [parts.length > 1 ? parts[0] + '/' : '(root)', ...(parts.length > 2 ? [parts.slice(0, 2).join('/') + '/'] : [])]) {
+      folders.set(folder, (folders.get(folder) || 0) + 1);
+    }
+  }
+  return [...folders].sort(([a], [b]) => a.localeCompare(b)).slice(0, 80)
+    .map(([folder, count]) => `${JSON.stringify(folder)} ${count}`).join('\n') || '(none)';
+}
+
+async function requestNotes(ws, run, abort, prompt, schema) {
+  abort.signal.throwIfAborted();
+  if (modelKind(run.model) === 'codex') {
+    return { cost: 0, ...await codex.structured(ws, run, NOTES_APPEND + '\n\n' + prompt, schema, abort.signal) };
+  }
+  const options = baseOptions(ws, { ...run, roots: [ws.root || ws.gitDir], abort, append: NOTES_APPEND });
+  Object.assign(options, { maxTurns: 8, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema } });
+  for await (const msg of query({ prompt, options })) {
+    if (msg.type !== 'result') continue;
+    if (!msg.structured_output) throw new Error(msg.subtype === 'success' ? 'Claude returned no file notes' : msg.subtype.replace(/_/g, ' '));
+    return { out: msg.structured_output, cost: msg.total_cost_usd || 0, ms: msg.duration_ms || 0 };
+  }
+  throw new Error('Claude returned no file notes');
+}
+
+const notesRuns = new Map();
+const failedNotesKeys = new WeakMap();
+const NOTES_RETRY_MS = 10 * 60 * 1000;
+
+async function notesPlan(ws, { again, expectedKey }) {
+  const files = await ws.files('all', { fresh: true });
+  const key = contentKey(files);
+  if (expectedKey !== undefined) {
+    if (!settings().autoNotes || expectedKey !== key) return { started: false };
+    const failure = failedNotesKeys.get(ws);
+    if (failure?.key === key && failure.retryAt > Date.now()) return { started: false, retryAt: failure.retryAt };
+  }
+  const previous = ws.review.data.notes;
+  return { key, previous, targets: filesNeedingNotes(files, previous?.files || {}, again) };
+}
+
+export async function notes(ws, { model, effort, again = false, expectedKey } = {}, request = requestNotes) {
+  const run = { model: pickModel(model, DEFAULTS.notesModel), effort: pickEffort(effort, DEFAULTS.notesEffort) };
+  const options = { ...run, again, expectedKey };
+  const queue = (active) => {
+    if (!again && run.model === active.model) return { started: false };
+    active.queued = { run, options: { ...options, again: true }, request };
+    return { started: true, queued: true };
+  };
+  const active = notesRuns.get(ws.id);
+  if (active && expectedKey === undefined) return queue(active);
+
+  const plan = await notesPlan(ws, options);
+  if (!plan.targets) return plan;
+  const running = notesRuns.get(ws.id);
+  if (running) return queue(running);
+  // Another run can have saved notes while this request was reading the file list.
+  const previous = ws.review.data.notes;
+  const targets = filesNeedingNotes(plan.targets, previous?.files || {}, again);
+  if (!targets.length) return { started: false };
+
+  const slot = { model: run.model, queued: null };
+  notesRuns.set(ws.id, slot);
+  async function drain() {
+    await runNotes(ws, run, plan.key, targets, previous, request);
+    while (slot.queued) {
+      const queued = slot.queued;
+      const next = await notesPlan(ws, queued.options);
+      if (slot.queued !== queued) continue;
+      slot.queued = null;
+      if (next.targets?.length) {
+        slot.model = queued.run.model;
+        await runNotes(ws, queued.run, next.key, next.targets, next.previous, queued.request);
+      }
+    }
+  }
+  drain().finally(() => notesRuns.delete(ws.id)).catch((e) => console.error('loupe: file notes:', e));
+  return { started: true };
+}
+
+async function runNotes(ws, run, key, targets, previous, request) {
+  const state = ws.review.data.notes = {
+    at: Date.now(), ...run, cost: 0, ms: 0, files: { ...previous?.files }, pending: true, error: null,
+  };
+  const publish = () => { ws.review.save(true); ws.emit('notes', state); };
+  publish();
+  const abort = new AbortController();
+  let timer;
+  async function work() {
+    const m = ws.meta;
+    const change = m.pr ? `Pull request #${m.pr.number}: ${m.pr.title}\nBy ${m.pr.author}, ${m.pr.headRefName} into ${m.pr.baseRefName}.\n\nDescription:\n${(m.pr.body || '(none)').slice(0, 1500)}\n` : `Local branch ${m.branch} (base ${m.base})${m.dirty ? `, with ${m.dirty} files of uncommitted work` : ''}.\n`;
+    const layout = await notesLayout(ws);
+    let next = 0;
+    async function worker() {
+      while (next < targets.length && !abort.signal.aborted) {
+        const batch = targets.slice(next, next + 40);
+        next += 40;
+        try {
+          const range = ws.range('all');
+          const snapshot = new Map((await changedFiles(ws.gitDir, range)).map((f) => [f.path, f]));
+          const prepared = new Map();
+          const files = [];
+          for (const target of batch) {
+            abort.signal.throwIfAborted();
+            const f = snapshot.get(target.path);
+            if (!f || fileNoteKey(f) !== fileNoteKey(target)) continue;
+            const hunks = await fileHunks(ws.gitDir, range, f, { verifyBlobs: true });
+            if (!eligibleForNotes(f, hunks) || !hunks.some((h) => h.lines.some((l) => l.t === '+' || l.t === '-'))) continue;
+            files.push(f);
+            prepared.set(f.path, { hunks });
+          }
+          if (!files.length) continue;
+          const prompt = notesPrompt(change, layout, files, await diffText(ws, files, 60000, prepared));
+          const result = await request(ws, run, abort, prompt, notesSchema(files));
+          if (abort.signal.aborted) return;
+          const current = new Map((await ws.files('all', { fresh: true })).map((f) => [f.path, fileNoteKey(f)]));
+          if (abort.signal.aborted) return;
+          const unchanged = files.filter((f) => current.get(f.path) === fileNoteKey(f));
+          state.files = { ...state.files, ...normalizeNotes(result.out, unchanged) };
+          state.cost += result.cost;
+          state.ms += result.ms;
+          publish();
+        } catch (e) {
+          if (abort.signal.aborted) return;
+          state.error ||= String(e.message || e);
+        }
+      }
+    }
+    await Promise.all([worker(), worker()]);
+  }
+  try {
+    await Promise.race([work(), new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        abort.abort();
+        reject(new Error('File notes took longer than three minutes.'));
+      }, 180000);
+    })]);
+  } catch (e) {
+    state.error = String(e.message || e);
+  } finally {
+    clearTimeout(timer);
+    if (state.error) failedNotesKeys.set(ws, { key, retryAt: Date.now() + NOTES_RETRY_MS });
+    else if (failedNotesKeys.get(ws)?.key === key) failedNotesKeys.delete(ws);
+    state.pending = false;
+    publish();
+  }
+  return state;
 }
 
 // A guide never hides a file: unknown paths are dropped, a file named twice stays in its first section, and every

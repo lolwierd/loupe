@@ -1,5 +1,5 @@
 // Mote, loupe's helper: a small diff beetle, its shell half added-green and half removed-red, a lens in hand. It floats
-// over the page's bottom-left corner (drag it anywhere; it remembers where) and does what the desk is doing, so a glance tells you without reading: it works while
+// over the diff's bottom-right corner (drag it anywhere; it remembers where) and does what the desk is doing, so a glance tells you without reading: it works while
 // an answer or the guide is being written, inspects the result when it lands, slumps when something fails, jumps when
 // the last file is viewed or a dialog's send goes through, waits while a dialog asks you something, waves hello when a
 // change opens (and when you click it), and turns to look at the pointer when it comes near. Otherwise it is still,
@@ -9,6 +9,7 @@
 // drawn at one sheet pixel per CSS pixel and kept crisp with image-rendering: pixelated. Frame times are the sheet's.
 import { S, $, pref, reducedMotion } from './core.js';
 import { hooks } from './hooks.js';
+import { fit, tok, isDark, watch, ordered, paint, lerp, smooth } from './dither.js';
 
 const W = 48, H = 52;
 const ROW = { idle: 0, 'running-right': 1, 'running-left': 2, waving: 3, jumping: 4, failed: 5, waiting: 6, running: 7, review: 8 };
@@ -80,12 +81,45 @@ class Mote {
   }
 }
 
+// ------------------------------------------------------------------ its lens's light on the desk
+// Mote holds a lens, and a lens held over a desk throws a spot of light on it. The spot is how much of the change is
+// left: with most of it unread the light is spread wide and weak, a pale disc inside the lens's shadow; it gathers as
+// the lines left fall; with every file viewed it is one point, the shadow deepens round it, and a four-pointed glint
+// stands on it while Mote jumps (held, with reduced motion). Drawn on Mote's own grid, one art pixel to a CSS pixel,
+// with the app's 4×4 Bayer matrix (docs/COMPONENTS.md, Print textures). The canvas rides in the dock, so it goes
+// wherever Mote is dragged, and never takes the pointer.
+const LENS_W = 76, LENS_H = 18, FOOT = 9, LX = 46, LY = 11; // the patch of desk, the feet's row on it, where the light lands
+let lens = null, share = 1, allNow = false, glintUntil = 0, unwatchLens = null;
+function drawLens() {
+  if (!lens?.isConnected) return;
+  const g = fit(lens), f = share, dark = isDark();
+  const r = 1.2 + 10 * f, core = lerp(0.95, 0.3, f), shadowR = 13;
+  const field = (x, y) => {
+    const fe = ((x - 25) / 17) ** 2 + ((y - FOOT) / 3.2) ** 2; // the contact shadow under its feet
+    const contact = fe < 1 ? 0.45 * (1 - smooth(0.4, 1, fe)) + 0.2 : 0;
+    const ld = Math.hypot(x - LX, (y - LY) / 0.42); // the lens's shadow, squashed onto the desk; deeper round a gathered point
+    const lensShadow = ld < shadowR ? (0.5 + 0.45 * (1 - f) * (1 - smooth(5, 12, ld))) * (1 - smooth(shadowR - 4, shadowR, ld)) : 0;
+    const light = ld < r + 1 ? core * (1 - smooth(r * 0.2, r + 1, ld)) : 0;
+    return { ink: Math.max(contact, lensShadow * (1 - Math.min(1, light * 2))), light };
+  };
+  const mask = ordered(g, (x, y) => field(x, y).ink, { cell: g.d, ink: 1 });
+  ordered(g, (x, y) => field(x, y).light, { cell: g.d, ink: 2, into: mask });
+  if (allNow && (Date.now() < glintUntil || reducedMotion())) {
+    const put = (ax, ay) => { for (let Y = ay * g.d; Y < (ay + 1) * g.d; Y++) for (let X = ax * g.d; X < (ax + 1) * g.d; X++) if (X < g.W && Y < g.H) mask[Y * g.W + X] = 3; };
+    for (let k = -3; k <= 3; k++) { put(LX + k, LY); put(LX, LY + k); }
+    for (const [dx, dy] of [[-1, -1], [1, 1], [1, -1], [-1, 1]]) put(LX + dx, LY + dy);
+  }
+  const hi = tok('--hi'); // the light is the app's own highlight, light in both themes; the shadow is ink, seen through
+  paint(lens, g, mask, [null, dark ? [0, 0, 0, 200] : [...tok('--ink').slice(0, 3), 120], [...hi.slice(0, 3), dark ? 220 : 255], hi]);
+}
+
 // ------------------------------------------------------------------ the floating one on a change's page
 let main = null, words = null, wordsTimer = 0, helloTimer = 0, lastBusy = new Map(), briefWas = false, allWas = null;
 const say = (text, ms = 0) => {
   if (!words) return;
   clearTimeout(wordsTimer);
   words.textContent = text || '';
+  if (text) { const dock = $('#motedock'); if (dock) aim(dock); }
   if (main) main.el.title = text || 'Mote';
   if (ms && !document.hidden) wordsTimer = setTimeout(() => say(status()), ms);
 };
@@ -97,25 +131,37 @@ function status() {
   const run = Object.values(S.review?.convs || {}).flatMap((c) => c.messages || []).find((m) => m.pending && m.role !== 'user');
   return run ? `${kindOf(run)} is answering` : '';
 }
-// where it floats: the spot you dragged it to, as a share of the window so a resize keeps it in view; else the corner
+// where it floats: the spot you dragged it to, as a share of the window so a resize keeps it in view; else the corner,
+// where its bubble opens to its left. (The spot is kept under a new name since the corner moved from the bottom left:
+// a spot dragged out from the old corner is not kept.)
+const SPOT = 'moteSpot';
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 function place(dock) {
-  const at = pref.get('motePos', null);
-  if (!at) { dock.style.left = dock.style.top = dock.style.bottom = ''; dock.classList.remove('flip'); return; }
+  const at = pref.get(SPOT, null);
+  if (!at) { dock.style.left = dock.style.top = dock.style.bottom = ''; aim(dock); return; }
   const x = clamp(at.x * innerWidth, 4, innerWidth - W - 4), y = clamp(at.y * innerHeight, 4, innerHeight - H - 4);
   dock.style.left = `${Math.round(x)}px`; dock.style.top = `${Math.round(y)}px`; dock.style.bottom = 'auto';
-  dock.classList.toggle('flip', x > innerWidth - 340); // near the right edge the bubble opens to its left
+  aim(dock);
 }
 addEventListener('resize', () => { const d = $('#motedock'); if (d) place(d); });
+// its bubble opens toward the side with more room (in the corner, over the diff); checked wherever it is put, when it
+// has something to say, and when the inspector opens, closes or is resized
+let panelWatch = null;
+function aim(dock) { const r = dock.getBoundingClientRect(); dock.classList.toggle('flip', r.left > innerWidth - r.right); }
 // mount into its floating spot; called when a change opens
-hooks.moteMount = (allViewed) => {
+hooks.moteMount = (allViewed, left = 1) => {
   const dock = $('#motedock');
   main?.pause();
   clearTimeout(wordsTimer); clearTimeout(helloTimer);
   words = null;
   if (!dock) { main = null; return; }
-  dock.innerHTML = `${moteHTML()}<span class="mw"></span>`;
+  dock.innerHTML = `<canvas class="motelight" aria-hidden="true" style="width:${LENS_W}px;height:${LENS_H}px;top:${H - FOOT - 4}px"></canvas>${moteHTML()}<span class="mw"></span>`;
   place(dock);
+  panelWatch?.disconnect();
+  const panel = $('#panel');
+  if (panel) { panelWatch = new ResizeObserver(() => aim(dock)); panelWatch.observe(panel); }
+  lens = dock.querySelector('.motelight'); share = left; allNow = !!allViewed; glintUntil = 0;
+  unwatchLens?.(); unwatchLens = watch(lens, drawLens);
   main = new Mote(dock.querySelector('.mote'));
   words = dock.querySelector('.mw');
   lastBusy = new Map(); briefWas = !!S.review?.brief?.pending; allWas = !!allViewed;
@@ -142,11 +188,13 @@ hooks.mote = {
     else if (landed) { main.play('review'); say(ended.length ? 'Answer ready' : 'Guide ready', 4000); }
     else say(status());
   },
-  // after the viewed count changes: a jump when the last file goes viewed
-  progress(all) {
+  // after the viewed count changes: a jump when the last file goes viewed, and the lens's light gathered to match
+  progress(all, left = share) {
     if (!main) return;
-    if (allWas === false && all) { main.play('jumping'); say('Every file viewed', 4000); }
+    share = left; allNow = !!all;
+    if (allWas === false && all) { main.play('jumping'); say('Every file viewed', 4000); glintUntil = Date.now() + 1400; setTimeout(drawLens, 1450); }
     allWas = all;
+    drawLens();
   },
   // what it is doing, for tests and for the curious
   state: () => main && { base: main.base, once: main.once, looking: main.looking, hidden: document.hidden, reduced: reducedMotion() },
@@ -197,17 +245,17 @@ document.addEventListener('pointermove', (e) => {
   drag.moved = true; drag.dock.classList.add('drag');
   const x = clamp(e.clientX - drag.dx, 4, innerWidth - W - 4), y = clamp(e.clientY - drag.dy, 4, innerHeight - H - 4);
   Object.assign(drag.dock.style, { left: `${x}px`, top: `${y}px`, bottom: 'auto' });
-  drag.dock.classList.toggle('flip', x > innerWidth - 340);
+  aim(drag.dock);
 });
 document.addEventListener('pointerup', (e) => {
   if (!drag) return;
   const d = drag; drag = null; d.dock.classList.remove('drag');
   if (!d.moved) { main?.play('waving'); return; }
   const r = d.dock.getBoundingClientRect();
-  pref.set('motePos', { x: r.left / innerWidth, y: r.top / innerHeight });
+  pref.set(SPOT, { x: r.left / innerWidth, y: r.top / innerHeight });
 });
 // a double click sends it back to its corner
-document.addEventListener('dblclick', (e) => { const dock = e.target.closest?.('#motedock'); if (dock) { pref.set('motePos', null); place(dock); } });
+document.addEventListener('dblclick', (e) => { const dock = e.target.closest?.('#motedock'); if (dock) { pref.set(SPOT, null); place(dock); } });
 // a hidden tab keeps no timers; it picks up again on the right frame
 document.addEventListener('visibilitychange', () => {
   pruneHomeMotes();

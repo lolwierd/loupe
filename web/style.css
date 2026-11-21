@@ -1,6 +1,6 @@
 /* loupe: a review desk for code. Three panes under a bar: the files (the bin) on the left, the diff in the middle as
    one solid white column of paper, the inspector on the right (Overview, Chat, Marks). The top bar holds the title, what
-   is left (a count and a strip, one segment per file) and the next act; what to compare sits at the top of the file column.
+   is left (a count and the meter, one block of lamps per file) and the next act; what to compare sits at the top of the file column.
    A Guide layout swaps the bin for Claude's guide. A write (review, commit, push, open PR) opens one dialog in the
    middle of the window, and the dialog is the preview. A mark (Claude's question, a GitHub thread) sits in the code as one
    line on its 20 px grid, its glyph in the column of the +/- signs and its text where code text starts; it opens in the inspector.
@@ -16,7 +16,7 @@
      Text on the act fill is --on-act, so it reads in light and dark.
    - pixel parts (Claude's spark, the icons) are drawn at art size and shown at a whole multiple of it, pixelated,
      never scaled by a non-integer, never blurred. Their colours come from the tokens below.
-   - nothing overlaps its neighbour: when the top bar is full the repository's name goes first, then the tally's strip; the
+   - nothing overlaps its neighbour: when the top bar is full the repository's name goes first, then the tally's meter; the
      change's title gives way last.
    - every control has hover, pressed, focus-visible and disabled states; fill and colour change in 120 ms --ease and nothing
      on a control slides (dialogs rise in 160 ms; menus do not animate). */
@@ -37,6 +37,8 @@
   --shadow-lg: 0 1px 2px rgba(20, 20, 30, 0.08), 0 24px 56px rgba(20, 20, 30, 0.22);
   --scrim: rgba(12, 12, 18, 0.26); --scrim-soft: rgba(10, 10, 15, 0.18);
   --hi: #ffffff; /* white for a highlight that stays light in both themes (a glint, a divider on the filled button) */
+  /* the tone screen behind a write's dialog: its ink (dither.js sets its weight) */
+  --tone-ink: #1b1b20;
   --f-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --f-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --t-meta: 11px; --t-mono: 12px; --t-ui: 13px; --t-code: 13px; --t-read: 14px; --t-title: 16px;
@@ -60,6 +62,7 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.55);
   --shadow-lg: 0 1px 2px rgba(0, 0, 0, 0.4), 0 24px 56px rgba(0, 0, 0, 0.6);
   --scrim: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
+  --tone-ink: #000000;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -75,6 +78,7 @@
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.55);
     --shadow-lg: 0 1px 2px rgba(0, 0, 0, 0.4), 0 24px 56px rgba(0, 0, 0, 0.6);
     --scrim: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
+    --tone-ink: #000000;
   }
 }
 
@@ -193,7 +197,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .wsbtn .t { font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .wsbtn .r { color: var(--ink-3); font-size: var(--t-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1000000000 auto; }
 .wsbtn svg { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
-/* when the top bar is full the repository name goes first, then the tally's strip; the title keeps its first characters */
+/* when the top bar is full the repository name goes first, then the tally's meter; the title keeps its first characters */
 
 .main { display: grid; grid-template-columns: var(--bin-w) minmax(0, 1fr) var(--panel-w); grid-template-rows: minmax(0, 1fr); min-height: 0; }
 .main.no-bin { grid-template-columns: 0 minmax(0, 1fr) var(--panel-w); }
@@ -286,6 +290,10 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .fh { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: var(--s3); height: 36px; padding: 0 var(--s4) 0 var(--s2); background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--rule); font-size: var(--t-mono); }
 .file.shut .fh { border-bottom: 0; }
 .file.shut .fb, .file.shut .relp { display: none; }
+.file.shut .file-note, .file-note:empty { display: none; }
+.file-note { margin: 0; padding: var(--s3) var(--s5) var(--s3) min(var(--code-x), 20%); max-width: calc(min(var(--code-x), 20%) + 72ch); color: var(--ink-2); font-size: var(--t-read); line-height: 1.6; overflow-wrap: anywhere; }
+.file-note code { font-family: var(--f-mono); font-size: var(--t-code); }
+.file-note-stale { color: var(--warn); font-size: var(--t-meta); }
 .file.shut.viewed .fh { height: 28px; position: static; background: none; backdrop-filter: none; }
 .file.shut.viewed .fh .path .base { color: var(--ink-3); font-weight: 400; }
 .fh .chev { transition: transform 120ms var(--ease); }
@@ -343,7 +351,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .hk .hx { display: flex; justify-content: center; align-items: center; }
 .hk .ht { padding: var(--s2) var(--s4); white-space: pre-wrap; overflow-wrap: anywhere; align-self: center; }
 body.cmd .golang .tx[data-r="new"] span[data-c]:hover { text-decoration: underline; cursor: pointer; color: var(--pencil-ink) !important; }
-.seltools { position: absolute; z-index: 9; display: flex; gap: var(--s1); padding: var(--s2); background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: var(--shadow); }
+.seltools { position: absolute; z-index: 31; /* above Mote (30), who floats over the diff's corner */ display: flex; gap: var(--s1); padding: var(--s2); background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: var(--shadow); }
 .seltools .n { font: var(--t-meta)/1 var(--f-mono); color: var(--ink-3); padding: 0 var(--s3); display: inline-flex; align-items: center; border-right: 1px solid var(--rule); margin-right: var(--s1); }
 
 .msg { padding: var(--s2) 0; display: grid; gap: var(--s2); }
@@ -403,7 +411,6 @@ a.loc:focus-visible { outline: 2px solid var(--pencil); }
    A note is your words, whole, in pencil. A question is your words, then Claude's first words, then its state; it opens
    in the inspector. Actions show on hover. */
 .fb { --lane: 0px; }
-.marks-hidden .fb { --lane: 20px; }
 .mrow { position: relative; display: flex; align-items: flex-start; gap: var(--s3); min-height: 28px; padding: var(--s2) var(--s5) var(--s2) calc(100px + var(--lane)); font: var(--t-ui)/20px var(--f-ui); color: var(--ink-2); background: var(--bg); }
 .split .mrow { padding-left: calc(52px + var(--lane)); }
 .mrow::before { content: ""; position: absolute; left: calc(95px + var(--lane)); top: 0; bottom: 0; width: 2px; background: var(--rule-strong); }
@@ -609,15 +616,13 @@ details.sect[open] > summary.sh::after { transform: rotate(180deg); }
 .tally { flex: none; }
 .tally .n b { color: var(--ink); font-variant-numeric: tabular-nums; }
 .tally.clean .n { color: var(--ok); }
-/* one segment per file, as long as its changed lines: grey left, green viewed, amber changed since; the current one is
-   ringed. It is the change drawn to scale, and the only map of progress the page needs. */
-.tally .strip { display: flex; gap: 1px; width: 168px; height: 6px; }
-.tally .strip i { min-width: 1px; height: 100%; background: color-mix(in srgb, var(--ink-3) 32%, transparent); border-radius: 1px; }
-.tally .strip i.done { background: var(--ok); }
-.tally .strip i.stale { background: var(--warn); }
-.tally .strip i.cur { box-shadow: 0 0 0 1px var(--ink); position: relative; z-index: 1; }
-.tally.sweep .strip i { animation: sweep 700ms var(--ease) 1; }
-@keyframes sweep { 40% { filter: brightness(1.35); } }
+/* the meter: a board of lamps 4 high, its canvas reaching 16px up into the bar where the sparks fly (meter.js) */
+.tally { position: relative; }
+.tally .meter { position: relative; display: block; width: 168px; height: 12px; }
+.tally .meter canvas { position: absolute; left: 0; bottom: 0; width: 100%; height: 28px; pointer-events: none; }
+.mlabel { position: fixed; transform: translateX(-50%); z-index: 90; white-space: nowrap; padding: 1px var(--s2); font: 500 var(--t-meta)/16px var(--f-mono); color: var(--ink-2); background: var(--bg); border: 1px solid var(--rule-strong); border-radius: var(--r1); box-shadow: var(--shadow); pointer-events: none; }
+.mlabel b { color: var(--ink); font-weight: 500; }
+.mlabel .add { color: var(--add-ink); } .mlabel .del { color: var(--del-ink); }
 .top .go { display: inline-flex; flex: none; }
 .top .go:empty { display: none; }
 .top .go .btn.l { border-radius: var(--r2) 0 0 var(--r2); }
@@ -625,9 +630,9 @@ details.sect[open] > summary.sh::after { transform: rotate(180deg); }
 .top .go .btn.primary.r { border-left-color: color-mix(in srgb, var(--on-act) 22%, var(--act)); }
 /* floors: the title keeps its first characters when there is room for them */
 @media (min-width: 1100px) { .wsbtn .t { min-width: 120px; } }
-@media (max-width: 1500px) { .tally .strip { width: 110px; } }
+@media (max-width: 1500px) { .tally .meter { width: 110px; } }
 @media (max-width: 1180px) { .wsbtn .r { display: none; } }
-@media (max-width: 1060px) { .tally .strip { display: none; } }
+@media (max-width: 1060px) { .tally .meter { display: none; } }
 
 /* ---------------------------------------------------------------- Claude's spark: a 16 px pixel sprite, crisp at 1x and 2x */
 canvas.spark { image-rendering: pixelated; display: inline-block; vertical-align: middle; flex: none; }
@@ -663,18 +668,6 @@ canvas.pxi { image-rendering: pixelated; display: inline-block; vertical-align: 
 .gside .gfiles { display: grid; grid-template-columns: minmax(0, 1fr); padding-left: calc(var(--gt) - var(--s2)); }
 .gside .gsum { padding: var(--s2) var(--s3) 0 var(--gt); font-size: var(--t-meta); color: var(--ink-3); }
 
-/* ---------------------------------------------------------------- the floating spark: ask Claude from anywhere
-   A raised pixel button over the code's bottom right. It bobs one pixel, slowly, so it reads as floating; it turns
-   while Claude works; on hover the label slides out. Hard pixel shadow, no blur, like the other pixel parts. */
-.aifab { position: absolute; right: 22px; bottom: 22px; z-index: 20; display: inline-flex; align-items: center; gap: 0; height: 48px; padding: 0 8px; border: 1px solid var(--rule-strong); border-radius: var(--r2); background: var(--raise); color: var(--ink); cursor: pointer; box-shadow: 2px 2px 0 var(--rule); animation: bob 2.4s steps(1) infinite; transition: background 120ms var(--ease); }
-.aifab .aispark { display: inline-grid; place-items: center; width: 32px; height: 32px; }
-.aifab .ail { display: none; white-space: nowrap; font-weight: 600; font-size: var(--t-ui); }
-.aifab:hover, .aifab:focus-visible { gap: var(--s3); padding-right: var(--s4); background-image: linear-gradient(var(--hover), var(--hover)); animation-play-state: paused; }
-.aifab:hover .ail, .aifab:focus-visible .ail { display: inline; }
-.aifab:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--rule); }
-.aifab.busy { border-color: var(--ink-3); }
-@keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-2px); } }
-@media (prefers-reduced-motion: reduce) { .aifab { animation: none; } }
 
 /* the parts that reset themselves (all: unset) still show where the keyboard is */
 :is(.link, .chip .x, .mtitle .loc):focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
@@ -698,26 +691,17 @@ canvas.pxi { image-rendering: pixelated; display: inline-block; vertical-align: 
 .panel { box-shadow: inset 1px 0 0 var(--spec), inset -1px 1px 0 var(--spec-soft); }
 .home { position: relative; isolation: isolate; background: transparent; }
 .homein .hlist, .homein .openbox input { background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
-/* the floating spark only while the inspector is away: with it open, Chat is right there */
-.main:not(.no-panel) .aifab { display: none; }
 
 /* ---------------------------------------------------------------- small earned moments (Fable's picks)
    A sprite moves only while something is in progress and sits still as a mark; per-file moments are a few pixels and
    under 300 ms, the once-per-change moment gets a glint. Nothing queues: a repeat cuts the last one. */
 /* the strip fills with a dither of ink as you scroll through a file; viewed is solid green */
-.tally .strip i { position: relative; overflow: hidden; }
-.tally .strip i::after { content: ""; position: absolute; inset: 0; background: var(--ink-2); -webkit-mask: var(--rd, none); mask: var(--rd, none); -webkit-mask-size: 4px 4px; mask-size: 4px 4px; opacity: 0; }
-.tally .strip i[style*="--rd"]:not(.done)::after { opacity: 0.85; }
 /* the count rolls */
 .tally .odo { display: inline-block; height: 18px; line-height: 18px; overflow: hidden; vertical-align: bottom; }
 .tally .odo .roll { display: inline-flex; flex-direction: column; }
 .tally .odo.rolling .roll { animation: roll 200ms steps(3) 1 forwards; }
 @keyframes roll { to { transform: translateY(-18px); } }
-/* zero: one glint along the strip */
 .tally .n canvas.pxi { vertical-align: -1px; margin-right: 2px; }
-.tally.glint .strip { position: relative; }
-.tally.glint .strip::after { content: ""; position: absolute; top: -1px; bottom: -1px; width: 18px; left: -18px; background: color-mix(in srgb, var(--hi) 70%, var(--ok)); -webkit-mask: var(--d8); mask: var(--d8); -webkit-mask-size: 4px 4px; mask-size: 4px 4px; animation: glint 600ms steps(12) 1; }
-@keyframes glint { to { left: 100%; } }
 /* the spark's satellite, landed on a file whose answer you have not opened */
 .trow .sat { width: 2px; height: 2px; background: var(--claude); flex: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--claude) 25%, transparent); }
 /* a write on its way: the arrow travels up and to the right until the answer comes back; a failure shakes */
@@ -726,7 +710,7 @@ canvas.pxi { image-rendering: pixelated; display: inline-block; vertical-align: 
 @keyframes launch { from { transform: translate(-6px, 6px); } to { transform: translate(6px, -6px); } }
 .sheet [data-sh="go"].failed { animation: shake 240ms steps(4) 1; }
 @keyframes shake { 25% { transform: translateX(-2px); } 75% { transform: translateX(2px); } }
-@media (prefers-reduced-motion: reduce) { .tally .odo.rolling .roll, .tally.glint .strip::after, .sheet [data-sh="go"].sending .launch canvas, .sheet [data-sh="go"].failed { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .tally .odo.rolling .roll, .sheet [data-sh="go"].sending .launch canvas, .sheet [data-sh="go"].failed { animation: none; } }
 
 /* ---------------------------------------------------------------- the PR author
    A GitHub avatar as a pixel portrait: drawn to 10×10, shown at 20 px pixelated, a 1 px frame; bots a little faded. */
@@ -849,7 +833,7 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .sheet .box.drafting :is(.subjrow, .mdtabs)::after { content: "Claude is writing…"; align-self: center; font-size: var(--t-meta); color: var(--ink-3); white-space: nowrap; }
 .sheet .box.drafted { animation: drafted 700ms var(--ease) 1; }
 @keyframes drafted { from { border-color: var(--ink-2); box-shadow: 0 0 0 3px var(--press); } }
-@media (prefers-reduced-motion: reduce) { .sheetscrim, .sheet, .sheet .box.drafted { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .sheetscrim, .sheetscrim[data-weight]::before, .sheet, .sheet .box.drafted { animation: none; } }
 
 /* ---------------------------------------------------------------- home: whose move it is
    Three lists on one grid, so every column lines up down the page: who, what (title over repo and branch), where it
@@ -910,13 +894,12 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .hc.ti .sess { display: inline-flex; align-items: center; gap: var(--s2); vertical-align: -2px; color: var(--ink-2); }
 .hc.ti .sess canvas.spark { flex: none; }
 
-/* marks hidden: a 20 px lane opens left of the line numbers, and each mark keeps its glyph there at its line, so the
-   code reads unbroken and you still see where every note and question is. The bare gutter tick stays only on the
-   mark you have open. */
-.marks-hidden .fb .ln { position: relative; padding-left: var(--lane); }
-.marks-hidden .fb .hk { padding-left: var(--lane); }
+/* marks hidden: each mark keeps its glyph at its line, over the empty left edge of the line-number gutter (a number
+   up to three digits never reaches it), so the code reads unbroken, nothing moves, and you still see where every note
+   and question is. The bare gutter tick stays only on the mark you have open. */
+.marks-hidden .fb .ln { position: relative; }
 .marks-hidden .ln.marked:not(.lit) .no:first-child { box-shadow: none; }
-.mpin { position: absolute; left: 2px; top: 2px; display: grid; place-items: center; width: 16px; height: 16px; padding: 0; border: 0; border-radius: var(--r1); background: none; cursor: pointer; }
+.mpin { position: absolute; left: 1px; top: 2px; display: grid; place-items: center; width: 14px; height: 16px; padding: 0; border: 0; border-radius: var(--r1); background: none; cursor: pointer; }
 .mpin:hover { background: var(--hover); }
 .mpin.lit { background: var(--press); }
 .mpin.done { opacity: 0.45; }
@@ -1088,12 +1071,15 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 .gsec .ctx p { margin: 0; }
 
 /* ---------------------------------------------------------------- Mote, loupe's helper (web/js/mote.js)
-   One sheet pixel per CSS pixel on its own 48 by 52 grid, kept crisp. It floats over the page's corner, taking no room
-   from any pane; drag it anywhere. What it is doing shows in a small bubble beside it, only while there is something to
+   One sheet pixel per CSS pixel on its own 48 by 52 grid, kept crisp. It floats over the diff's bottom-right corner,
+   clear of the inspector and taking no room from any pane; drag it anywhere. What it is doing shows in a small bubble beside it, only while there is something to
    say. It also sits in home's quiet states. */
 .mote { display: inline-block; flex: none; width: 48px; height: 52px; background: url(/web/img/mote.png) 0 0 / 384px 572px no-repeat; image-rendering: pixelated; }
-.motefloat { position: fixed; left: 12px; bottom: 8px; z-index: 30; width: 48px; height: 52px; touch-action: none; user-select: none; }
+.motefloat { position: fixed; right: calc(var(--panel-w) + 22px); bottom: 22px; z-index: 30; width: 48px; height: 52px; touch-action: none; user-select: none; }
+.main.no-panel .motefloat { right: 22px; }
+@media (max-width: 860px) { .motefloat { right: 22px; } } /* the inspector is hidden there */
 .motefloat .mote { cursor: grab; }
+.motefloat .motelight { position: absolute; left: -2px; z-index: -1; pointer-events: none; } /* its lens's light on the desk (mote.js) */
 .motefloat.drag .mote { cursor: grabbing; }
 .motefloat .mw { position: absolute; left: 52px; bottom: 16px; max-width: 280px; padding: var(--s1) var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r2); box-shadow: 0 1px 2px rgba(20, 20, 30, 0.08); font-size: var(--t-meta); color: var(--ink-2); pointer-events: none; }
 .motefloat .mw:empty { display: none; }
@@ -1143,3 +1129,20 @@ button.pill:hover { filter: brightness(0.96); text-decoration: underline; text-u
 .toast .tb { min-height: var(--h1); }
 .markview .mtitle .loc { line-height: 20px; }
 .sheet .route .chip { height: var(--h2); } /* the head beside the base field: one height */
+
+/* ---------------------------------------------------------------- print textures (docs/COMPONENTS.md, Print textures)
+   Where nothing is being read, a few states are drawn as a print shop would show them, at device pixels, from the
+   change's own state (web/js/dither.js, press.js, mote.js), in the page's own ink. */
+/* a pull request opening: its forme, one dot per changed line, under the opening line */
+.state .box .forme { display: grid; justify-items: center; gap: var(--s3); margin-top: var(--s5); }
+.forme canvas { display: block; }
+.forme .cap { margin: 0; font-size: var(--t-ui); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.forme .cap b { color: var(--ink); font-weight: 500; }
+/* a change that could not open: the column is the moiré's, the message sits on clear paper in its middle */
+.state.failed { position: relative; min-height: calc(100vh - var(--bar) - var(--s6)); isolation: isolate; }
+.state.failed > canvas.moire { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
+/* a write's dialog: the dim is a fine tone screen as heavy as the act is hard to undo (dither.js toneScreen; sheets.js
+   sets the weight), fading in with the dialog */
+.sheetscrim[data-weight] { background: none; backdrop-filter: none; -webkit-backdrop-filter: none; animation: none; }
+.sheetscrim > canvas.tone { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; animation: fadein 140ms var(--ease) 1; }
+@media (prefers-reduced-motion: reduce) { .sheetscrim > canvas.tone { animation: none; } }

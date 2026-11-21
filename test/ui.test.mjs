@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { attemptFileNotes, eligibleForNotes, fileNoteKey, filesNeedingNotes, resetNotesAttempt } from '../web/js/file-notes.js';
 import vm from 'node:vm';
 
 test('a preview finishing after navigation never sends its write to the next workspace', async () => {
@@ -79,13 +80,16 @@ test('the run picker offers all models for a new chat and only the matching kind
     legacy: { sessionId: 'claude-session', messages: [] },
     linked: { linked: {}, messages: [] },
   } } };
-  let items;
+  let items, pick;
+  const preferences = new Map();
   const markdownOptions = [];
   const code = vm.runInNewContext(picker + messages + '\n({ pickRun, runBtn, msgHTML })', {
     S, I: { spark: '<svg data-spark></svg>' }, esc: String, md: (text, options) => { markdownOptions.push(options); return text; }, ago: () => 'now',
     freshModel: (id) => models.some((m) => m.id === id) ? id : undefined,
     spark: () => '<canvas class="spark"></canvas>', modelName: (id) => models.find((m) => m.id === id)?.label,
-    menu: (_button, options) => { items = options; },
+    menu: (_button, options, onPick) => { items = options; pick = onPick; },
+    pref: { set: (key, value) => preferences.set(key, value) },
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
   });
   const shown = (id, model) => {
     code.pickRun({ dataset: { runConv: id, model } });
@@ -95,6 +99,16 @@ test('the run picker offers all models for a new chat and only the matching kind
   assert.deepEqual(shown('codex', 'gpt-6.2-sol'), ['gpt-6.2-sol', 'gpt-6-astra']);
   for (const id of ['legacy', 'linked']) assert.deepEqual(shown(id, 'claude-opus-5-5'), ['claude-opus-5-5']);
   const run = { model: 'gpt-6.2-sol', effort: 'high' };
+  const picked = [];
+  const anchor = { dataset: {}, innerHTML: 'Change title', dispatchEvent: (e) => picked.push(e) };
+  code.pickRun(anchor, { purpose: 'notes', run });
+  assert.ok(items.find((item) => item.value?.model === run.model && item.current));
+  pick(items.find((item) => item.value?.effort === 'low'));
+  assert.deepEqual(Object.fromEntries(preferences), { notesModel: run.model, notesEffort: 'low' });
+  // a pick says what was picked, so a draft at the lines can turn its mark to the new model
+  assert.equal(picked[0]?.type, 'runpicked');
+  assert.deepEqual({ ...picked[0].detail }, { model: run.model, effort: 'low' });
+  assert.equal(anchor.innerHTML, 'Change title');
   assert.doesNotMatch(code.runBtn(run), /data-spark/);
   const msg = code.msgHTML({ ...run, role: 'codex', id: 'a', text: 'Answer' });
   assert.match(msg, /who codex">Codex/);
@@ -174,9 +188,11 @@ test('Mote cancels detached and hidden animation timers', () => {
   let next = 0;
   const hooks = {}, document = { hidden: false, addEventListener: (name, fn) => { listeners[name] = fn; } };
   const classList = { add() {}, remove() {}, toggle() {} };
-  const dock = { style: {}, classList, querySelector: () => ({ style: {} }) }; // the floating dock: placed, then filled
+  const dock = { style: {}, classList, querySelector: () => ({ style: {} }), getBoundingClientRect: () => ({ left: 970, right: 1018 }) }; // the floating dock: placed, then filled
   vm.runInNewContext(source, {
     hooks, document, S: { review: { brief: { pending: true } } }, $: () => dock, reducedMotion: () => false,
+    watch: () => () => {}, // the lens's light is drawn on theme and size changes; nothing to draw here
+    ResizeObserver: class { observe() {} disconnect() {} }, // the inspector's width aims its bubble
     pref: { get: () => null, set() {} }, addEventListener() {}, innerWidth: 1440, innerHeight: 900,
     setTimeout(fn) { timers.set(++next, fn); return next; }, clearTimeout: (id) => timers.delete(id),
   });
@@ -312,4 +328,89 @@ test('two readers share an in-flight diff and a stale response cannot paint a ne
   resolve({ hunks: [] });
   await current;
   assert.equal(draws, 1);
+});
+
+test('file notes wait for a local change to settle and respect the automatic setting', async () => {
+  const source = fs.readFileSync(new URL('../web/js/main.js', import.meta.url), 'utf8');
+  const auto = source.slice(source.indexOf('let notesChange, notesTimer'), source.indexOf('// ------------------------------------------------------------------ the top bar'));
+  const S = { id: 'test', app: { settings: { autoNotes: false } }, review: {} };
+  const requests = [];
+  let scheduled;
+  const check = vm.runInNewContext(auto + '\n(change) => { notesChange = change; maybeAutoNotes(); }', {
+    S, attemptFileNotes, filesNeedingNotes, changedT: null, Date: { now: () => 1000 },
+    setTimeout(fn, ms) { scheduled = { fn, ms }; }, clearTimeout() { scheduled = null; },
+    notesRun: () => ({ model: 'claude-haiku-5-5', effort: 'low' }),
+    api: async (path, request) => { requests.push({ path, ...request }); return { started: true }; },
+  });
+  const change = { id: 'test', key: 'current', quietAt: 21000, files: [{ path: 'client.js', added: 1 }] };
+  check(change);
+  assert.equal(scheduled, null);
+  S.app.settings.autoNotes = true;
+  check(change);
+  assert.equal(scheduled.ms, 20000);
+  S.app.settings.autoNotes = false;
+  scheduled.fn();
+  assert.equal(requests.length, 0);
+  S.app.settings.autoNotes = true;
+  check(change);
+  await scheduled.fn();
+  assert.equal(requests[0].path, '/api/w/test/notes');
+  assert.equal(requests[0].body.model, 'claude-haiku-5-5');
+  assert.equal(requests[0].body.effort, 'low');
+  assert.equal(requests[0].body.key, 'current');
+  check(change);
+  assert.equal(scheduled, null);
+});
+
+test('a failed notes event and a daemon restart rearm automatic notes on the current change', () => {
+  const source = fs.readFileSync(new URL('../web/js/main.js', import.meta.url), 'utf8');
+  const live = source.slice(source.indexOf('let wsEs = null;'), source.indexOf('let changedT = null;'));
+  const S = { id: 'test', boot: 'before', review: {} };
+  const events = new Map();
+  let reloads = 0, scheduled = 0;
+  const page = vm.runInNewContext(`let notesChange;\n${live}
+    listenWs();
+    ({ set: (change) => { notesChange = change; }, get: () => notesChange })
+  `, {
+    S, resetNotesAttempt, console,
+    EventSource: class { addEventListener(name, fn) { events.set(name, fn); } },
+    loadWorkspace: () => reloads++, updateFileNotes() {}, maybeAutoNotes: () => scheduled++,
+  });
+  const emit = (name, data) => events.get(name)({ data: JSON.stringify(data) });
+  const change = { key: 'current', attempted: true };
+  page.set(change);
+  emit('notes', { pending: false, error: 'Transient failure', files: {} });
+  assert.equal(change.attempted, false);
+  assert.equal(scheduled, 1);
+  change.attempted = true;
+  emit('hello', { boot: 'after' });
+  assert.equal(page.get(), undefined);
+  assert.equal(reloads, 1);
+});
+
+test('file cards draw current notes above the diff and mark older notes when idle or failed', () => {
+  const source = fs.readFileSync(new URL('../web/js/cards.js', import.meta.url), 'utf8');
+  const cards = source.slice(source.indexOf('const STATUS'), source.indexOf('// A chapter head'))
+    .replace(/^export /gm, '');
+  const core = fs.readFileSync(new URL('../web/js/core.js', import.meta.url), 'utf8')
+    .split('\n').filter((line) => /^export const (esc|tick) =/.test(line)).join('\n')
+    .replace(/^export /gm, '');
+  const S = { app: { settings: { autoNotes: false } }, review: {}, shut: new Set() };
+  const draw = vm.runInNewContext(core + cards + '\ncardHTML', {
+    S, I: {}, threadsAt: () => [], isViewed: () => false, isStale: () => false,
+    isGo: () => false, countedOnly: () => false, icon: () => '', eligibleForNotes, fileNoteKey,
+  });
+  const file = { path: 'src/client.js', status: 'M', added: 2, deleted: 1, blob: 'new', oldBlob: 'old' };
+  S.review.notes = { pending: true, files: {} };
+  assert.match(draw(file), /<p class="file-note"><\/p>/);
+  S.review.notes.files[file.path] = { key: fileNoteKey(file), note: 'Routes `retry()` through the client. Accepts <429>.' };
+  assert.match(draw(file), /<\/button><\/div><p class="file-note">Routes <code>retry\(\)<\/code> through the client\. Accepts &lt;429&gt;\.<\/p>.*class="fb"/);
+  const moved = { ...file, blob: 'newer' };
+  assert.match(draw(moved), /<p class="file-note"><\/p>/);
+  S.review.notes.pending = false;
+  assert.match(draw(moved), /Written for an earlier version\./);
+  S.app.settings.autoNotes = true;
+  S.review.notes.error = 'model failed';
+  assert.match(draw(moved), /Written for an earlier version\./);
+  assert.doesNotMatch(draw(file), /Written for an earlier version\./);
 });

@@ -89,3 +89,56 @@ test('citations move only to a unique nearby excerpt', async () => {
   assert.equal(citationLine('noise\n'.repeat(20) + 'func Target()', 1, 'func Target()'), null);
   assert.equal(citationLine('func Other()', 1, 'func Target()'), null);
 });
+
+test('literal paths keep bracketed routes separate in hunks and blame', async () => {
+  const { git } = await import('../src/util.mjs');
+  w('routes/[id].ts', 'bracket route\n');
+  w('routes/i.ts', 'letter route\n');
+  g('add', 'routes');
+  const range = { old: base, new: WORKTREE };
+  const f = (await changedFiles(repo, range)).find((f) => f.path === 'routes/[id].ts');
+  const hunks = await fileHunks(repo, range, f, { verifyBlobs: true });
+  assert.deepEqual(hunks.flatMap((h) => h.lines.map((l) => l.s)), ['bracket route']);
+  const blame = await git(repo, ['blame', '--line-porcelain', '--', 'routes/[id].ts']);
+  assert.match(blame, /\tbracket route/);
+  assert.doesNotMatch(blame, /letter route/);
+});
+
+test('verified worktree hunks reject newer tracked and untracked bytes under old keys', async () => {
+  const { readAt } = await import('../src/git.mjs');
+  const range = { old: base, new: WORKTREE };
+  w('a.go', 'old tracked edit\n');
+  w('fresh.md', 'old untracked edit\n');
+  const before = await changedFiles(repo, range);
+  const tracked = before.find((f) => f.path === 'a.go');
+  const untracked = before.find((f) => f.path === 'fresh.md');
+  w('a.go', 'new tracked edit\n');
+  w('fresh.md', 'new untracked edit\n');
+  assert.deepEqual(await fileHunks(repo, range, tracked, { verifyBlobs: true }), []);
+  assert.deepEqual(await fileHunks(repo, range, untracked), []);
+  await readAt(repo, WORKTREE, untracked.path, untracked.blob);
+  w('fresh.md', 'old untracked edit\n');
+  assert.equal(await readAt(repo, WORKTREE, untracked.path, untracked.blob), 'old untracked edit\n');
+  assert.equal((await fileHunks(repo, range, untracked))[0].lines[0].s, 'old untracked edit');
+});
+
+test('verified worktree hunks read tracked paths containing newlines', async () => {
+  const file = 'a\nroute.ts';
+  w(file, 'staged\n');
+  g('add', '--', file);
+  w(file, 'unstaged\n');
+  const range = { old: base, new: WORKTREE };
+  const snapshot = (await changedFiles(repo, range)).find((f) => f.path === file);
+  assert.match(snapshot.blob, /^[0-9a-f]{40}$/);
+  assert.deepEqual((await fileHunks(repo, range, snapshot, { verifyBlobs: true }))[0].lines.map((l) => l.s), ['unstaged']);
+});
+
+test('related Go files still work with literal Git pathspecs', async () => {
+  const { related } = await import('../src/git.mjs');
+  w('related.go', 'package a\nfunc ExampleThing() {}\n');
+  w('caller.go', 'package a\nfunc caller() { ExampleThing() }\n');
+  w('caller.txt', 'ExampleThing()\n');
+  g('add', 'related.go', 'caller.go', 'caller.txt');
+  const result = await related(repo, WORKTREE, 'related.go', [{ lines: [{ t: '+', s: 'func ExampleThing() {}' }] }], new Set());
+  assert.deepEqual(result.usedBy.map((f) => f.path), ['caller.go']);
+});

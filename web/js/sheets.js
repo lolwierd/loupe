@@ -8,6 +8,7 @@ import { icon, spark } from './pixel.js';
 import { md } from './md.js';
 import { preview, run } from './actions.js';
 import { hooks } from './hooks.js';
+import { toneScreen } from './dither.js';
 import { modelKind, runBtn, runOf } from './ui.js';
 
 // ------------------------------------------------------------------ the branch, read from git (checkouts only)
@@ -54,6 +55,12 @@ function commitsHTML() {
 
 // ------------------------------------------------------------------ the dialogs
 const EVENTS = [['COMMENT', 'Comment'], ['REQUEST_CHANGES', 'Request changes'], ['APPROVE', 'Approve']];
+// How hard each write is to undo, which is how heavy the tone screen behind its dialog is: a commit stays on this
+// machine and can be amended; the rest go where other people read them; a push that overwrites the remote is
+// destructive, for as long as its latest preview says it will (refresh() sets it again on every preview).
+const WEIGHT = { commit: 'local', review: 'public', push: 'public', openpr: 'public', stacklink: 'public' };
+const overwrites = (c) => c.kind === 'push' && (c.pv?.needsForce || c.pv?.tone === 'danger');
+const weightOf = (c) => (overwrites(c) ? 'destructive' : WEIGHT[c.kind] || 'public');
 const SHEETS = {
   review: {
     title: 'Submit your review', focus: 'textarea',
@@ -151,10 +158,12 @@ export function openSheet(kind, opts = {}) {
     `<div class="shwarn" id="shwarn" hidden></div>` +
     `<footer class="shf"><span class="what" id="shpv"></span><button class="btn ghost lg" data-sh="close">Cancel</button><button class="btn primary lg go" data-sh="go" disabled><span class="gl">${esc(def.idle?.(c) || 'Go')}</span><kbd>⌘↵</kbd></button></footer></div>`);
   const scrim = c.scrim = h('<div class="sheetscrim"></div>');
+  scrim.dataset.weight = weightOf(c);
   scrim.append(el);
   // a click on the dim around it closes it; what you typed is kept for the next time it opens
   scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) closeSheet(); });
   document.body.append(scrim);
+  c.untone = toneScreen(scrim, el);
   hooks.mote?.sync();
   def.bind?.(c, el);
   for (const ta of $$('textarea', el)) fit(ta);
@@ -163,7 +172,7 @@ export function openSheet(kind, opts = {}) {
 }
 export function closeSheet() {
   if (!cur) return;
-  cur.scrim.remove(); cur = null; clearTimeout(rt);
+  cur.untone?.(); cur.scrim.remove(); cur = null; clearTimeout(rt);
   hooks.mote?.sync();
   if (opener?.isConnected) opener.focus();
   opener = null;
@@ -199,11 +208,12 @@ async function refresh() {
     const items = $('#shitems', c.el);
     if (!c.def.form) items.innerHTML = (pv.items || []).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>Nothing else.</li>';
     const warn = $('#shwarn', c.el); warn.hidden = !pv.warnings?.length; warn.innerHTML = (pv.warnings || []).map((x) => `<p>${esc(x)}</p>`).join('');
+    c.scrim.dataset.weight = weightOf(c);
     if (pv.needsForce) goBtn('Overwrite…', 'danger');
     else goBtn(pv.confirm || c.def.idle?.(c) || 'Go', pv.tone);
   } catch (e) {
     if (cur !== c || seq !== c.seq || S.id !== c.id) return;
-    c.pv = null; c.key = null;
+    c.pv = null; c.key = null; c.scrim.dataset.weight = weightOf(c);
     // not ready yet (no message, no title): said once, quietly, where the destination would be; the button keeps
     // its name, so you know what it will do
     $('#sht', c.el).textContent = c.def.title;
