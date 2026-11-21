@@ -301,9 +301,12 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .file.shut .fh { border-bottom: 0; }
 .file.shut .fb, .file.shut .relp { display: none; }
 .file.shut .file-note, .file-note:empty { display: none; }
-/* a file's note: a caption, not a paragraph. The UI's size on a 20 px line in the third ink, on the file's own ground,
-   starting where the code's text starts and kept to a reading measure; the diff below stays the thing to read */
-.file-note { margin: 0; padding: var(--s2) var(--s5) var(--s3) min(var(--code-x), 20%); max-width: calc(min(var(--code-x), 20%) + 88ch); color: var(--ink-3); font: var(--t-ui)/20px var(--f-ui); overflow-wrap: anywhere; }
+/* a file's note: a caption, not a paragraph. The UI's size on a 20 px line in the third ink, read as the header's second
+   line: it starts under the file's name (the header's own columns: its padding, the fold button, a gap, the status
+   letter, a gap), so the name, the note and the hunk's @@ share one edge, with even room above and below and a reading
+   measure; the diff below stays the thing to read */
+.file { --path-x: calc(var(--s2) + var(--h1) + var(--s3) + 14px + var(--s3)); }
+.file-note { margin: 0; padding: var(--s3) var(--s5) var(--s3) var(--path-x); max-width: calc(var(--path-x) + 88ch); color: var(--ink-3); font: var(--t-ui)/20px var(--f-ui); overflow-wrap: anywhere; }
 .file-note code { font: var(--t-mono)/1 var(--f-mono); color: var(--ink-2); background: none; padding: 0; }
 .file-note-stale { color: var(--warn); font-size: var(--t-meta); }
 .file.shut.viewed .fh { height: 28px; position: static; background: none; backdrop-filter: none; }

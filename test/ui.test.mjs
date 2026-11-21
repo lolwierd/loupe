@@ -425,6 +425,10 @@ test('GitHub emoji shortcodes become emoji, beside links and from the full list'
   assert.match(out, /☔/);
   assert.match(out, /📢/);
   assert.match(out, /<a href="https:\/\/x">View report<\/a>/);
+  // inside a link's text too, as GitHub draws it
+  assert.match(github('<p><a href="https://z">:umbrella: View full report</a></p>'), /<a href="https:\/\/z">☔\ufe0f View full report<\/a>/);
+  // but a link never gets a link inside it
+  assert.doesNotMatch(github('<p><a href="https://z">ask @someone</a></p>'), /class="mention"/);
   // inside code it stays as typed; an unknown name stays as typed
   assert.match(github('<p><code>:rocket:</code> :not_an_emoji:</p>'), /<code>:rocket:<\/code> :not_an_emoji:/);
   assert.equal(EMOJI.hash, '#\ufe0f\u20e3');

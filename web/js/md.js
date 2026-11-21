@@ -80,13 +80,13 @@ const ALIASES = {
 };
 const EMOJI = { ...ALIASES, ...GITHUB_EMOJI };
 const ALERTS = { NOTE: 'Note', TIP: 'Tip', IMPORTANT: 'Important', WARNING: 'Warning', CAUTION: 'Caution' };
-// fn on the text between tags, skipping what is inside <code>, <pre> and <a>. Tags are read whole, quoted attribute values
-// included, so a > inside an alt or title is never taken for the end of a tag.
-function textOutsideCode(html, fn) {
+// fn on the text between tags, skipping what is inside the tags named (by default <code>, <pre> and <a>). Tags are read
+// whole, quoted attribute values included, so a > inside an alt or title is never taken for the end of a tag.
+function textOutsideCode(html, fn, skipTags = /^(code|pre|a)$/i) {
   let skip = 0;
   return html.replace(/<(\/?)([a-zA-Z][\w-]*)(?:[^>"']|"[^"]*"|'[^']*')*>|[^<]+/g, (tok, close, tag) => {
     if (tag) {
-      if (/^(code|pre|a)$/i.test(tag) && !/\/>$/.test(tok)) skip = Math.max(0, skip + (close ? -1 : 1));
+      if (skipTags.test(tag) && !/\/>$/.test(tok)) skip = Math.max(0, skip + (close ? -1 : 1));
       return tok;
     }
     return skip ? tok : fn(tok);
@@ -96,8 +96,10 @@ function github(html) {
   html = html.replace(/<blockquote>\s*<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:<br>)?/g, (m, k) => `<blockquote class="alert ${k.toLowerCase()}"><p class="alert-t">${ALERTS[k]}</p><p>`);
   html = html.replace(/<p>\s*<\/p>/g, '');
   const repo = S.github?.repoFull || S.ws?.repoFull || null;
+  // emoji everywhere but code, link text included (GitHub draws them there too); @people and #123 outside links as well,
+  // since a link cannot hold a link
+  html = textOutsideCode(html, (t) => t.replace(/:([a-z0-9_+-]+):/g, (m, k) => EMOJI[k] || m), /^(code|pre)$/i);
   return textOutsideCode(`<div>${html}</div>`, (t) => t
-    .replace(/:([a-z0-9_+-]+):/g, (m, k) => EMOJI[k] || m)
     .replace(/(^|[\s(])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?![\w-])/g, (m, pre, u) => `${pre}<a href="https://github.com/${u}" target="_blank" rel="noopener noreferrer" class="mention">@${u}</a>`)
     .replace(/(^|[\s(])#(\d{1,6})\b/g, (m, pre, n) => (repo ? `${pre}<a href="https://github.com/${repo}/pull/${n}" target="_blank" rel="noopener noreferrer" class="issue">#${n}</a>` : m)))
     .replace(/^<div>|<\/div>$/g, '');
