@@ -104,19 +104,23 @@ async function resolve(ws) {
       return finish({ kind, trunk, items, stackNumber: s.number, url: `https://github.com/${owner}/${repo}/pull/${number}` });
     }
     // 2. The base chain of PRs: down to the trunk, and the PRs built on this one.
-    const list = await GH.ghJson(['pr', 'list', '--repo', `${owner}/${repo}`, '--state', 'open', '--limit', '200', '--json', 'number,title,headRefName,baseRefName,isDraft,state']).catch(() => []);
-    const byHead = new Map(list.map((p) => [p.headRefName, p]));
-    const down = [];
+    const list = await GH.ghJson(['pr', 'list', '--repo', `${owner}/${repo}`, '--state', 'open', '--limit', '200', '--json', 'number,title,headRefName,baseRefName,isDraft,state,isCrossRepository']).catch(() => []);
+    // only a branch of this repository can be another PR's base: a fork's PR whose own branch is called main is not
+    const byHead = new Map(list.filter((p) => !p.isCrossRepository).map((p) => [p.headRefName, p]));
+    const down = [], seen = new Set([g.pr.number]);
     let base = g.pr.baseRefName, guard = 0;
-    while (byHead.has(base) && guard++ < 10) { const p = byHead.get(base); down.unshift(prItem(p)); base = p.baseRefName; }
+    while (byHead.has(base) && !seen.has(byHead.get(base).number) && guard++ < 10) { const p = byHead.get(base); seen.add(p.number); down.unshift(prItem(p)); base = p.baseRefName; }
     trunk = base;
     const up = [];
-    let tip = g.pr.headRefName; guard = 0;
+    // a PR from a fork has its branch in the fork: nothing here is built on it
+    let tip = g.pr.crossRepo ? null : g.pr.headRefName; guard = 0;
     for (;;) {
-      const kids = list.filter((p) => p.baseRefName === tip);
+      const kids = tip ? list.filter((p) => p.baseRefName === tip && !seen.has(p.number)) : [];
       if (!kids.length || guard++ > 10) break;
+      for (const k of kids) seen.add(k.number);
       up.push(...kids.map((k, i) => ({ ...prItem(k), sibling: i > 0 })));
-      tip = kids[0].headRefName; // follow the first; siblings are drawn beside it
+      // follow the first (siblings are drawn beside it), unless it comes from a fork: nothing here is built on its branch
+      tip = kids[0].isCrossRepository ? null : kids[0].headRefName;
     }
     if (down.length || up.length) {
       kind = 'chain'; items = [...down, { ...prItem(g.pr), current: true }, ...up];
@@ -146,12 +150,12 @@ async function resolve(ws) {
       // branch was never rebased onto), so once the parent has an open PR, the stack under it is its chain of PR bases.
       const near = chain.at(-1);
       if (near && g?.owner) {
-        const list = await GH.ghJson(['pr', 'list', '--repo', `${g.owner}/${g.repo}`, '--state', 'open', '--limit', '200', '--json', 'number,title,headRefName,baseRefName,isDraft,state']).catch(() => []);
-        const byHead = new Map(list.map((p) => [p.headRefName, p]));
+        const list = await GH.ghJson(['pr', 'list', '--repo', `${g.owner}/${g.repo}`, '--state', 'open', '--limit', '200', '--json', 'number,title,headRefName,baseRefName,isDraft,state,isCrossRepository']).catch(() => []);
+        const byHead = new Map(list.filter((p) => !p.isCrossRepository).map((p) => [p.headRefName, p]));
         if (byHead.has(near.branch)) {
-          const down = [];
+          const down = [], seen = new Set();
           let at = near.branch, guard2 = 0;
-          while (byHead.has(at) && guard2++ < 10) { const p = byHead.get(at); down.unshift(prItem(p)); at = p.baseRefName; }
+          while (byHead.has(at) && !seen.has(byHead.get(at).number) && guard2++ < 10) { const p = byHead.get(at); seen.add(p.number); down.unshift(prItem(p)); at = p.baseRefName; }
           chain.splice(0, chain.length, ...down);
           trunk = at;
         }

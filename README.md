@@ -22,7 +22,8 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
 - **A guide.** The change as a few sections in reading order, each with what to check. The file list switches between
   tree and guide order. Regenerate the guide, and the map, with any model.
 - **Review on GitHub.** Press `c` on lines to add a comment to your pending review, then Comment, Approve or Request
-  changes. A review started on GitHub shows up here, and the other way round.
+  changes. A review started on GitHub shows up here, and the other way round. The Overview gives a pull request's state,
+  review, checks and branches as one list of facts, and its description as an outline you open part by part.
 - **Ship your own work.** Commit the files you pick, push, and open the PR, with the message drafted in the
   repository's style.
 - **From Claude Code.** The mod puts each repository a session edits on loupe's home; `/loupe` prints the links, each

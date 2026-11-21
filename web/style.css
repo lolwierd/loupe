@@ -484,14 +484,75 @@ a.loc:focus-visible { outline: 2px solid var(--pencil); }
 details.sect > summary.sh { list-style: none; cursor: pointer; }
 details.sect > summary.sh::-webkit-details-marker { display: none; }
 /* the way to open a section sits at the right end, so every section's label starts on the same left edge, folded or not */
-details.sect > summary.sh::after { content: ""; margin-left: auto; width: 8px; height: 8px; background: var(--ink-3); clip-path: polygon(0 20%, 100% 20%, 50% 100%); transition: transform 120ms var(--ease); }
-details.sect[open] > summary.sh::after { transform: rotate(180deg); }
+/* drawn as the file tree's chevron, the app's one fold: pointing right when shut, down when open */
+details.sect > summary.sh::after { content: ""; margin-left: auto; width: 14px; height: 14px; background: var(--ink-3); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat; transform: rotate(-90deg); transition: transform 120ms var(--ease); }
+details.sect[open] > summary.sh::after { transform: none; }
 .pane > .sect:first-child { border-top: 0; }
 .card { display: grid; gap: var(--s3); min-width: 0; }
 .prhead { display: grid; gap: var(--s2); padding: var(--s4) 0; }
 .prhead h1 { margin: 0; font-size: var(--t-title); line-height: 1.35; font-weight: 600; letter-spacing: -0.005em; overflow-wrap: anywhere; }
 .prhead .row { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: center; font-size: var(--t-ui); color: var(--ink-2); min-width: 0; }
 .prhead .row:empty { display: none; }
+/* a pull request's facts under its title (panel.js factsHTML): a key column, the value, and the figure that drove it at
+   the right. Colour only where a state asks something of someone; the checks figures are the one control */
+.prhead .facts { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; column-gap: var(--s3); align-items: baseline; }
+.prhead .facts .k { font-size: var(--t-meta); line-height: 20px; color: var(--ink-3); }
+.prhead .facts .v { font-size: var(--t-ui); line-height: 20px; color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
+.prhead .facts .v.sub { grid-column: 2 / 4; color: var(--ink-3); line-height: 18px; margin-top: -1px; }
+.prhead .facts .t { font: var(--t-meta)/20px var(--f-mono); color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* .fv, not .st: .st is the file list's status letter */
+.prhead .facts .fv { font-weight: 500; color: var(--ink); }
+.prhead .facts .fv.ok, .prhead .facts .good { color: var(--ok); }
+.prhead .facts .fv.warn { color: var(--warn); }
+.prhead .facts .fv.danger, .prhead .facts .bad { color: var(--danger); }
+.prhead .facts .q, .prhead .facts .dot { color: var(--ink-3); }
+.prhead .facts .dot { padding: 0 var(--s2); }
+.prhead .facts .mono { font: var(--t-mono)/20px var(--f-mono); }
+.prhead .facts .pair { white-space: nowrap; }
+.prhead .facts .pair .ar { padding: 0 var(--s2); color: var(--ink-3); font-family: var(--f-ui); }
+.prhead .facts .figs { all: unset; cursor: pointer; border-radius: var(--r0); }
+.prhead .facts .figs:hover { text-decoration: underline; text-decoration-color: var(--ink-3); }
+.prhead .facts .figs:focus-visible { box-shadow: 0 0 0 2px var(--pencil); }
+.prhead:has(.facts) h1 { margin-bottom: var(--s1); }
+
+/* the description at the panel's size (panel.js outlineDesc): 13 on a 20 px line like the panel around it, code in the
+   text's own colour with no box, list markers hung in a 20 px column so every item's text shares one edge, headings at
+   the text's size. Then one row per part, drawn like a folder in the file tree */
+.md.dmd { font-size: var(--t-ui); line-height: 20px; color: var(--ink); }
+.md.dmd :is(p, ul, ol, blockquote, pre, table) { margin: 0 0 var(--s3); }
+.md.dmd .lead > :last-child, .md.dmd .part-body > :last-child, .md.dmd > :last-child { margin-bottom: 0; }
+.md.dmd code { font: var(--t-mono)/1 var(--f-mono); color: inherit; background: none; padding: 0; border-radius: 0; }
+.md.dmd pre code { font: inherit; }
+.md.dmd :is(h1, h2, h3, h4, h5, h6) { margin: var(--s4) 0 var(--s2); font-size: var(--t-ui); line-height: 20px; font-weight: 600; }
+.md.dmd :is(ul, ol) { list-style: none; padding: 0; display: grid; gap: var(--s2); }
+.md.dmd li { position: relative; margin: 0; padding-left: 20px; }
+.md.dmd li :is(ul, ol) { margin: var(--s2) 0 0; }
+.md.dmd ol > li::before { content: counter(list-item); position: absolute; left: 0; font: var(--t-mono)/20px var(--f-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.md.dmd ul > li::before { content: "–"; position: absolute; left: 0; color: var(--ink-3); }
+.md.dmd li:has(> input[type="checkbox"]) { margin-left: 0; }
+.md.dmd li:has(> input[type="checkbox"])::before { content: none; }
+.md.dmd li > input[type="checkbox"] { position: absolute; left: 0; top: 4px; width: 12px; height: 12px; margin: 0; appearance: none; border: 1px solid var(--rule-strong); border-radius: var(--r0); background: var(--bg); }
+.md.dmd li > input[type="checkbox"]:checked { border-color: var(--ink-3); background: var(--ink-3) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='m3 6 2 2 4-4' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 10px no-repeat; }
+.md.dmd li:has(> input[type="checkbox"]:checked) { color: var(--ink-3); }
+.md.dmd .parts { display: grid; margin-top: var(--s2); }
+.md.dmd .lead + .parts { margin-top: var(--s3); }
+.md.dmd .fold { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; width: calc(100% + 8px); height: var(--h3); margin: 0 -4px; padding: 0 4px; border-radius: var(--r1); cursor: pointer; color: var(--ink); }
+.md.dmd .fold:hover { background: var(--hover); }
+.md.dmd .fold:focus-visible { box-shadow: inset 0 0 0 2px var(--pencil); }
+.md.dmd .fold .chev { width: 14px; height: 14px; color: var(--ink-3); transition: transform 120ms var(--ease); }
+.md.dmd .fold.shut .chev { transform: rotate(-90deg); }
+.md.dmd .fold .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.md.dmd .fold .c { font: var(--t-meta)/1 var(--f-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.md.dmd .fold .c b { color: var(--ink-2); font-weight: 400; }
+.md.dmd .part-body { padding: var(--s2) 0 var(--s3) 20px; }
+.md.dmd details > summary { cursor: pointer; color: var(--ink-2); }
+.md.dmd .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--clamp); overflow: hidden; }
+.md.dmd .cutrow { margin-top: 0; } /* the block above keeps its own 8 px */
+.md.dmd .cut { all: unset; cursor: pointer; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.md.dmd .cut:hover { color: var(--ink); text-decoration: underline; }
+.md.dmd .cut:focus-visible { box-shadow: 0 0 0 2px var(--pencil); border-radius: var(--r0); }
+.md.dmd .cut.inlist { margin-left: 20px; }
+@media (prefers-reduced-motion: reduce) { .md.dmd .fold .chev { transition: none; } }
 .tldr .md { font-size: var(--t-read); }
 .risk { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: baseline; font-size: var(--t-ui); color: var(--ink-2); min-width: 0; }
 .risk .chip { min-width: 0; max-width: 100%; }

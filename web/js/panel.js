@@ -4,9 +4,9 @@
 //   Chat:     talk to Claude about it (fresh, a fork of a Claude Code session, or the live session)
 //   Review:   what have I marked? (your questions, and GitHub's threads). What you do about them, submitting
 //             the review or handing the fixes back, is the top bar's next act, not a form here.
-import { S, $, $$, esc, api, wsApi, I, pref, toast, convOf, lastRun, rememberRun, ago, plural, fileOf, modelName, briefRun } from './core.js';
+import { S, $, $$, esc, h, api, wsApi, I, pref, toast, convOf, lastRun, rememberRun, ago, plural, fileOf, modelName, briefRun } from './core.js';
 import { md } from './md.js';
-import { msgHTML, runBtn, briefRunBtn, runOf, grow, menu, shimmerSync, modelKind } from './ui.js';
+import { msgHTML, runBtn, briefRunBtn, runOf, grow, menu, shimmerSync, modelKind, verdict } from './ui.js';
 import { isViewed, lines, setResolved, deleteMark, cardEl, renderBody, oneLine } from './cards.js';
 import { hooks } from './hooks.js';
 import { spark, avatar } from './pixel.js';
@@ -54,24 +54,59 @@ function checksPill(p) {
 function decisionPill(p) {
   return { APPROVED: pill('ok', 'approved'), CHANGES_REQUESTED: pill('danger', 'changes requested'), REVIEW_REQUIRED: pill('', 'review required') }[p.reviewDecision] || '';
 }
-function mergeLine(p) {
-  if (p.state !== 'OPEN') return '';
-  const why = { BLOCKED: 'blocked (reviews or checks)', BEHIND: 'behind its base', DIRTY: 'has conflicts', UNSTABLE: 'checks failing', CLEAN: 'ready to merge', HAS_HOOKS: 'ready to merge', DRAFT: 'still a draft', UNKNOWN: 'being worked out' }[p.mergeStateStatus] || '';
-  return why ? `<span class="faint">Merge: ${why}</span><a class="link" href="${esc(p.url)}" target="_blank" rel="noopener">merge on GitHub ${I.ext}</a>` : '';
-}
-function reviewersHTML(p) {
-  if (!p.reviewers?.length) return '';
-  const mark = { approved: 'ok', 'changes requested': 'danger', commented: '', dismissed: '', requested: '' };
-  return `<div class="row">${p.reviewers.map((r) => `<span class="pill ${mark[r.state] ?? ''}" title="${esc(r.state)}">${esc(r.login)}${r.state === 'requested' ? ' · requested' : r.state === 'approved' ? ' ✓' : r.state === 'changes requested' ? ' ✕' : ''}</span>`).join('')}</div>`;
+// The pull request as a list of facts under its title: each fact once, always in the same place, with the number that
+// drove it at the right. GitHub's link, the author's face and the branch chips are gone: the top bar has the link, and
+// nothing here is a control except the checks figures, which open the CHECKS list.
+const who = (p, state) => (p.reviewers || []).filter((r) => r.state === state).map((r) => r.login);
+const names = (a) => esc(a.length <= 2 ? a.join(' and ') : `${a[0]}, ${a[1]} and ${a.length - 2} more`);
+function factsHTML(p, loading) {
+  const rows = [];
+  const row = (k, v, t = '', sub = '') => rows.push(`<span class="k">${k}</span><span class="v">${v}</span><span class="t">${t}</span>${sub ? `<span class="v sub">${sub}</span>` : ''}`);
+  const wait = '<span class="q">…</span>';
+  const v = loading ? null : verdict(p), c = p.checkSummary || { pass: 0, fail: 0, run: 0, skip: 0 };
+  // state: the verdict, then what qualifies it; the date it got there at the right
+  let state = wait, when = '';
+  if (v) {
+    state = `<span class="fv ${v.tone}">${esc(v.w)}</span>` + (p.state === 'MERGED' ? ` <span class="q">into ${esc(p.baseRefName)}</span>` : p.state === 'CLOSED' ? ' <span class="q">not merged</span>' : '') +
+      (v.draft ? '<span class="dot">·</span><span class="fv">draft</span>' : '') + (v.why ? ` <span class="q">${esc(v.why)}</span>` : '');
+    const at = p.state === 'MERGED' ? ['merged', p.mergedAt] : p.state === 'CLOSED' ? ['closed', p.closedAt] : ['opened', p.createdAt];
+    when = at[1] ? `${at[0]} ${esc(ago(Date.parse(at[1])))}` : '';
+  }
+  row('state', state, when);
+  // review: GitHub's decision, then who made it or who is asked
+  let review = wait;
+  if (v) {
+    const ok = who(p, 'approved'), asked = who(p, 'changes requested'), req = who(p, 'requested');
+    if (p.reviewDecision === 'CHANGES_REQUESTED' || (!p.reviewDecision && asked.length)) review = `<span class="fv warn">changes asked</span> ${names(asked)}`;
+    else if (p.reviewDecision === 'APPROVED' || (!p.reviewDecision && ok.length)) review = `<span class="fv ok">approved</span> ${names(ok)}`;
+    else if (p.reviewDecision === 'REVIEW_REQUIRED' && p.state !== 'OPEN') review = '<span class="q">not approved</span>';
+    else if (p.reviewDecision === 'REVIEW_REQUIRED') review = req.length ? `needs approval <span class="q">· asked</span> ${names(req)}` : 'needs approval <span class="q">· nobody asked</span>';
+    else review = req.length ? `<span class="q">asked</span> ${names(req)}` : '<span class="q">not required</span>';
+  }
+  row('review', review);
+  // checks: every count that is not zero, the total at the right, the failing ones named underneath
+  const total = c.pass + c.fail + c.run + c.skip;
+  let checks = wait, failing = '';
+  if (v && !total) checks = '<span class="q">none</span>';
+  else if (v) {
+    const figs = [c.fail && `<span class="bad">${c.fail} failing</span>`, c.run && `<span class="fv">${c.run} running</span>`, `<span class="good">${c.pass} passed</span>`, c.skip && `<span class="q">${c.skip} skipped</span>`].filter(Boolean);
+    checks = `<button class="figs" data-act="gochecks" title="The ${total} checks">${figs.join('<span class="dot">·</span>')}</button>`;
+    const bad = (p.checks || []).filter((k) => k.kind === 'fail').map((k) => k.name);
+    if (bad.length) failing = esc(bad.length <= 3 ? bad.join(', ') : `${bad.slice(0, 3).join(', ')} and ${bad.length - 3} more`);
+  }
+  row('checks', checks, v && total ? String(total) : '', failing);
+  row('branch', `<span class="pair mono" title="${esc(p.headRefName)} into ${esc(p.baseRefName)}">${esc(p.headRefName)}<span class="ar">→</span>${esc(p.baseRefName)}</span>`);
+  row('author', `${esc(p.author || '')}${p.viewerIsAuthor ? ' <span class="q">· you</span>' : ''}`, `#${p.number}`);
+  const assigned = (p.assignees || []).filter((a) => a !== p.author);
+  if (assigned.length) row('assigned', `${names(assigned)}${p.viewer && assigned.includes(p.viewer) ? ' <span class="q">· you</span>' : ''}`);
+  if (p.labels?.length) row('labels', esc(p.labels.join(' · ')));
+  return `<div class="facts">${rows.join('')}</div>`;
 }
 function headHTML() {
   const m = S.ws, p = gh();
   if (m.kind === 'pr') {
     const t = p || m.pr;
-    return `<div class="prhead"><div class="row">${p ? prState(p) : ''}${p ? checksPill(p) : ''}${p ? decisionPill(p) : ''}<span class="sp"></span><a href="${esc(t.url)}" target="_blank" rel="noopener" title="Open on GitHub" class="link">${I.github} GitHub</a></div><h1>${esc(t.title)}</h1>` +
-      `<div class="row"><span class="by">#${t.number} by ${avatar(t.author)}<b>${esc(t.author)}</b></span><span class="brs"><span class="chip" title="${esc(t.headRefName)}">${esc(t.headRefName)}</span><span class="faint">→</span><span class="chip" title="${esc(t.baseRefName)}">${esc(t.baseRefName)}</span></span></div>` +
-      (p ? reviewersHTML(p) : '') + (p ? `<div class="row">${mergeLine(p)}</div>` : '') +
-      (t.labels?.length ? `<div class="row">${t.labels.map((l) => `<span class="pill">${esc(l)}</span>`).join('')}</div>` : '') + `</div>`;
+    return `<div class="prhead"><h1>${esc(t.title)}</h1>${factsHTML(t, !p)}</div>`;
   }
   const behind = p && p.headRefOid !== m.headFull ? `<div class="warnline">GitHub has ${p.headRefOid.slice(0, 7)}, this checkout is at ${m.head.slice(0, 7)}</div>` : '';
   const prCard = p ? `<div class="card prcard"><div class="row"><span class="by">${I.pr}<b>#${p.number}</b>${avatar(p.author)}<span>${p.viewerIsAuthor ? 'you' : esc(p.author || '')}</span></span><span class="sp"></span><button class="btn sm" data-act="openprws" title="Open the pull request as GitHub has it">Open the PR</button></div>` +
@@ -101,11 +136,96 @@ function tldrHTML() {
     `<div class="row rebrief"><span class="sp"></span>${briefRunBtn()}<button class="link" data-act="brief" title="Write the guide and the map again with this model">Regenerate</button></div>` +
     (b.error ? `<div class="err">${esc(b.error)}</div>` : '') + `</div>`;
 }
+// The description at the panel's own size, as an outline. The lead (everything before the first heading, bold-only
+// paragraph or <details>) shows whole blocks within 8 lines and says what it hides; each part after it is one row with
+// what it holds (its items, or how many of its tasks are done) and opens in place. A body without parts is cut at 14
+// lines. Which parts are open, and whether the lead is, last for the page's life, per workspace.
+const LEAD_LINES = 8, BODY_LINES = 14;
+const descOpen = new Map();
+const descState = () => { let s = descOpen.get(S.id); if (!s) descOpen.set(S.id, (s = { lead: false, parts: new Set() })); return s; };
 function descHTML() {
   const body = (gh() || S.ws.pr)?.body?.trim();
   if (!body) return '';
-  const open = pref.get('descOpen', body.length < 1500);
-  return `<details class="sect" ${open ? 'open' : ''} data-pref="descOpen"><summary class="sh">DESCRIPTION</summary><div class="card md">${md(body)}</div></details>`;
+  return `<div class="sect"><div class="sh">DESCRIPTION</div><div class="md dmd" id="desc">${md(body)}</div></div>`;
+}
+const labelOf = (el) => (el ? el.textContent.trim() || el.querySelector('img[alt]')?.alt.trim() || '' : '');
+const isHeading = (n) => /^H[1-6]$/.test(n.tagName) ||
+  (n.tagName === 'P' && n.children.length === 1 && n.firstElementChild.matches('strong, b') && n.textContent.trim() === n.firstElementChild.textContent.trim());
+function holds(nodes) {
+  const boxes = nodes.flatMap((n) => (n.nodeType === 1 ? [...n.querySelectorAll('input[type="checkbox"]'), ...(n.matches('input[type="checkbox"]') ? [n] : [])] : []));
+  if (boxes.length) return `<b>${boxes.filter((x) => x.checked).length}</b> of ${boxes.length} done`;
+  const items = nodes.reduce((k, n) => k + (n.nodeType === 1 && n.matches('ul, ol') ? n.children.length : 0), 0);
+  return items ? plural(items, 'item') : '';
+}
+function outlineDesc() {
+  const box = $('#desc');
+  if (!box) return;
+  const st = descState(), lead = [], parts = [];
+  for (const n of [...box.childNodes]) {
+    if (n.nodeType !== 1 && !n.textContent.trim()) continue;
+    if (n.nodeType === 1 && n.tagName === 'DETAILS') {
+      const sum = n.querySelector(':scope > summary');
+      parts.push({ name: labelOf(sum) || 'Details', nodes: [...n.childNodes].filter((x) => x !== sum) });
+    } else if (n.nodeType === 1 && isHeading(n)) parts.push({ name: labelOf(n) || 'Section', nodes: [] });
+    else if (parts.length) parts.at(-1).nodes.push(n);
+    else lead.push(n);
+  }
+  // a heading with nothing under it is not a part
+  for (let i = parts.length - 1; i >= 0; i--) if (!parts[i].nodes.some((x) => x.nodeType === 1 || x.textContent.trim())) parts.splice(i, 1);
+  box.textContent = '';
+  const leadEl = h('<div class="lead"></div>');
+  leadEl.append(...lead);
+  if (lead.length) box.append(leadEl);
+  if (parts.length) {
+    const list = h('<div class="parts"></div>');
+    for (const [i, part] of parts.entries()) {
+      const key = `${i}:${part.name}`, open = st.parts.has(key);
+      const row = h(`<button class="fold${open ? '' : ' shut'}" data-act="descpart" aria-expanded="${open}">${I.chev}<span class="nm">${esc(part.name)}</span><span class="c">${holds(part.nodes)}</span></button>`);
+      row.dataset.name = key;
+      const body = h('<div class="part-body"></div>');
+      body.append(...part.nodes);
+      body.hidden = !open;
+      list.append(row, body);
+    }
+    box.append(list);
+  }
+  if (lead.length) cutLead(leadEl, parts.length ? LEAD_LINES : BODY_LINES, st.lead);
+}
+// lines as drawn: the distinct line boxes of the text in an element
+function linesOf(el) {
+  const tops = [], w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), r = document.createRange();
+  while (w.nextNode()) {
+    if (!w.currentNode.textContent.trim()) continue;
+    r.selectNodeContents(w.currentNode);
+    for (const x of r.getClientRects()) if (x.width) tops.push(x.top + x.height / 2);
+  }
+  tops.sort((a, b) => a - b);
+  let n = 0, last = -1e9;
+  for (const y of tops) { if (y - last > 10) n++; last = y; }
+  return n;
+}
+// whole blocks (or whole list items) up to max lines, then a link that says what it hides; opened, a link to fold it
+function cutLead(el, max, open) {
+  const full = linesOf(el);
+  if (full <= max + 2) return; // a cut that hides a line or two only costs a click
+  if (open) { el.append(h('<div class="cutrow"><button class="cut" data-act="desccut">Show less</button></div>')); return; }
+  const units = [];
+  for (const b of el.children) { if (b.matches('ol, ul')) units.push(...b.children); else units.push(b); }
+  let used = 0, at = -1;
+  for (let i = 0; i < units.length; i++) { const n = linesOf(units[i]) || 1; if (used + n > max && i > 0) { at = i; break; } used += n; }
+  if (at < 0) {
+    // one block is longer than the cut by itself: it is clamped to the cut, and the link says how much is under it
+    const one = units[0];
+    if (!one || units.length > 1) return;
+    one.classList.add('clamp'); one.style.setProperty('--clamp', max);
+    el.append(h(`<div class="cutrow"><button class="cut" data-act="desccut">${esc(plural(full - max, 'more line', 'more lines'))}</button></div>`));
+    return;
+  }
+  const hidden = units.slice(at), list = hidden[0].parentElement;
+  for (const x of hidden) x.hidden = true;
+  const items = hidden.every((x) => x.matches('li') && x.parentElement === list);
+  const label = items ? plural(hidden.length, 'more item', 'more items') : plural(full - linesOf(el), 'more line', 'more lines');
+  el.append(h(`<div class="cutrow"><button class="cut${items ? ' inlist' : ''}" data-act="desccut">${esc(label)}</button></div>`));
 }
 function checksHTML() {
   const p = gh();
@@ -126,8 +246,20 @@ function conversationHTML() {
   return `<div class="sect"><div class="sh">CONVERSATION<span class="n">${p.timeline.length}</span><span class="sp"></span><button class="icon sm" data-act="ghrefresh" title="Read GitHub again" aria-label="Read GitHub again">${I.refresh}</button></div>${items || '<div class="faint">No comments yet.</div>'}` +
     (canComment ? `<div class="composer" id="commentbox"><textarea rows="2" placeholder="Comment on #${p.number}…" aria-label="Comment on the pull request">${esc(S.commentDraft || '')}</textarea><div class="row"><span class="hint">posted on GitHub as ${esc(p.viewer || 'you')}</span><span class="sp"></span><button class="btn sm primary" data-act="ghcomment">Comment <kbd>⌘↵</kbd></button></div></div>` : '') + `</div>`;
 }
+// The cut is measured at the width the description was drawn at; when the panel opens or is dragged to another width,
+// the Overview is drawn again (once the width settles) so the cut fits what you see.
+let descMeasured = 0, descT = 0;
+const descRO = new ResizeObserver(([e]) => {
+  const w = Math.round(e.contentRect.width);
+  clearTimeout(descT);
+  if (!w || w === descMeasured || S.tab === 'chat' || S.tab === 'review' || !$('#desc')) return;
+  descT = setTimeout(renderPanel, 120);
+});
 function renderOverview(body) {
+  descRO.observe(body);
   body.innerHTML = `<div class="pane">${headHTML()}${stackHTML()}<div class="sect"><div class="sh">TLDR</div>${tldrHTML()}</div>${descHTML()}${checksHTML()}${conversationHTML()}</div>`;
+  outlineDesc();
+  descMeasured = Math.round(body.getBoundingClientRect().width);
 }
 // The stack this change is part of, bottom (nearest the trunk) to top: each a row that opens it, this one marked.
 function stackHTML() {
@@ -417,6 +549,14 @@ $('#root').addEventListener('click', async (e) => {
   if (act === 'nshow') { pref.set('marksShow', b.dataset.v); return renderPanel(); }
   if (act === 'gothread') return hooks.goThread?.(b.dataset.t);
   if (act === 'gochecks') return showChecks();
+  if (act === 'descpart') {
+    const st = descState(), name = b.dataset.name, open = !st.parts.has(name);
+    if (open) st.parts.add(name); else st.parts.delete(name);
+    b.classList.toggle('shut', !open); b.setAttribute('aria-expanded', String(open));
+    if (b.nextElementSibling) b.nextElementSibling.hidden = !open;
+    return;
+  }
+  if (act === 'desccut') { descState().lead = !descState().lead; return renderPanel(); }
   if (act === 'ghrefresh') { b.disabled = true; S.github = await api(`/api/w/${S.id}/github?fresh=1`).catch((err) => { toast(err.message); return S.github; }); hooks.githubChanged?.(); return; }
   if (act === 'openprws') { const p = gh(); if (!p) return; try { const r = await api('/api/workspaces', { method: 'POST', body: { target: p.url } }); location.href = r.url; } catch (err) { toast(err.message); } return; }
   if (act === 'ghcomment') {

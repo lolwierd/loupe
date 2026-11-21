@@ -132,3 +132,31 @@ export function msgHTML(m) {
 }
 
 document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-act="run"]'); if (b) { e.preventDefault(); e.stopPropagation(); pickRun(b); } }, true);
+
+// ------------------------------------------------------------------ a pull request's verdict
+// One word for where a pull request stands: the first thing that holds it back, in the home list's words. It is
+// coloured only when it asks something of someone (green ready, amber changes asked or behind, red conflicts or failing
+// checks); open, draft, merged and closed stay ink. Green only when GitHub says CLEAN or HAS_HOOKS: anything it has not
+// worked out is said as not known, never as ready. A draft that is held back by something else keeps the word draft.
+export function verdict(p) {
+  const c = p.checkSummary || { pass: 0, fail: 0, run: 0, skip: 0 };
+  const v = (() => {
+    if (p.state === 'MERGED') return { w: 'Merged', tone: '' };
+    if (p.state === 'CLOSED') return { w: 'Closed', tone: '' };
+    if (p.mergeable === 'CONFLICTING' || p.mergeStateStatus === 'DIRTY') return { w: 'Conflicts', tone: 'danger' };
+    if (c.fail) return { w: 'Checks failing', tone: 'danger' };
+    if (p.reviewDecision === 'CHANGES_REQUESTED') return { w: 'Changes asked', tone: 'warn' };
+    if (p.isDraft) return { w: 'Draft', tone: '' };
+    if (c.run) return { w: 'Checks running', tone: '' };
+    if (p.reviewDecision === 'REVIEW_REQUIRED') return { w: 'In review', tone: '' };
+    if (p.mergeStateStatus === 'CLEAN' || p.mergeStateStatus === 'HAS_HOOKS') return { w: 'Ready to merge', tone: 'ok', ready: true };
+    if (p.mergeStateStatus === 'BEHIND') return { w: `Behind ${p.baseRefName}`, tone: 'warn' };
+    if (p.mergeStateStatus === 'BLOCKED') return { w: 'Blocked', tone: '', why: `by a rule on ${p.baseRefName}` };
+    if (p.mergeStateStatus === 'UNSTABLE') return { w: 'Mergeable', tone: '', why: 'optional checks not green' };
+    return { w: p.reviewDecision === 'APPROVED' ? 'Approved' : 'Open', tone: '', why: 'mergeability unknown' };
+  })();
+  v.draft = p.state === 'OPEN' && !!p.isDraft && v.w !== 'Draft';
+  return v;
+}
+// Whether GitHub would merge it now: an optional check failing or still running (UNSTABLE) does not stop it.
+export const canMerge = (p) => p?.state === 'OPEN' && !p.isDraft && p.mergeable !== 'CONFLICTING' && ['CLEAN', 'HAS_HOOKS', 'UNSTABLE'].includes(p.mergeStateStatus);
