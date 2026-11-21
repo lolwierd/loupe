@@ -7,8 +7,10 @@ import { statusGlyph } from './cards.js';
 import { icon, spark } from './pixel.js';
 import { md } from './md.js';
 import { preview, run } from './actions.js';
+import { armRoll, rollNext } from './acts.js';
+import { flipCommitId } from './receipt.js';
 import { hooks } from './hooks.js';
-import { toneScreen } from './dither.js';
+import './dither.js'; // every dialog's dim is its tone screen
 import { modelKind, runBtn, runOf } from './ui.js';
 
 // ------------------------------------------------------------------ the branch, read from git (checkouts only)
@@ -81,7 +83,7 @@ const SHEETS = {
       });
     },
     payload: (c) => ({ event: c.opts.event, body: S.reviewDraft || '' }),
-    after(r, c, payload) { S.reviewDraft = ''; if (payload.event === 'APPROVE') hooks.stamp?.(); },
+    after(r, c, payload) { S.reviewDraft = ''; if (payload.event === 'APPROVE') hooks.stamp?.({ head: r.head, at: Date.now() }); },
   },
   commit: {
     title: 'Commit', focus: '[data-m="subj"]',
@@ -163,7 +165,6 @@ export function openSheet(kind, opts = {}) {
   // a click on the dim around it closes it; what you typed is kept for the next time it opens
   scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) closeSheet(); });
   document.body.append(scrim);
-  c.untone = toneScreen(scrim, el);
   hooks.mote?.sync();
   def.bind?.(c, el);
   for (const ta of $$('textarea', el)) fit(ta);
@@ -172,7 +173,7 @@ export function openSheet(kind, opts = {}) {
 }
 export function closeSheet() {
   if (!cur) return;
-  cur.untone?.(); cur.scrim.remove(); cur = null; clearTimeout(rt);
+  cur.scrim.remove(); cur = null; clearTimeout(rt);
   hooks.mote?.sync();
   if (opener?.isConnected) opener.focus();
   opener = null;
@@ -232,17 +233,23 @@ async function go() {
   gb.disabled = true; gb.classList.add('sending');
   gb.querySelector('.gl').innerHTML = `<span class="launch">${icon('arrow', '--on-act')}</span>Sending…`;
   c.sending = true;
+  const parent = S.ship?.head || ''; // a commit's toast turns its new id over from this one
+  const arm = armRoll(); // and the next step, as it is now, will turn over to the one after it
   try {
     const r = await run(c.kind, payload, c.pv.guard);
     toast(r.message);
+    if (c.kind === 'commit') flipCommitId(parent);
     if (S.id !== c.id) return;
     if (cur === c) closeSheet();
+    rollNext(arm); // after the dialog has given focus back to what opened it
     if (!cur) await c.def.after?.(r, c, payload);
     if (S.id === c.id) hooks.afterAct?.(c.kind, r);
-    hooks.mote?.acted(true);
+    hooks.sound?.wrote(c.kind);
+    hooks.mote?.acted(true, () => (c.kind === 'review' ? $('canvas.impress') || $('canvas.impress-sm') : $('#go'))); // then a look at what came of it: the stamp, or the next step
   } catch (e) {
     toast(e.message); c.sending = false;
     hooks.mote?.acted(false);
+    hooks.sound?.play('knock');
     if (cur === c) { gb.classList.remove('sending'); gb.classList.add('failed'); setTimeout(() => gb.classList.remove('failed'), 400); refresh(); }
   }
 }

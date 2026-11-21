@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node bin/loupe.mjs serve",
     "dev": "node bin/loupe.mjs serve --dev",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs extension/test/*.test.mjs"
   },
   "engines": {
     "node": ">=22"

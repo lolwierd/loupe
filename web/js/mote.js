@@ -2,7 +2,8 @@
 // over the diff's bottom-right corner (drag it anywhere; it remembers where) and does what the desk is doing, so a glance tells you without reading: it works while
 // an answer or the guide is being written, inspects the result when it lands, slumps when something fails, jumps when
 // the last file is viewed or a dialog's send goes through, waits while a dialog asks you something, waves hello when a
-// change opens (and when you click it), and turns to look at the pointer when it comes near. Otherwise it is still,
+// change opens (and when you click it), looks at the pointer when it comes near and at what just happened (the file you
+// viewed, the mark you made, the answer that landed, the stamp, the next step after a write). Otherwise it is still,
 // breathing now and then: it sits beside code you are reading, so it never loops for attention.
 //
 // The art is the Work Pets v2 sheet scaled down to its own 48 by 52 pixel grid (web/img/mote.png: 8 columns, 11 rows),
@@ -18,8 +19,41 @@ const TIMES = {
   idle: [280, 110, 110, 140, 140, 320], waving: ends(4, 140, 280), jumping: ends(5, 140, 280), failed: ends(8, 140, 240),
   waiting: ends(6, 150, 260), running: ends(6, 120, 220), review: ends(6, 150, 280), 'running-right': ends(8, 120, 220), 'running-left': ends(8, 120, 220),
 };
+const sum = (a) => a.reduce((n, t) => n + t, 0);
+const REVIEW_MS = sum(TIMES.review) + 60, JUMP_MS = sum(TIMES.jumping) + 60; // a look waits for the pose before it
 const HOLD = { failed: 4 }; // the pose a slumped Mote keeps: the failed row's lowest point, not its recovery
-const LOOK_NEAR = 36, LOOK_FAR = 480, LOOK_HOLD = 2500; // px: inside is looked at by nobody; beyond is ignored; ms
+const LOOK_NEAR = 36, LOOK_FAR = 480, LOOK_HOLD = 2500, GLANCE_HOLD = 1200; // px: inside is looked at by nobody; beyond is ignored; ms
+
+// ------------------------------------------------------------------ his eyes
+// Mote looks with his eyes. The sheet's look rows turn his whole head (the face swings to one side, the eyes thin out
+// and the smile goes), and switching among sixteen of them as the pointer moved made him twitch and look like another
+// drawing. So he keeps his idle face and moves only his pupils, a pixel toward what he looks at, in eight directions:
+// a strip of ten faces drawn once from the idle frame (centre, the eight clockwise from up, a blink). Eyes jump rather
+// than glide, at most every 120 ms, and only when the direction has really changed (it holds within 30° of the one it
+// has); a jump across his face blinks first, as a face does.
+const EYES = [[19, 30], [28, 30]]; // each pupil's top left on the idle frame, 2 × 2 sheet pixels, with cream round it
+const DIRS = [[0, 0], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]]; // centre, then clockwise from up
+const BLINK = 9, EYE_STEP = 120, BLINK_MS = 90;
+let strip = null;
+(async () => {
+  try {
+    const im = new Image(); im.src = '/web/img/mote.png'; await im.decode();
+    const c = Object.assign(document.createElement('canvas'), { width: W * 10, height: H }), g = c.getContext('2d', { willReadFrequently: true });
+    g.drawImage(im, 0, 0, W, H, 0, 0, W, H);
+    const at = (x, y) => `rgba(${[...g.getImageData(x, y, 1, 1).data].slice(0, 3).join(',')},1)`;
+    const cream = at(22, 30), pupil = at(EYES[0][0], EYES[0][1]);
+    for (let i = 0; i < 10; i++) {
+      g.drawImage(im, 0, 0, W, H, i * W, 0, W, H);
+      for (const [x, y] of EYES) {
+        g.fillStyle = cream; g.fillRect(i * W + x, y, 2, 2);
+        g.fillStyle = pupil;
+        if (i === BLINK) g.fillRect(i * W + x, y + 1, 2, 1); // shut: one line where the pupils were
+        else g.fillRect(i * W + x + DIRS[i][0], y + DIRS[i][1], 2, 2);
+      }
+    }
+    strip = c.toDataURL('image/png'); // a data: URL: the page's img-src allows data:, not blob:
+  } catch { strip = null; } // no strip, no looking: he stays as he is
+})();
 
 export const moteHTML = (pose = '') => `<span class="mote"${pose ? ` data-pose="${pose}"` : ''} aria-hidden="true"></span>`;
 
@@ -27,14 +61,17 @@ class Mote {
   // hold: a state whose last frame it keeps when at rest (home's slumped Mote), instead of idling and looking around
   constructor(el, { hold = null } = {}) {
     this.el = el; this.base = 'idle'; this.once = null; this.timer = 0; this.looking = false; this.lookTimer = 0; this.hold = hold;
+    this.eye = 0; this.wantEye = 0; this.eyeAt = 0; this.eyeTimer = 0; this.target = null;
     this.draw(0, 0); this.rest();
   }
-  draw(row, col) { this.el.style.backgroundPosition = `${-col * W}px ${-row * H}px`; }
+  draw(row, col) { this.el.style.backgroundImage = this.el.style.backgroundSize = ''; this.el.style.backgroundPosition = `${-col * W}px ${-row * H}px`; }
+  // one of the ten faces: his idle frame with the pupils moved (or shut)
+  face(i) { this.el.style.backgroundImage = `url(${strip})`; this.el.style.backgroundSize = `${W * 10}px ${H}px`; this.el.style.backgroundPosition = `${-i * W}px 0`; }
   stop() { clearTimeout(this.timer); this.timer = 0; }
-  pause() { this.stop(); clearTimeout(this.lookTimer); this.looking = false; this.once = null; }
+  pause() { this.stop(); this.endLook(false); this.once = null; }
   // play a state's frames: once, then back to what the desk is doing; or around and around for a working state
   run(state, loop) {
-    this.stop(); this.looking = false; clearTimeout(this.lookTimer);
+    this.stop(); this.endLook(false);
     const row = ROW[state], times = TIMES[state];
     if (reducedMotion() || document.hidden) { // a still pose that says the same, held as long as the motion would take
       this.draw(row, state === 'jumping' ? 2 : times.length > 2 ? 1 : 0);
@@ -64,20 +101,52 @@ class Mote {
   }
   set(base) { if (base === this.base) return; this.base = base; if (!this.once) this.rest(); }
   play(state) { if (this.once && this.once !== 'breath') return; this.once = state; this.run(state, false); }
-  // look toward a point: 16 directions, clockwise from straight up; near or far, it goes back to rest
-  lookAt(x, y) {
-    if (this.hold || this.base !== 'idle' || (this.once && this.once !== 'breath') || reducedMotion() || document.hidden) return;
+  // look toward a point, with his eyes: eight directions, clockwise from straight up. glance: a point he was shown (an
+  // event), looked at however far it is and held a shorter while; else the pointer, within LOOK_FAR, held LOOK_HOLD
+  lookAt(x, y, glance = false) {
+    if (this.hold || this.base !== 'idle' || (this.once && this.once !== 'breath') || reducedMotion() || document.hidden || !strip) return;
     const r = this.el.getBoundingClientRect();
     if (!r.width) return;
-    const dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height * 0.4), d = Math.hypot(dx, dy);
-    if (d > LOOK_FAR) return;
-    if (d < LOOK_NEAR) { if (this.looking) { this.looking = false; clearTimeout(this.lookTimer); this.rest(); } return; }
+    const dx = x - (r.left + 24), dy = y - (r.top + 31), d = Math.hypot(dx, dy); // from between his eyes
+    if (!glance && d > LOOK_FAR) return;
+    if (d < LOOK_NEAR) { if (this.looking) this.endLook(); return; }
     if (this.once === 'breath') this.once = null;
-    this.stop(); this.looking = true;
-    const k = Math.round(((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360 / 22.5) % 16;
-    this.draw(9 + (k >> 3), k & 7);
+    this.stop(); this.looking = true; this.target = [x, y];
+    const ang = ((Math.atan2(dx, -dy) * 180) / Math.PI + 360) % 360;
+    let k = Math.round(ang / 45) % 8;
+    if (this.eye) { const off = Math.abs((((ang - (this.eye - 1) * 45) % 360) + 540) % 360 - 180); if (off <= 30) k = this.eye - 1; } // holds while near its own
+    this.moveEyes(k + 1);
     clearTimeout(this.lookTimer);
-    this.lookTimer = setTimeout(() => { if (this.looking) { this.looking = false; this.rest(); } }, LOOK_HOLD);
+    this.lookTimer = setTimeout(() => this.endLook(), glance ? GLANCE_HOLD : LOOK_HOLD);
+  }
+  // the pupils toward face want: a jump at most every EYE_STEP ms, a blink first across his face. While a wait or a blink
+  // is under way a new target only replaces where they will go, so a moving pointer can neither hold his eyes shut
+  // nor keep them waiting
+  moveEyes(want) {
+    this.wantEye = want;
+    if (this.eyeTimer) return;
+    const step = () => {
+      this.eyeTimer = 0;
+      if (!this.looking) return;
+      const w = this.wantEye;
+      if (w === this.eye) return this.face(w);
+      const wait = EYE_STEP - (performance.now() - this.eyeAt);
+      if (wait > 0) { this.eyeTimer = setTimeout(step, wait); return; }
+      const turn = (((w - this.eye) % 8) + 8) % 8;
+      if (this.eye && Math.min(turn, 8 - turn) >= 3) { // three or four directions round: across his face
+        this.eye = 0; this.eyeAt = performance.now(); this.face(BLINK);
+        this.eyeTimer = setTimeout(step, BLINK_MS);
+        return;
+      }
+      this.eye = w; this.eyeAt = performance.now(); this.face(w);
+    };
+    step();
+  }
+  // the look over: the pupils back to centre, and the desk's own pose (breathing, or what it is doing)
+  endLook(rest = true) {
+    clearTimeout(this.lookTimer); clearTimeout(this.eyeTimer); this.eyeTimer = 0;
+    const was = this.looking; this.looking = false; this.eye = 0; this.target = null;
+    if (was && rest) this.rest();
   }
 }
 
@@ -176,6 +245,7 @@ hooks.mote = {
     const pending = new Map();
     for (const c of Object.values(S.review?.convs || {})) for (const m of c.messages || []) if (m.pending && m.role !== 'user') pending.set(m.id, c.id);
     const ended = [...lastBusy.keys()].filter((id) => !pending.has(id));
+    const lastEnded = new Map(ended.map((id) => [id, lastBusy.get(id)]));
     let failed = false, landed = false;
     for (const id of ended) {
       const m = S.review?.convs?.[lastBusy.get(id)]?.messages?.find((x) => x.id === id);
@@ -185,7 +255,13 @@ hooks.mote = {
     lastBusy = pending; briefWas = !!b?.pending;
     main.set(pending.size || b?.pending ? 'running' : document.querySelector('.sheetscrim') ? 'waiting' : 'idle');
     if (failed) { main.play('failed'); say(ended.length ? 'That answer failed' : 'The guide failed', 5000); }
-    else if (landed) { main.play('review'); say(ended.length ? 'Answer ready' : 'Guide ready', 4000); }
+    else if (landed) {
+      main.play('review'); say(ended.length ? 'Answer ready' : 'Guide ready', 4000);
+      if (document.hidden) hooks.sound?.play('bell'); // one bell, for the tab you are not looking at
+      // then a look at what landed: the answer's mark at its lines, or the map the guide drew
+      const conv = ended.map((id) => lastEnded.get(id)).find(Boolean), th = conv && S.review?.threads?.find((t) => t.conv === conv);
+      hooks.mote.glance(() => (th ? document.querySelector(`.mrow[data-t="${CSS.escape(th.id)}"]`) : ended.length ? null : $('#mapcard')), REVIEW_MS);
+    }
     else say(status());
   },
   // after the viewed count changes: a jump when the last file goes viewed, and the lens's light gathered to match
@@ -197,9 +273,24 @@ hooks.mote = {
     drawLens();
   },
   // what it is doing, for tests and for the curious
-  state: () => main && { base: main.base, once: main.once, looking: main.looking, hidden: document.hidden, reduced: reducedMotion() },
-  // a dialog's send went through, or did not
-  acted(ok) { if (!main) return; main.play(ok ? 'jumping' : 'failed'); hooks.mote.sync(); },
+  state: () => main && { base: main.base, once: main.once, looking: main.looking, eye: main.eye, hidden: document.hidden, reduced: reducedMotion() },
+  // a dialog's send went through, or did not; then, if it went, a look at what comes next (at: the element, found then)
+  acted(ok, at = null) { if (!main) return; main.play(ok ? 'jumping' : 'failed'); hooks.mote.sync(); if (ok && at) hooks.mote.glance(at, JUMP_MS); },
+  // a look at something that just happened, after ms (a pose playing first); el, or a function that finds it then
+  glance(el, ms = 0) {
+    const m = main; // the Mote it was meant for: none, if the change was left meanwhile
+    if (!m) return;
+    let tries = 0;
+    const go = () => {
+      const t = typeof el === 'function' ? el() : el;
+      if (main !== m || !t?.isConnected || !m.el.isConnected) return;
+      if (m.once && m.once !== 'breath' && tries++ < 10) { setTimeout(go, 120); return; } // a pose still playing: after it
+      const r = t.getBoundingClientRect();
+      if (!r.width && !r.height) return;
+      m.lookAt(Math.max(0, Math.min(innerWidth, r.left + r.width / 2)), Math.max(0, Math.min(innerHeight, r.top + r.height / 2)), true);
+    };
+    if (ms) setTimeout(go, ms); else requestAnimationFrame(go);
+  },
 };
 
 // ------------------------------------------------------------------ the still ones on home

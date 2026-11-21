@@ -51,7 +51,7 @@ async function commentPlace(ws, t, { path, line, startLine, side }) {
 const ADD_REVIEW = 'mutation($pr:ID!,$commit:GitObjectID!){addPullRequestReview(input:{pullRequestId:$pr,commitOID:$commit}){pullRequestReview{id}}}';
 const ADD_THREAD = 'mutation($review:ID!,$path:String!,$line:Int!,$side:DiffSide!,$startLine:Int,$startSide:DiffSide,$body:String!){addPullRequestReviewThread(input:{pullRequestReviewId:$review,path:$path,line:$line,side:$side,startLine:$startLine,startSide:$startSide,body:$body}){thread{id}}}';
 const DROP_COMMENT = 'mutation($id:ID!){deletePullRequestReviewComment(input:{id:$id}){pullRequestReview{id}}}';
-const SUBMIT = 'mutation($review:ID!,$event:PullRequestReviewEvent!,$body:String){submitPullRequestReview(input:{pullRequestReviewId:$review,event:$event,body:$body}){pullRequestReview{id url}}}';
+const SUBMIT = 'mutation($review:ID!,$event:PullRequestReviewEvent!,$body:String){submitPullRequestReview(input:{pullRequestReviewId:$review,event:$event,body:$body}){pullRequestReview{id url commit{oid}}}}';
 const gql = (query, vars) => {
   const argv = ['api', 'graphql', '-f', `query=${query}`];
   for (const [k, v] of Object.entries(vars)) if (v !== null && v !== undefined) argv.push(typeof v === 'number' ? '-F' : '-f', `${k}=${v}`);
@@ -100,23 +100,32 @@ const review = {
     const pv = await this.preview(ws, payload);
     if (pv.guard.summary !== guard.summary || pv.guard.event !== guard.event || pv.guard.comments !== guard.comments || pv.guard.review !== guard.review) throw fail('your review changed since the preview (a comment added or removed): look again, then submit');
     const body = payload.body?.trim() || null;
-    let url = t.pr.url;
+    // head: the commit GitHub gave the review. A review sent here is on the head the preview pinned; a pending one is on
+    // the commit it began on, which only GitHub's answer says (none, if it does not: then no verdict is kept)
+    let url = t.pr.url, head = guard.review ? null : guard.head;
     if (guard.review) {
       const d = await gql(SUBMIT, { review: guard.review, event: payload.event, body });
       if (d.errors?.length) throw fail(`GitHub refused the review: ${clip(d.errors[0].message, 300)}`, 502);
       const sent = d.data?.submitPullRequestReview?.pullRequestReview;
       if (!sent?.id) throw fail('GitHub did not confirm review submission', 502);
-      url = sent.url || url;
+      url = sent.url || url; head = sent.commit?.oid || head;
     } else {
       const req = { commit_id: guard.head, event: payload.event };
       if (body) req.body = body;
-      try { const r = await ghPost(`repos/${t.owner}/${t.repo}/pulls/${t.number}/reviews`, req); url = r.html_url || url; }
+      try { const r = await ghPost(`repos/${t.owner}/${t.repo}/pulls/${t.number}/reviews`, req); url = r.html_url || url; head = r.commit_id || head; }
       catch (e) { throw fail(`GitHub refused the review: ${clip(`${e.stderr || ''} ${e.message}`.replace(/\s+/g, ' '), 300)}`, 502); }
     }
     const n = ws.github.pending?.comments?.length || 0;
+    // your verdict, with the head it was given on (the one you read and the preview pinned): the page prints it on the
+    // pull request, and can say when the head has moved on past it
+    if (payload.event !== 'COMMENT' && ws.review?.data) { // a newer verdict replaces the last; one without a named commit clears it
+      if (head) ws.review.data.verdict = { event: payload.event, head, repo: `${t.owner}/${t.repo}`, number: t.number, at: Date.now() };
+      else delete ws.review.data.verdict;
+      ws.review.save(); ws.emit('review', { verdict: ws.review.data.verdict || null });
+    }
     await ws.fetchGithub(true).catch(() => {});
     ws.emit('github', {});
-    return { message: `${EVENTS[payload.event]} sent to ${t.full}${n ? ` with ${n} comment${n === 1 ? '' : 's'} on lines` : ''}.`, url, event: payload.event };
+    return { message: `${EVENTS[payload.event]} sent to ${t.full}${n ? ` with ${n} comment${n === 1 ? '' : 's'} on lines` : ''}.`, url, event: payload.event, head };
   },
 };
 

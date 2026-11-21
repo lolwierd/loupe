@@ -146,48 +146,60 @@ export function frames(fn, { fps = 12, rest = 0 } = {}) {
   return () => { stop = true; cancelAnimationFrame(raf); };
 }
 
-// ------------------------------------------------------------------ the tone screen behind a write's dialog
-// The dim around a write's dialog is a tone screen as heavy as the write is hard to undo (the scrim's data-weight): one
-// cell of the matrix to a CSS pixel, so it reads as a fine screen rather than a grey, and nearly even, a little lighter
-// round the dialog. It is drawn once, whole, and the canvas fades in with the dialog; it never builds up in steps.
+// ------------------------------------------------------------------ the tone screen behind every dialog
+// Every dialog's dim is a tone screen: a write's as heavy as it is hard to undo (sheets.js sets data-weight), any other
+// (the palette, the keys, the map opened large) at the lightest. One cell of the matrix to a CSS pixel, so it reads as a
+// fine screen rather than a grey, nearly even and a little lighter round the dialog. The canvas is drawn at CSS pixels
+// and shown pixelated, so a 2× screen draws a quarter of the pixels; it is drawn once, whole, and fades in with the
+// dialog, never building up in steps.
 const TONE = { local: 0.25, public: 0.375, destructive: 0.5625 }; // a quarter heavier in dark: black on a dark page dims it less
-const TONE_CELL = 1;
-export function toneScreen(scrim, sheet) {
+export function toneScreen(scrim, box) {
   const cv = document.createElement('canvas');
   cv.className = 'tone'; cv.setAttribute('aria-hidden', 'true');
   scrim.prepend(cv);
-  let g = null, field = null, cols = 0, mask = null, ink = null;
-  const build = () => {
-    g = fit(cv);
-    const c = TONE_CELL * g.d, weight = scrim.dataset.weight || 'public';
-    cols = Math.ceil(g.W / c); const rows = Math.ceil(g.H / c);
-    const L = (TONE[weight] ?? TONE.public) * (isDark() ? 1.25 : 1);
-    const r = sheet.getBoundingClientRect(), reach = 0.45 * Math.max(g.w, g.h);
-    field = new Float32Array(cols * rows);
-    for (let cy = 0; cy < rows; cy++) for (let cx = 0; cx < cols; cx++) {
-      const x = (cx + 0.5) * TONE_CELL, y = (cy + 0.5) * TONE_CELL;
-      const dx = Math.max(r.left - x, 0, x - r.right), dy = Math.max(r.top - y, 0, y - r.bottom);
-      field[cy * cols + cx] = clamp(L * (0.9 + 0.2 * smooth(0, reach, Math.hypot(dx, dy))));
+  const draw = () => {
+    const r = cv.getBoundingClientRect(), W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
+    if (cv.width !== W) cv.width = W;
+    if (cv.height !== H) cv.height = H;
+    const weight = scrim.dataset.weight || 'local';
+    const L = (TONE[weight] ?? TONE.local) * (isDark() ? 1.25 : 1);
+    const s = box?.isConnected ? box.getBoundingClientRect() : null, reach = 0.45 * Math.max(W, H);
+    const [R, G, B, A] = rgba(weight === 'destructive' ? 'var(--danger)' : 'var(--tone-ink)');
+    const ink = ((A << 24) | (B << 16) | (G << 8) | R) >>> 0;
+    const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H), px = new Uint32Array(img.data.buffer);
+    // the level changes slowly, so it is read once per 4×4 tile of the matrix, at the tile's centre
+    for (let ty = 0; ty < H; ty += 4) {
+      const gy = r.top + ty + 2, dy = s ? Math.max(s.top - gy, 0, gy - s.bottom) : reach;
+      for (let tx = 0; tx < W; tx += 4) {
+        const gx = r.left + tx + 2, dx = s ? Math.max(s.left - gx, 0, gx - s.right) : reach;
+        const v16 = 16 * L * (0.9 + 0.2 * smooth(0, reach, dx > 0 || dy > 0 ? Math.hypot(dx, dy) : 0));
+        for (let y = ty, ye = Math.min(H, ty + 4); y < ye; y++) {
+          const row = (y & 3) * 4, base = y * W;
+          for (let x = tx, xe = Math.min(W, tx + 4); x < xe; x++) if (v16 > BAYER4[row + (x & 3)] + 0.5) px[base + x] = ink;
+        }
+      }
     }
-    if (mask?.length !== g.W * g.H) mask = new Uint8Array(g.W * g.H);
-    ink = rgba(weight === 'destructive' ? 'var(--danger)' : 'var(--tone-ink)');
+    ctx.putImageData(img, 0, 0);
   };
-  const put = () => {
-    const c = TONE_CELL * g.d; mask.fill(0);
-    for (let i = 0; i < field.length; i++) {
-      const cx = i % cols, cy = (i / cols) | 0;
-      if (field[i] * 16 <= BAYER4[(cy & 3) * 4 + (cx & 3)] + 0.5) continue;
-      for (let Y = cy * c, ye = Math.min(g.H, Y + c); Y < ye; Y++) mask.fill(1, Y * g.W + cx * c, Y * g.W + Math.min(g.W, cx * c + c));
-    }
-    cv.getContext('2d').clearRect(0, 0, g.W, g.H);
-    paint(cv, g, mask, [0, ink]);
-  };
-  const draw = () => { build(); put(); };
-  draw();
-  // the window, the theme or the dialog's size changed, or the write turned harder to undo (a push that now
-  // overwrites): the screen is drawn again, at once
+  // drawn now (watch calls it at once), and again when the window, the theme or the dialog's size changes, or the write
+  // turns harder to undo
   const stopWatch = watch(cv, draw);
-  const ro = new ResizeObserver(draw); ro.observe(sheet);
+  const ro = new ResizeObserver(draw); if (box) ro.observe(box);
   const mo = new MutationObserver(draw); mo.observe(scrim, { attributes: true, attributeFilter: ['data-weight'] });
   return () => { stopWatch(); ro.disconnect(); mo.disconnect(); cv.remove(); };
 }
+// Any dialog the page opens gets its screen, wherever it is put, and loses it (and its observers) when it leaves the page.
+const toned = new Map();
+const scrimsIn = (n) => (n.nodeType !== 1 ? [] : [...(n.matches('.scrim, .sheetscrim') ? [n] : []), ...n.querySelectorAll('.scrim, .sheetscrim')]);
+new MutationObserver((records) => {
+  for (const r of records) {
+    // the diff, the panels and the file list redraw often and never hold a dialog: their changes are not looked through
+    if (r.target.closest?.('#cards, #pbody, #tree, #vbody')) continue;
+    for (const n of r.removedNodes) for (const s of scrimsIn(n)) if (toned.has(s) && !s.isConnected) { toned.get(s)(); toned.delete(s); }
+    for (const n of r.addedNodes) for (const s of scrimsIn(n)) {
+      if (toned.has(s) || !s.isConnected) continue;
+      if (!s.dataset.weight) s.dataset.weight = 'local';
+      toned.set(s, toneScreen(s, s.querySelector(':scope > .palette, :scope > .sheet') || s.firstElementChild));
+    }
+  }
+}).observe(document.body, { childList: true, subtree: true });

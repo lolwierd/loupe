@@ -33,7 +33,14 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
   whole repository at the reviewed revision; `?` lists the keys.
 
 Mote, the small beetle floating in the corner (drag him anywhere), shows what the desk is doing: working while an
-answer or the map is being written, and jumping when you have read the last file.
+answer or the map is being written, and jumping when you have read the last file. He looks with his eyes, at the
+pointer when it is near and at what just happened: the file you viewed, the answer that landed.
+
+Small things answer what you do. Every button gives a little when pressed, by the pointer or by its key. Approving
+prints a stamp with the commit you approved and leaves its impression under the review, which slips out of register
+when the author pushes past it. A commit's new id flips in from its parent's. Desk sounds are there too, off until you
+turn them on in `⌘K`: a tick per file viewed that climbs as the change is read, a stamp on approve, and a bell when an
+answer lands while the tab is in the background.
 
 ![The map of a change](docs/img/map.png)
 
@@ -65,6 +72,13 @@ loupe https://github.com/owner/repo/pull/123   # a pull request
 Without the service, `loupe serve` runs it in a terminal at http://127.0.0.1:4500.
 Swap `github.com` for `loupe.local` (or `l.local`) in a pull request link to open it in loupe. https is optional:
 [docs/HTTPS.md](docs/HTTPS.md).
+
+## From GitHub: the extension
+
+`extension/` is a small Chromium extension, loaded unpacked (no build). On github.com, `g` then `l` opens the pull
+request you are on in loupe, in place of GitHub's own `g` `l`; the toolbar button does the same, and a right-click on
+any pull request link has **Open link in loupe**. Its settings can open pull requests in loupe as you land on them (off
+by default). [extension/README.md](extension/README.md) has how to load it and what each setting does.
 
 ## Keys
 

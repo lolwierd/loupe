@@ -500,6 +500,9 @@ export async function setViewed(p, on) {
   toggleFold(p, on);
   updateCard(p);
   hooks.progress?.();
+  hooks.sound?.viewed(S.id); // a tick up the ladder (with desk sounds on)
+  // Mote looks at the file's row in the list, where its check lands (the card itself folds and the view moves on)
+  if (on) hooks.mote?.glance(() => document.querySelector(`.trow[data-p="${CSS.escape(p)}"]`));
   api(`/api/w/${S.id}/viewed`, { method: 'POST', body: { path: p, blob: key, viewed: on } }).catch((e) => toast(e.message));
   if (on) {
     const c = cardEl(p);
@@ -542,6 +545,7 @@ async function sendDraft() {
     hooks.threadsChanged?.(d.path);
     // You asked, so you are waiting for the answer: it opens beside the code, streaming.
     hooks.openMark?.(r.thread.id);
+    hooks.mote?.glance(() => document.querySelector(`.mrow[data-t="${CSS.escape(r.thread.id)}"]`)); // and Mote at the mark you made
   } catch (e) { toast(e.message); if (S.id === id && !S.draft) { S.draft = { ...d, value: text }; renderBody(d.path); } }
 }
 

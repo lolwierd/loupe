@@ -2,7 +2,7 @@
 // changed lines, green once viewed, amber if it changed since; meter.js), and the next act (a split button: the likeliest act, then
 // everything else you can do now). Each act is a sheet (a write with its live preview) or a plain step. The stack
 // this change sits in is drawn as number chips beside the title.
-import { S, $, esc, I, plural, convOf, toast } from './core.js';
+import { S, $, esc, I, plural, convOf, toast, reducedMotion } from './core.js';
 import { isViewed, isStale, lines, orderedFiles, cardEl } from './cards.js';
 import { progressMarks, nextUnviewed } from './tree.js';
 import { menu, canMerge } from './ui.js';
@@ -123,16 +123,43 @@ function tickCount() {
   b.classList.remove('rolling'); void b.offsetWidth; b.classList.add('rolling');
   setTimeout(() => { if (b.isConnected) b.textContent = left.toLocaleString(); }, 220);
 }
+// After a write the next step turns over to the one after it ("Commit 1 file" becomes "Push 3 commits"), rolled the way
+// the lines-left odometer rolls (three steps in 200 ms), so the change of step is noticed without a word. The app draws
+// this button more than once after a write (the ship state, then the review state); a roll in progress is drawn again
+// at the step it had reached, then the plain label. Only within a few seconds of a write; with reduced motion, never.
+const ROLL = 200;
+let goLabel = '', armed = null, rolling = null; // armed: { id, from, until } for a write; rolling: { from, to, t0 }
+// armed when a send starts, with the step shown then (GitHub's event can change it before the send answers); its success
+// opens a few seconds for the step to turn over, from that label to whatever the next one is
+export const armRoll = () => (armed = { id: S.id, from: goLabel, until: 0 }); // the arm is the token: only its own send opens it
+export const rollNext = (arm) => { if (!arm || armed !== arm || arm.id !== S.id) return; arm.until = Date.now() + 4000; renderGo(); };
+const rollHTML = (r) => `<span class="rollbox"><span class="roll" style="animation-delay:-${Math.round(performance.now() - r.t0)}ms"><span>${esc(r.from)}</span><span>${esc(r.to)}</span></span></span>`;
+function goInner(label) {
+  if (rolling && (rolling.to !== label || performance.now() - rolling.t0 >= ROLL)) rolling = null;
+  if (!rolling && armed?.from && label !== armed.from && armed.id === S.id && Date.now() < armed.until && !reducedMotion()) {
+    const r = rolling = { from: armed.from, to: label, t0: performance.now() };
+    armed = null; // one write, one roll
+    setTimeout(() => { // the end: only the label is swapped, so a button you have tabbed to keeps its focus
+      if (rolling !== r) return;
+      rolling = null;
+      $('#go [data-act="next"] .rollbox')?.replaceWith(document.createTextNode(r.to));
+    }, ROLL + 30);
+  }
+  goLabel = label;
+  return rolling ? rollHTML(rolling) : esc(label);
+}
 export function renderGo() {
   const el = $('#go');
   if (!el || !S.ws) return;
   const acts = ordered(nextActs());
   S.acts = acts;
   const a = acts[0];
-  if (!a) { el.innerHTML = ''; return; }
+  if (!a) { el.innerHTML = ''; goLabel = ''; return; }
   const tone = a.tone === 'danger' ? 'danger' : ''; // a plain button: the frame is chrome, a filled slab shouts in it
-  el.innerHTML = `<button class="btn ${tone}${acts.length > 1 ? ' l' : ''}" data-act="next"${a.disabled ? ` disabled title="${esc(a.disabled)}"` : ''}>${esc(a.label)}</button>` +
+  const had = el.contains(document.activeElement) ? document.activeElement.dataset.act : null; // drawn again, focus stays put
+  el.innerHTML = `<button class="btn ${tone}${acts.length > 1 ? ' l' : ''}" data-act="next"${a.disabled ? ` disabled title="${esc(a.disabled)}"` : ''} aria-label="${esc(a.label)}">${goInner(a.label)}</button>` +
     (acts.length > 1 ? `<button class="btn ${tone} r" data-act="nextmenu" aria-label="Everything you can do next" title="Everything you can do next">${I.chev}</button>` : '');
+  if (had) el.querySelector(`[data-act="${had}"]`)?.focus();
 }
 
 export function renderStack() {

@@ -9,6 +9,7 @@ import { md } from './md.js';
 import { msgHTML, runBtn, briefRunBtn, runOf, grow, menu, shimmerSync, modelKind, verdict } from './ui.js';
 import { isViewed, lines, setResolved, deleteMark, cardEl, renderBody, oneLine } from './cards.js';
 import { hooks } from './hooks.js';
+import { impressionHTML } from './stamp.js';
 import { spark, avatar } from './pixel.js';
 
 const TABS = ['overview', 'chat', 'review'];
@@ -83,7 +84,7 @@ function factsHTML(p, loading) {
     else if (p.reviewDecision === 'REVIEW_REQUIRED') review = req.length ? `needs approval <span class="q">· asked</span> ${names(req)}` : 'needs approval <span class="q">· nobody asked</span>';
     else review = req.length ? `<span class="q">asked</span> ${names(req)}` : '<span class="q">not required</span>';
   }
-  row('review', review);
+  row('review', review, '', v ? impressionHTML() : ''); // under GitHub's decision, your own: the impression of your approval
   // checks: every count that is not zero, the total at the right, the failing ones named underneath
   const total = c.pass + c.fail + c.run + c.skip;
   let checks = wait, failing = '';
@@ -110,7 +111,7 @@ function headHTML() {
   }
   const behind = p && p.headRefOid !== m.headFull ? `<div class="warnline">GitHub has ${p.headRefOid.slice(0, 7)}, this checkout is at ${m.head.slice(0, 7)}</div>` : '';
   const prCard = p ? `<div class="card prcard"><div class="row"><span class="by">${I.pr}<b>#${p.number}</b>${avatar(p.author)}<span>${p.viewerIsAuthor ? 'you' : esc(p.author || '')}</span></span><span class="sp"></span><button class="btn sm" data-act="openprws" title="Open the pull request as GitHub has it">Open the PR</button></div>` +
-    `<div class="row">${prState(p)}${checksPill(p)}${decisionPill(p)}</div><div class="ptitle" title="${esc(p.title)}">${esc(p.title)}</div>${behind}</div>` : '';
+    `<div class="row">${prState(p)}${checksPill(p)}${decisionPill(p)}</div><div class="ptitle" title="${esc(p.title)}">${esc(p.title)}</div>${behind}${impressionHTML()}</div>` : '';
   return `<div class="prhead"><h1>${esc(m.branch)}</h1><div class="row"><span>into</span><button class="runpick mono" data-act="basemenu" title="Compare with another branch"><span>${esc(m.base)}</span>${I.chev}</button><span>${plural(m.commits.length, 'commit')}</span>${m.dirty ? `<span class="pill warn">${plural(m.dirty, 'uncommitted file')}</span>` : ''}</div><div class="path" title="${esc(m.root)}"><bdi dir="ltr">${esc(m.root)}</bdi></div></div>${prCard}`;
 }
 // A brief written before 20 Nov can hold its TLDR as a JSON array of sentences.

@@ -479,7 +479,7 @@ async function reviewOut(ws) {
   const d = ws.review.data, v = ws.visibleReview();
   const convs = {};
   for (const [id, c] of Object.entries(v.convs)) convs[id] = { ...c, busy: C.isBusy(id) };
-  return { viewed: d.viewed, unviewed: d.unviewed || {}, checks: d.checks || {}, threads: v.threads, convs, chats: v.chats, brief: await briefOut(ws), notes: d.notes || null, seenHead: d.seenHead };
+  return { viewed: d.viewed, unviewed: d.unviewed || {}, checks: d.checks || {}, threads: v.threads, convs, chats: v.chats, brief: await briefOut(ws), notes: d.notes || null, verdict: d.verdict || null, seenHead: d.seenHead };
 }
 // The brief, marked stale when the change it was written for is no longer the change.
 export async function briefOut(ws) {

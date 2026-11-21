@@ -33,7 +33,14 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   *Ghost*: no border, `--ink-2`, hover `--hover`. *Danger*: default with red text; a destructive confirm is a red
   fill. All 28 px (24 in rows, 32 in dialog footers), padding 0 12 (0 8 at 24), 13 px 500, `--r2` (`--r1` at 24).
   A key hint is a `<kbd>` inside the button, after the label.
-- **Icon button**: 28 square (24 compact), `--r2`, 16 px icon in `--ink-2`, hover `--hover` + ink, active `--press`.
+  *Pressed* (by the pointer, or by its key: `strike.js` gives it `.struck`): a `--press` fill, a soft shadow inside the
+  top edge (`--press-in`, `--press-in-act` on a primary), and it gives to 97%, the way a pushed thing goes away from the
+  eye. No edge at rest; it lands at once (50 ms) and eases back (140 ms). Halves of a split button, segments, tabs and
+  the meter only shade, so no seam opens between neighbours.
+- **Icon button**: 28 square (24 compact), `--r2`, 16 px icon in `--ink-2`, hover `--hover` + ink; pressed, the pad is
+  `--press` and the glyph gives to 88%.
+- **Key hint** (`kbd`): a keycap, its bottom border two pixels. When its key is pressed it bottoms out on one, and the
+  control that key drives shows its press, if it is in view (`strike.js`).
 - **Link button** (`.link`): inline text action, 12 or 13 px to match its line, `--ink-2`, hover ink + underline. Used
   for actions inside text or section headers ("All", "Rewrite", "Back to this change alone").
 - **Input / select / scope button**: 28 px, `--bg`, 1 px `--rule-strong`, `--r2`, padding 0 8, 13 px; focus: border
@@ -71,26 +78,42 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
 - **Status**: M / A / D / R letters (11 px mono 600: amber, green, red, ink-2); the pixel check for viewed; counts as
   tabular figures.
 - **Empty state**: one line in `--ink-3` 13 px, with the one action that fills it as a link button.
-- **Toast**: bottom centre, `--act` background, on-act text, `--r2`, 13 px; an action in it is underlined text.
-- **Motion**: background and colour 120 ms `--ease`; nothing slides except dialogs (160 ms rise) and menus (none).
+- **Toast**: bottom centre, `--act` background, on-act text, `--r2`, 13 px; an action in it is underlined text. A
+  commit's toast flips the new commit's id in from its parent's, split-flap cells one mono character wide (`receipt.js`).
+- **Motion**: background and colour 120 ms `--ease`; nothing slides except dialogs (160 ms rise) and menus (none). A
+  press is 50 ms in and 140 ms out. After a write the top bar's next step turns over to the one after it in the
+  odometer's roll (three steps, 200 ms).
+- **Mote's look**: he looks with his eyes, never by turning his head: his idle face with the pupils a pixel toward what he
+  looks at, in eight directions, jumping at most every 120 ms and only when the direction has really changed, with a
+  blink before a jump across his face. He looks at the pointer when it comes within 480 px, and at what just happened
+  (the row of the file you viewed, the mark you made, the answer that landed, the stamp, the next step after a write),
+  for 1.2 s; not while he is busy, with reduced motion, or in a hidden tab.
+- **Sound**: off until it is turned on (⌘K), and then only as the consequence of an act: a wooden tick per file viewed,
+  pitched up a pentatonic ladder by the share read (the last file resolves it), a stamp, a typebar for a commit, a
+  plucked string for a push, a dull knock for a failed send, one bell for an answer that lands in a hidden tab. Nothing
+  for typing, clicks or scrolling. Made in the page (`voices.js`), no files.
 
 ## Print textures
 A few states are drawn as a print shop would show them instead of in flat colour. They are the only textures in the
 app, and they follow one set of rules (screens in `web/js/dither.js`).
 - **Where**: only where nothing is being read. The opening state (the forme), the state of a change that could not
   open (the moiré), the dim behind a write's dialog (the tone screen), and the desk under Mote (the lens's light).
-  Never behind code, prose or glass, with one exception: Mote floats over the diff's bottom-right corner, so his light,
-  no wider than his feet, can land on the end of a line (drag him off it).
+  Never behind code, prose or glass, with two exceptions: Mote floats over the diff's bottom-right corner, so his light,
+  no wider than his feet, can land on the end of a line (drag him off it); and the approval's stamp is pressed over the
+  diff for 1.7 s, its ink multiplied into the page so the code stays legible through it. The stamp leaves its
+  impression on the pull request in the inspector, a row of its own.
 - **What draws them**: the change's own state, never a picture. The forme has one dot per changed line (past 2,560 a
   dot stands for several), as GitHub counts them before the fetch; the daemon sends the counts on its progress lines. The moiré's two screens are turned by the base's and the head's names. The tone's
   weight is how hard the write is to undo: local 25%, public 37.5%, destructive 56%, each a quarter heavier in dark,
   nearly even (a little lighter round the dialog).
-  The lens's spot gathers as the share of lines left falls.
+  The lens's spot gathers as the share of lines left falls. The stamp prints the head you approved and the day, seeded
+  by that head (the same head always prints the same stamp); its impression slips out of register when the head moves on.
 - **Screens**: the app's 4×4 Bayer matrix (`--d0`..`--d16`, one cell to a device pixel, or to an art pixel on Mote's
   grid; the tone screen uses 1 CSS px cells, a fine screen rather than a grey), hairline line screens, and letterpress
   dots. Every one is drawn at device pixels, never scaled or smoothed.
 - **Ink**: the page's own (`--ink`, `--ink-3`, black under dark dialogs, `--hi` for light). Red only for a
-  destructive write. Blue and orange keep their one job: no texture uses them.
+  destructive write; amber only for the impression's second plate, when the head has moved past your approval (changed
+  since). Blue and orange keep their one job: no texture uses them.
 - **Motion**: frame-stepped, at 12 fps at most (the brayer's passes; the tone screen alone fades in, with its dialog). With
   reduced motion each is the still that says the same thing.
 

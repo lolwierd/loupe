@@ -11,6 +11,7 @@ process.env.LOUPE_GH = path.join(tmp, 'gh');
 const log = path.join(tmp, 'argv');
 fs.writeFileSync(process.env.LOUPE_GH, `#!/usr/bin/env node
 require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+if (process.argv.slice(2).some((a) => a.startsWith('repos/') && a.endsWith('/reviews'))) { console.log(JSON.stringify({ id: 9, commit_id: 'returned', html_url: 'https://example.test/r' })); process.exit(0); }
 const values = Object.fromEntries(process.argv.slice(2).filter(a => a.includes('=')).map(a => [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)]));
 const page = (nodes, endCursor = null) => ({ nodes, pageInfo: { hasNextPage: !!endCursor, endCursor } });
 const c = (id) => ({ id, body: id, path: 'file', originalLine: 2, outdated: true });
@@ -24,6 +25,8 @@ if (values.query?.includes('reviews(first:')) {
   data = { node: { comments: page([c('last')]) } };
 }
 if (values.query?.includes('addPullRequestReviewThread(')) data = { addPullRequestReviewThread: { thread: { id: 'thread' } } };
+if (values.query?.includes('submitPullRequestReview(') && values.review === 'unsaid') data = { submitPullRequestReview: { pullRequestReview: { id: 'sent', url: 'https://example.test/review', commit: null } } };
+if (values.query?.includes('submitPullRequestReview(') && values.review === 'begun-earlier') data = { submitPullRequestReview: { pullRequestReview: { id: 'sent', url: 'https://example.test/review', commit: { oid: 'older' } } } };
 console.log(JSON.stringify({ data }));
 `, { mode: 0o755 });
 const { ACTIONS } = await import('../src/actions.mjs');
@@ -145,4 +148,42 @@ test('submitting a pending review requires confirmation from GitHub', async () =
   const call = JSON.parse(fs.readFileSync(log, 'utf8').trim().split('\n').at(-1));
   assert.ok(call.includes('review=review'));
   assert.equal(call.some((a) => a.startsWith('body=')), false);
+});
+
+test('an approval keeps its verdict with the head it was given on, and a comment keeps none', async () => {
+  const ws = workspace();
+  let saved = 0;
+  ws.review = { data: {}, save() { saved++; } };
+  const { guard } = await ACTIONS.review.preview(ws, approval);
+  const r = await ACTIONS.review.run(ws, approval, guard);
+  assert.equal(r.head, 'returned'); // the commit GitHub's answer names
+  assert.deepEqual({ ...ws.review.data.verdict, at: 0 }, { event: 'APPROVE', head: 'returned', repo: 'owner/repo', number: 1, at: 0 });
+  assert.equal(saved, 1);
+  const c = workspace();
+  c.review = { data: {}, save() { saved++; } };
+  const comment = { event: 'COMMENT', body: 'looks fine' };
+  const pv = await ACTIONS.review.preview(c, comment);
+  await ACTIONS.review.run(c, comment, pv.guard);
+  assert.equal(c.review.data.verdict, undefined);
+  assert.equal(saved, 1);
+});
+
+test('a pending review submitted as an approval keeps the commit GitHub gave it, not the head at the time', async () => {
+  const ws = workspace();
+  ws.github.pending = { id: 'begun-earlier', comments: [] }; // begun on an older commit
+  ws.review = { data: {}, save() {} };
+  const { guard } = await ACTIONS.review.preview(ws, approval);
+  const r = await ACTIONS.review.run(ws, approval, guard);
+  assert.equal(r.head, 'older');
+  assert.equal(ws.review.data.verdict.head, 'older');
+});
+
+test('a pending review whose commit GitHub does not name is sent, and clears the verdict it replaces', async () => {
+  const ws = workspace();
+  ws.github.pending = { id: 'unsaid', comments: [] };
+  ws.review = { data: { verdict: { event: 'APPROVE', head: 'before', number: 1, at: 1 } }, save() {} }; // an earlier approval
+  const { guard } = await ACTIONS.review.preview(ws, approval);
+  const r = await ACTIONS.review.run(ws, approval, guard);
+  assert.equal(r.head, null);
+  assert.equal(ws.review.data.verdict, undefined);
 });

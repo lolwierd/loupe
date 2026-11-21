@@ -12,6 +12,9 @@ import { hooks } from './hooks.js';
 import './actions.js';
 import { loadShip, sheetOpen, closeSheet } from './sheets.js';
 import './eggs.js';
+import './strike.js';
+import './stamp.js';
+import './sound.js';
 import { moteHTML, wakeMotes } from './mote.js';
 import { spark, icon, avatar } from './pixel.js';
 import { decorateState, endOpening } from './press.js';
@@ -184,6 +187,7 @@ async function loadFiles(reason) {
   if (S.mode === 'guide' && S.review.brief?.sections?.length) S.order = 'guide';
   if (!S.current || !fileOf(S.current)) S.current = orderedFiles()[0]?.f.path || null;
   renderScopebar(); renderTree(); renderCards(); renderPanel(); renderLsp(); syncMote(); renderGhLink();
+  hooks.sound?.opened(S.id);
   renderProgress(); renderGo(); renderStack(); hooks.moteMount?.(allViewed(), leftShare());
   requestAnimationFrame(spyNow);
   if (spot) requestAnimationFrame(() => restoreSpot(spot));
@@ -484,6 +488,7 @@ function listenWs() {
   on('review', (d) => {
     if (d.viewed) S.review.viewed = d.viewed;
     if (d.unviewed) S.review.unviewed = d.unviewed;
+    if ('verdict' in d) { S.review.verdict = d.verdict; if (S.tab === 'overview') renderPanel(); } // your verdict, sent from another page too
     if (d.checks) { S.review.checks = d.checks; for (const b of $$('.gck')) { const on = !!d.checks[b.dataset.key]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); } }
     for (const f of S.files) updateCard(f.path);
     progress();
@@ -552,8 +557,15 @@ let homeEs = null;
 // A tab left in the background gives its stream back after 20 s (a browser allows six connections per host, and idle
 // loupe tabs used to starve the next page); coming back reconnects and reads the change again.
 let sleepT = null, asleep = false;
+// with desk sounds on, a hidden tab keeps its stream while an answer or the guide is being written, so the bell for it can
+// ring there; it lets go once nothing is
+const writing = () => !!S.review?.brief?.pending || Object.values(S.review?.convs || {}).some((c) => c.messages?.some((m) => m.pending && m.role !== 'user'));
+function sleep() {
+  if (S.id && hooks.sound?.on() && writing()) { sleepT = setTimeout(sleep, 20000); return; }
+  wsEs?.close(); homeEs?.close(); asleep = true; S.lost = true;
+}
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { clearTimeout(sleepT); sleepT = setTimeout(() => { wsEs?.close(); homeEs?.close(); asleep = true; S.lost = true; }, 20000); return; }
+  if (document.hidden) { clearTimeout(sleepT); sleepT = setTimeout(sleep, 20000); return; }
   clearTimeout(sleepT);
   if (!asleep) return;
   asleep = false;
@@ -619,6 +631,7 @@ function commands() {
     ...(S.stack?.items || []).filter((i) => !i.here).map((i) => ({ group: 'STACK', label: `${i.pr ? `#${i.pr} ` : ''}${i.branch}`, sub: i.checkout ? 'checkout' : 'PR', run: () => openStackItem(S.stack.items.indexOf(i)) })),
     ...[['panes', 'Layout: three panes'], ['guide', 'Layout: guide']].filter(([x]) => x !== S.mode).map(([x, label]) => ({ group: 'VIEW', label, run: () => applyMode(x) })),
     { group: 'VIEW', label: S.marksHidden ? 'Show the marks in the code' : 'Hide the marks in the code', key: 'm', run: () => setMarksHidden(!S.marksHidden) },
+    { group: 'VIEW', label: hooks.sound?.on() ? 'Turn desk sounds off' : 'Turn desk sounds on', sub: 'a tick per file viewed, a stamp, a typebar', run: () => hooks.sound?.set(!hooks.sound.on()) },
     { group: 'VIEW', label: paneOpen('bin') ? 'Hide the files' : 'Show the files', key: 't', run: () => setPane('bin', !paneOpen('bin')) },
     { group: 'VIEW', label: paneOpen('panel') ? 'Hide the inspector' : 'Show the inspector', key: 'p', run: () => setPane('panel', !paneOpen('panel')) },
     ...['system', 'light', 'dark'].filter((t) => t !== pref.get('theme', 'system')).map((t) => ({ group: 'VIEW', label: `Theme: ${t}`, run: () => { pref.set('theme', t); applyTheme(t); } })),
@@ -964,17 +977,20 @@ document.addEventListener('keydown', (e) => {
   next?.focus(); next?.scrollIntoView({ block: 'nearest' });
 });
 
+// Every key on one sheet that needs no scrolling: the groups on a grid, each row a key and a few words. The palette (⌘K)
+// holds the rest, so the sheet says so.
 function keySheet() {
-  const k = (keys, what) => `<span class="k">${keys.map((x) => `<kbd>${x}</kbd>`).join('')}</span><span>${what}</span>`;
+  const k = (keys, what) => `<div class="kr"><span class="k">${keys.map((x) => `<kbd>${x}</kbd>`).join('')}</span><span class="w">${what}</span></div>`;
   // a mouse action is not a key: the modifier is a key, the click or hover is a word
-  const m = (mods, action, what) => `<span class="k">${mods.map((x) => `<kbd>${x}</kbd>`).join('')}<span class="mouse">${action}</span></span><span>${what}</span>`;
-  const scrim = h(`<div class="scrim"><div class="palette keysheet"><div class="keys">
-    <h3 class="sh">MOVING</h3>${k(['j'], 'next file')}${k(['k'], 'previous file')}${k([']'], 'done with this file: mark it viewed, go to the next left')}${k(['['], 'back: un-view the file ] just marked, or return from a jump')}${k(['/'], 'find a file')}${k(['f'], 'search the repository')}${k(['⌘', 'K'], 'open or do anything')}
-    <h3 class="sh">REVIEWING</h3>${k(['v'], 'mark the file viewed, or not viewed again')}${k(['o'], 'fold or unfold the file')}${k(['s'], 'unified or split')}${k(['g'], 'guide order or file order')}${k(['m'], 'hide or show the marks in the code')}
-    <h3 class="sh">ON SELECTED LINES</h3>${k(['a'], 'ask there')}${k(['c'], 'comment for your GitHub review (pending until you submit)')}${k(['l'], 'add them to the chat')}${k(['↵'], 'send a question (⇧↵ for a new line)')}${k(['⌘', '↵'], 'add a comment to your review')}${k(['esc'], 'cancel')}
-    <h3 class="sh">PANELS</h3>${k(['1'], 'overview')}${k(['2'], 'chat')}${k(['3'], 'marks')}${k(['t'], 'files')}${k(['p'], 'inspector')}${k(['r'], 'read the change again')}
-    <h3 class="sh">GO</h3>${m([], 'hover', 'Go docs')}${m(['⌘'], 'click', 'definition')}${m(['⇧', '⌘'], 'click', 'references')}${k(['⌥'], 'hold over code for the loupe')}
-  </div><div class="foot"><span><kbd>esc</kbd> close</span></div></div></div>`);
+  const m = (mods, action, what) => `<div class="kr"><span class="k">${mods.map((x) => `<kbd>${x}</kbd>`).join('')}<span class="mouse">${action}</span></span><span class="w">${what}</span></div>`;
+  const g = (title, rows) => `<section class="kg"><h3 class="sh">${title}</h3>${rows.join('')}</section>`;
+  const scrim = h(`<div class="scrim"><div class="palette keysheet" role="dialog" aria-label="Keys"><div class="keys">
+    ${g('MOVING', [k(['j'], 'next file'), k(['k'], 'previous file'), k([']'], 'viewed, then the next file left'), k(['['], 'back: undo ], or a jump'), k(['/'], 'find a file'), k(['f'], 'search the repository'), k(['⌘', 'K'], 'do anything')])}
+    ${g('REVIEWING', [k(['v'], 'viewed, or not'), k(['o'], 'fold or unfold'), k(['s'], 'split or unified'), k(['g'], 'guide or tree order'), k(['m'], 'hide or show the marks'), k(['r'], 'read the change again')])}
+    ${g('ON SELECTED LINES', [k(['a'], 'ask there'), k(['c'], 'comment for your review'), k(['l'], 'add them to the chat'), k(['↵'], 'send the question'), k(['⇧', '↵'], 'new line'), k(['⌘', '↵'], 'add the review comment'), k(['esc'], 'cancel')])}
+    ${g('PANELS', [k(['1'], 'overview'), k(['2'], 'chat'), k(['3'], 'marks'), k(['t'], 'files'), k(['p'], 'inspector'), k(['?'], 'these keys')])}
+    ${g('POINTER', [m([], 'hover', 'Go docs'), m(['⌘'], 'click', 'definition'), m(['⇧', '⌘'], 'click', 'references'), k(['⌥'], 'hold over code: the loupe')])}
+  </div><div class="foot"><span><kbd>esc</kbd> close</span><span class="sp"></span><span>everything else is in <kbd>⌘</kbd><kbd>K</kbd></span></div></div></div>`);
   document.body.append(scrim);
   // The palette closes this sheet through keysClose, so its capture listener never outlives it.
   const close = () => { scrim.remove(); removeEventListener('keydown', esc1, true); keysClose = null; };
