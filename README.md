@@ -70,7 +70,9 @@ git clone https://github.com/lolwierd/loupe && cd loupe
 `install.sh` installs the dependencies and the `loupe` command, starts the service that keeps loupe at
 http://loupe.local and l.local from login (macOS), and adds loupe's Claude Code mod and skill. Then it runs
 `loupe doctor`, which checks every piece: the gh, Claude Code and Codex sign-ins (and that loupe's own call to Claude
-Code is signed in), both names, port 80 and the service. Run it again any time. `--no-service` and `--no-claude` skip those steps.
+Code is signed in), both names, port 80 and the service. It asks whether to set up https for loupe.local and l.local (with
+[mkcert](https://github.com/FiloSottile/mkcert): your password once, for its local certificate authority; `--https` and
+`--no-https` answer for it). Run it again any time. `--no-service` and `--no-claude` skip those steps.
 
 Then, in any repository:
 

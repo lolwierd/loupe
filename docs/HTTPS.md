@@ -28,6 +28,9 @@ the listener drops every connection that is not from this machine). With no file
 off 443 as well as 80. The daemon then hands out `https://loupe.local` as its address (the CLI opens it, the page shows it);
 `http://loupe.local` keeps working.
 
+`./install.sh` asks whether to set this up and runs the steps below for you (`./install.sh --https` does it without
+asking, `--no-https` skips the question); a certificate already in `~/.loupe/tls` is left as it is.
+
 The certificate has to be one your browser trusts, and it has to name both hosts. [mkcert](https://github.com/FiloSottile/mkcert)
 makes a private CA on your machine and a certificate from it. The steps, once:
 

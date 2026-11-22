@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
-# Sets loupe up on this machine, start to finish: its dependencies, the `loupe` command, the service that keeps it
-# running at http://loupe.local (and l.local), Claude Code's mod and skill, then `loupe doctor` checks every piece,
-# the sign-ins included. Run it again any time: a step that is already done is left as it is.
+# Sets loupe up on this machine, start to finish: its dependencies, the `loupe` command, https if you want it, the
+# service that keeps it running at http://loupe.local (and l.local), Claude Code's mod and skill, then `loupe doctor`
+# checks every piece, the sign-ins included. Run it again any time: a step that is already done is left as it is.
 #
-#   ./install.sh                everything
+#   ./install.sh                everything; asks whether to set up https
+#   ./install.sh --https        set up https without asking (mkcert: your password once, for its local CA)
+#   ./install.sh --no-https     do not ask about https
 #   ./install.sh --no-service   no LaunchAgent: run `loupe serve` yourself
 #   ./install.sh --no-claude    leave Claude Code's plugins alone
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=$(pwd -P)
 ORIG_PATH=$PATH
-service=1 claude=1
+service=1 claude=1 https=ask
 for a in "$@"; do
   case $a in
     --no-service) service=0 ;;
     --no-claude) claude=0 ;;
-    -h | --help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --https) https=yes ;;
+    --no-https) https=no ;;
+    -h | --help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a (see ./install.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -71,6 +75,42 @@ if [ $linked = 1 ]; then
   esac
 fi
 
+# https for loupe.local (and l.local): a certificate from mkcert's private CA in <state>/tls, read when the daemon starts
+# (docs/HTTPS.md). It is asked before the service starts, so a new certificate is taken up with no restart. Without a
+# terminal to ask in, or with --no-https, nothing here runs; the steps stay in docs/HTTPS.md.
+step "https"
+TLS="${LOUPE_HOME:-$HOME/.loupe}/tls" HOST="${LOUPE_NAME:-loupe}.local" made_tls=0
+names=("$HOST"); [ "${LOUPE_NAME:-loupe}" = loupe ] && names+=(l.local)
+if [ -f "$TLS/cert.pem" ] && [ -f "$TLS/key.pem" ]; then
+  ok "a certificate is there: https://$HOST  $D$TLS$Z"
+elif [ "$(uname)" != Darwin ]; then
+  note "set up by hand off macOS, if you want it: docs/HTTPS.md"
+else
+  if [ $https = ask ]; then
+    if [ -t 0 ]; then
+      note "https serves https://$HOST with a certificate your browser trusts. It uses mkcert: a private certificate"
+      note "authority made on this machine and added to the system keychain (your password, once; mkcert -uninstall"
+      note "takes it out), and a certificate for ${names[*]} from it."
+      read -r -p "Set up https? [y/N] " yn
+      case $yn in [yY]*) https=yes ;; *) https=no ;; esac
+    else
+      https=no
+    fi
+  fi
+  if [ $https = no ]; then
+    note "no https: http://$HOST works as it is (./install.sh --https sets it up later)"
+  elif ! command -v mkcert >/dev/null && ! { command -v brew >/dev/null && brew install mkcert >/dev/null; }; then
+    note "https needs mkcert (brew install mkcert, or https://github.com/FiloSottile/mkcert); then ./install.sh --https"
+  elif ! mkcert -install; then
+    note "mkcert could not add its CA to the keychain; the steps are in docs/HTTPS.md"
+  elif mkdir -p "$TLS" && chmod 700 "$TLS" && mkcert -cert-file "$TLS/cert.pem" -key-file "$TLS/key.pem" "${names[@]}" >/dev/null 2>&1; then
+    made_tls=1
+    ok "https for ${names[*]}  $D$TLS$Z"
+  else
+    note "mkcert could not make the certificate; the steps are in docs/HTTPS.md"
+  fi
+fi
+
 step "The service"
 PLIST="$HOME/Library/LaunchAgents/dev.${LOUPE_NAME:-loupe}.daemon.plist"
 if [ $service = 0 ]; then
@@ -79,8 +119,13 @@ elif [ "$(uname)" != Darwin ]; then
   note "no service on $(uname): run loupe serve (http://127.0.0.1:${LOUPE_PORT:-4500})"
 else
   was=$( [ -f "$PLIST" ] && /usr/libexec/PlistBuddy -c 'Print :WorkingDirectory' "$PLIST" 2>/dev/null || true)
-  if [ -z "$was" ] || [ "$was" = "$ROOT" ] || replace_ok "the service runs $was"; then "$NODE" bin/loupe.mjs service install; fi
+  if [ -z "$was" ] || [ "$was" = "$ROOT" ] || replace_ok "the service runs $was"; then
+    "$NODE" bin/loupe.mjs service install
+  elif [ $made_tls = 1 ]; then
+    "$NODE" bin/loupe.mjs service restart >/dev/null && ok "restarted the service, so it takes the certificate"
+  fi
 fi
+[ $made_tls = 1 ] && [ $service = 0 ] && note "loupe serve takes the certificate when it starts"
 
 step "Claude Code"
 if [ $claude = 0 ]; then
