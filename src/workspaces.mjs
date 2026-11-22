@@ -172,6 +172,7 @@ export class Workspace {
       if (m.pending) { m.pending = false; m.queued = false; if (!m.text) m.error = 'Interrupted: loupe restarted before the answer came back. Ask again.'; }
     }
     if (this.review.data.brief?.pending) { this.review.data.brief.pending = false; this.review.data.brief.error ||= 'Interrupted: loupe restarted while writing it.'; }
+    if (this.review.data.brief?.scene?.pending) { this.review.data.brief.scene = { ...this.review.data.brief.scene, pending: false, step: null, error: 'Interrupted: loupe restarted while drawing it.' }; }
     if (this.review.data.notes?.pending) {
       this.review.data.notes.pending = false;
       this.review.data.notes.error ||= 'Interrupted: loupe restarted while writing file notes.';

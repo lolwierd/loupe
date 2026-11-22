@@ -7,12 +7,16 @@
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { keepModelsCurrent, reach } from './models.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import { WEB, ROOT, PORT, HOSTNAME, SHORT_HOSTNAME, TLS_DIR, NAME, VERSION, MODELS, EFFORTS, DEFAULTS, BIN, STATE_DIR, modelKind, lineOf } from './config.mjs';
 import * as W from './workspaces.mjs';
 import * as C from './claude.mjs';
+import * as G from './guide.mjs';
+import { handleMcp } from './mcp.mjs';
+import { takeDraft, docPage } from './scene-render.mjs';
 import * as L from './live.mjs';
 import * as A from './actions.mjs';
 import { stackFor } from './stacks.mjs';
@@ -92,6 +96,25 @@ async function route(req, res, url) {
     if (!file.startsWith(WEB + path.sep)) return send(res, 404, { error: 'not found' });
     return serveFile(res, file);
   }
+  // a scene written as a document: the model's HTML, CSS and JS, served with no network and sandboxed by its own policy
+  // (so even opened in a tab it runs at an opaque origin), framed only by loupe; the theme arrives in the address
+  const sd = /^\/scene-doc\/([\w.-]+)\/([\w-]{4,40})$/.exec(p);
+  if (method === 'GET' && sd) {
+    // only ever as a frame (a scene opened as a page of its own could navigate its tab); browsers say what a request is for
+    const dest = req.headers['sec-fetch-dest'];
+    if (dest && dest !== 'iframe') return send(res, 403, { error: 'a scene is shown only in loupe\'s frame' });
+    // a kept scene, or a draft the check renders before it is kept
+    const html = sd[1] === 'draft' ? takeDraft(sd[2]) : (W.get(sd[1])?.review?.data?.brief?.scenes || []).find((s) => s.id === sd[2] && typeof s.html === 'string')?.html;
+    if (typeof html !== 'string') return send(res, 404, { error: 'no such scene' });
+    const { headers, body } = docPage(html, url.searchParams.get('t'), { shim: fs.readFileSync(path.join(WEB, 'js/scene-doc.js'), 'utf8'), kit: fs.readFileSync(path.join(WEB, 'js/scene-kit.js'), 'utf8') });
+    res.writeHead(200, headers);
+    return res.end(body);
+  }
+  // the bare page the check frames a draft in: loupe's colours and type, nothing else
+  if (method === 'GET' && p === '/scene-host') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': `default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; frame-src http://${req.headers.host}/scene-doc/draft/; frame-ancestors 'none'`, 'X-Content-Type-Options': 'nosniff' });
+    return res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="/web/style.css"></head><body style="margin:0;background:var(--bg)"></body></html>');
+  }
   if (method === 'GET' && p === '/vendor/marked.js') return serveFile(res, path.join(ROOT, 'node_modules/marked/lib/marked.esm.js'));
   if (method === 'GET' && p.startsWith('/avatar/')) { let login = ''; try { login = decodeURIComponent(p.slice(8)); } catch { /* not a login */ } return serveAvatar(res, login); }
   if (p === '/favicon.ico' || p === '/favicon.svg') return serveFile(res, path.join(WEB, 'icon.svg'));
@@ -112,7 +135,8 @@ async function route(req, res, url) {
     const html = fs.readFileSync(path.join(WEB, 'index.html'), 'utf8').replace('<head>', `<head>\n<meta name="loupe-nav" content="${nav}">`);
     // Scripts only from loupe itself: even if other people's markdown (a PR body, a comment) slipped an element past
     // the renderer, nothing in it could run next to the Approve and Push buttons.
-    const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://github.com https://*.githubusercontent.com; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+    // frames only from the scene route: a scene's frame cannot be sent to any other page of loupe's
+    const csp = `frame-src ${req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}/scene-doc/; ` + "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://github.com https://*.githubusercontent.com; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Frame-Options': 'DENY', 'Content-Security-Policy': csp, 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' });
     return res.end(html);
   }
@@ -447,7 +471,27 @@ async function route(req, res, url) {
   if (method === 'GET' && sub === '/sessions') return send(res, 200, { live: L.forRoot(ws.root || ''), sessions: await C.sessionsFor(ws) });
   if (method === 'POST' && sub === '/brief') {
     const b = await readBody(req);
+    // the page asked first, saying what a new brief would drop: if that has changed since, it asks again
+    const d = G.drops(ws.review.data.brief);
+    if (d.n && b.expect !== d.key) return send(res, 409, { error: 'The guide changed since you were asked; look again before regenerating.' });
     C.brief(ws, { model: b.model, effort: b.effort });
+    return send(res, 200, { started: true });
+  }
+  // a chat's edit to the guide, taken back from the page
+  if (method === 'POST' && sub === '/guide/undo') {
+    const b = await readBody(req);
+    const r = G.undoGuide(ws.review.data, String(b.id || ''), await ws.files('all', { fresh: true }));
+    if (!r.ok) return send(res, 409, { error: r.message });
+    ws.review.save(); await C.emitBrief(ws);
+    return send(res, 200, { message: r.message });
+  }
+  // the brief's scene, written again (another model, or after it failed)
+  if (method === 'POST' && sub === '/scene') {
+    const b = await readBody(req), plan = ws.review.data.brief?.motion;
+    if (!plan?.warranted) return send(res, 409, { error: 'the brief asked for no scene' });
+    if (ws.review.data.brief?.pending) return send(res, 409, { error: 'the guide is being written again; its scene comes with it' });
+    if (G.chatTouchedScene(ws.review.data.brief)) return send(res, 409, { error: 'A chat changed this guide\u2019s scene; undo that first, or ask the chat for a new one.' });
+    C.writeScene(ws, plan, { model: b.model, effort: b.effort });
     return send(res, 200, { started: true });
   }
   if (method === 'POST' && sub === '/notes') {
@@ -486,17 +530,19 @@ function publicRec(ws) {
   return { kind: r.kind, slug: r.slug, root: r.root, owner: r.owner, repo: r.repo, number: r.number, clone: r.clone, worktree: r.worktree, pr: r.pr || null };
 }
 async function reviewOut(ws) {
-  const d = ws.review.data, v = ws.visibleReview();
+  const d = ws.review.data;
+  if (d.brief?.sections?.some((s) => !s.id) || d.brief?.diagrams?.some((x) => !x.id)) { G.ensureIds(d); ws.review.save(); } // ids for a guide written before parts had them
+  const v = ws.visibleReview();
   const convs = {};
   for (const [id, c] of Object.entries(v.convs)) convs[id] = { ...c, busy: C.isBusy(id) };
   return { viewed: d.viewed, unviewed: d.unviewed || {}, checks: d.checks || {}, threads: v.threads, convs, chats: v.chats, brief: await briefOut(ws), notes: d.notes || null, verdict: d.verdict || null, seenHead: d.seenHead };
 }
 // The brief, marked stale when the change it was written for is no longer the change.
 export async function briefOut(ws) {
-  const b = ws.review.data.brief;
-  if (!b?.key) return b;
-  const key = W.contentKey(await ws.files('all').catch(() => []));
-  return { ...b, stale: key !== b.key };
+  const files = ws.review.data.brief?.key ? await ws.files('all').catch(() => []) : null;
+  const b = ws.review.data.brief; // read after the wait, with what can be undone on it
+  if (!b) return b;
+  return { ...b, ...(b.key ? { stale: W.contentKey(files) !== b.key } : {}), edits: G.guideEdits(ws.review.data), drops: G.drops(b) };
 }
 // ------------------------------------------------------------------ avatars
 // A GitHub avatar, fetched once and kept in the state folder. github.com/<login>.png is a redirect to GitHub's image host:
@@ -605,6 +651,9 @@ function handler(req, res) {
   if (!hostOk(req.headers.host)) { res.writeHead(421, { 'Content-Type': 'text/plain' }); return res.end(`loupe answers only to ${HOSTNAME}, localhost and 127.0.0.1\n`); }
   const origin = req.headers.origin;
   if (origin && !originOk(origin)) return send(res, 403, { error: 'cross-origin request refused' });
+  // a Codex chat's tools: their own key (the token in the path), and they refuse any request a page could send
+  const mcp = /^\/mcp\/([\w-]{20,64})$/.exec(url.pathname);
+  if (mcp) return handleMcp(req, res, mcp[1]).catch((err) => { if (!res.headersSent) send(res, 500, { error: String(err?.message || err) }); });
   // A request that changes something must say it is loupe's: a header a cross-site page cannot send without a
   // CORS preflight, which loupe never answers.
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers['x-loupe'] !== '1') return send(res, 403, { error: 'missing X-Loupe header' });

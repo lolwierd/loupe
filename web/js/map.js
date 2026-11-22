@@ -15,6 +15,7 @@ import { S, esc, pref, $, I } from './core.js';
 import { md } from './md.js';
 import { hooks } from './hooks.js';
 import { modelKind, shimmerSync } from './ui.js';
+import { sceneSlot, mountScenes, parkScenes } from './scene.js';
 
 const NODE_H = 44, PADX = 12, LETTER = 14, MIN_W = 96, MAX_W = 232, ROW_GAP = 44, ROW_GAP_TB = 56, GUTTER = 48, GUTTER_TB = 40, MAX_GUTTER = 200, PAD = 2;
 const CLEAR = 10;                                     // room kept free around a box for line work
@@ -464,17 +465,49 @@ function legend(d) {
 const inline = (s, o) => md(s, o).replace(/^<p>|<\/p>\s*$/g, '');
 const stepLine = (b) => (b.step ? `Regenerating · reading ${b.step}` : 'Regenerating…');
 
+// The card's tabs: the diagrams, then the scenes (the animations); a scene being drawn says so at the tabs' end.
+export const scenesOf = (b) => (b?.scenes || []).filter((s) => typeof s.html === 'string'); // a scene is a document; anything else is not shown
+const tabsOf = (b) => [...(b?.diagrams || []).map((d) => ({ d })), ...scenesOf(b).map((s) => ({ s }))];
+// the tab the reader picked, kept by its part's id: an index would slide onto another part when a chat adds or removes
+// one before it. When that part goes, the tab at its place (a neighbour) is shown.
+const tabId = (x) => (x.s ? `s:${x.s.id}` : `d:${x.d.id ?? ''}`);
+function pickedTab(items) {
+  const id = pref.get('mapTabId', null), k = id ? items.findIndex((x) => tabId(x) === id) : -1;
+  if (k >= 0) { if (Number(pref.get('mapTab', 0)) !== k) pref.set('mapTab', k); return k; }
+  const at = Math.max(0, Math.min(items.length - 1, Number(pref.get('mapTab', 0)) || 0));
+  if (items[at]) pickTab(items, at); // the neighbour shown is now the pick, so a part coming back later does not take it
+  return at;
+}
+const pickTab = (items, i) => { pref.set('mapTab', i); pref.set('mapTabId', items[i] ? tabId(items[i]) : null); };
+const tabName = (x) => (x.s ? x.s.title : x.d.title || (x.d.kind === 'flow' ? 'Flow' : 'Map'));
+// a part a chat made, or changed: said quietly (the Overview lists the edits, with Undo)
+export const chatMark = (p) => (p?.by !== 'chat' ? '' : `<span class="bychat" title="Undo is in the Overview, under Changed in chat">${(p.origin || 'chat') === 'chat' ? 'made in chat' : 'changed in chat'}</span>`);
+const madeInChat = chatMark;
+function sceneState(b) {
+  const sc = b?.scene;
+  if (sc?.pending) return `<span class="mstate shimmer" style="${shimmerSync()}">${esc(sc.step ? `Drawing the scene \u00b7 reading ${sc.step}` : 'Drawing the scene\u2026')}</span>`;
+  // Try again only while a chat's change to the brief's scene does not stand in its way (the daemon would refuse it)
+  const touched = (b?.scenes || []).some((s) => s.by === 'chat' && (s.origin || 'chat') !== 'chat') || (b?.removedInChat || []).some((r) => r.kind === 'scene');
+  if (sc?.error && b?.motion?.warranted && !b.pending && !touched && !(b.scenes || []).some((s) => (s.origin || (s.by === 'chat' ? 'chat' : 'brief')) !== 'chat')) return `<span class="mstate">The scene could not be drawn.</span><button class="link" data-act="scene" title="${esc(sc.error)}">Try again</button>`;
+  return '';
+}
+
 export function mapCardHTML(b) {
-  if (!b?.context?.system && !b?.diagrams?.length) return '';
+  if (!b?.context?.system && !b?.diagrams?.length && !b?.scenes?.length && !sceneState(b)) return '';
   queueMicrotask(watchWidth);
+  queueMicrotask(() => mountScenes());
   const open = pref.get('mapOpen', true);
-  const c = b.context || {}, ds = b.diagrams || [], plan = b.plan || {};
+  const c = b.context || {}, plan = b.plan || {}, items = tabsOf(b);
   const o = { images: modelKind(b.model) !== 'codex', citations: b.citations };
-  const which = Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0));
-  const d = ds[which], dir = d ? pickDir(d) : 'lr';
-  const big = `<button class="link dgbig" data-act="mapbig" title="The drawing across the whole window">Open large</button>`;
-  const fig = d ? `<figure class="dg" data-dir="${dir}" data-room="${Math.round(room())}"><div class="dgbar">${ds.length > 1 ? `<div class="dgtabs" role="tablist">${ds.map((x, i) => `<button role="tab" data-act="maptab" data-i="${i}" aria-selected="${i === which}">${esc(x.title || (x.kind === 'flow' ? 'Flow' : 'Map'))}</button>`).join('')}</div>` : `<div class="dgtabs"><span class="one">${esc(d.title || 'Map')}</span></div>`}${big}</div>` +
-    `<div class="dgview">${diagramSVG(d, dir)}</div>${d.caption ? `<figcaption>${inline(d.caption, o)}</figcaption>` : ''}${legend(d)}</figure>` : '';
+  const which = pickedTab(items);
+  const it = items[which], d = it?.d, dir = d ? pickDir(d) : 'lr';
+  const big = `<button class="link dgbig" data-act="mapbig" title="${it?.s ? 'The scene' : 'The drawing'} across the whole window">Open large</button>`;
+  const tabs = items.length > 1 ? `<div class="dgtabs" role="tablist">${items.map((x, i) => `<button role="tab" data-act="maptab" data-i="${i}" aria-selected="${i === which}"${x.s ? ' class="sc"' : ''} title="${esc(tabName(x))}"><span class="tn">${esc(tabName(x))}</span></button>`).join('')}</div>` : `<div class="dgtabs"><span class="one">${it ? esc(tabName(it)) : ''}</span></div>`;
+  const body = !it ? '' : it.s
+    ? `<div class="dgview scene">${sceneSlot(it.s, 'map')}</div>${it.s.why ? `<figcaption>${esc(it.s.why)} ${madeInChat(it.s)}</figcaption>` : madeInChat(it.s)}`
+    : `<div class="dgview">${diagramSVG(d, dir)}</div>${d.caption || d.by === 'chat' ? `<figcaption>${d.caption ? inline(d.caption, o) : ''} ${madeInChat(d)}</figcaption>` : ''}${legend(d)}`;
+  const fig = it ? `<figure class="dg${it.s ? ' scene' : ''}" data-dir="${dir}" data-room="${Math.round(room())}"><div class="dgbar">${tabs}<span class="sp"></span>${sceneState(b)}${big}</div>${body}</figure>`
+    : (sceneState(b) ? `<figure class="dg"><div class="dgbar"><span class="sp"></span>${sceneState(b)}</div></figure>` : '');
   const text = `<div class="mtext">` +
     (c.system ? `<h3>How this part works</h3><div class="md">${md(c.system, o)}</div>` : '') +
     (c.before || c.after ? `<dl class="ba">${c.before ? `<dt>Before</dt><dd class="md">${md(c.before, o)}</dd>` : ''}${c.after ? `<dt>After</dt><dd class="md">${md(c.after, o)}</dd>` : ''}</dl>` : '') +
@@ -489,21 +522,28 @@ export function mapCardHTML(b) {
 }
 // after the brief changes: redraw the card in place, or put it in when the first brief lands
 hooks.mapChanged = () => {
-  const m = $('#mapcard'), html = mapCardHTML(S.review.brief);
-  if (m) { m.outerHTML = html; return; }
+  const m = $('#mapcard');
+  if (m) parkScenes(m);
+  const html = mapCardHTML(S.review.brief);
+  if (m) { m.outerHTML = html; if (!html) mountScenes(); return; }
   const cards = $('#cards');
   if (!html || !cards || !cards.querySelector(':scope > .file')) return;
   const after = cards.querySelector(':scope > .banner');
   if (after) after.insertAdjacentHTML('afterend', html); else cards.insertAdjacentHTML('afterbegin', html);
 };
-hooks.mapStep = () => { const t = $('#mapcard .mstate'); if (t && S.review.brief) t.textContent = stepLine(S.review.brief); };
+hooks.mapStep = () => { const t = $('#mapcard .mh .mstate'); if (t && S.review.brief) t.textContent = stepLine(S.review.brief); };
+hooks.scenes = () => scenesOf(S.review.brief);
+hooks.sceneCaption = (s) => (s.why ? `<p>${esc(s.why)}</p>` : ''); // a scene's words are its writer's: plain text, nothing in them loads
 hooks.briefPending = () => hooks.mapChanged();
 
 // the drawing across the whole window, as Claude laid it out, in the same dialog frame as the rest of loupe
 // at: the drawing's place in the brief (a Back to it after the brief was written again finds the drawing now there)
 function openLarge(focusNode, at) {
-  const b = S.review.brief, ds = b?.diagrams || [];
-  let active = ds[at] || ds[Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0))];
+  const b = S.review.brief, items = tabsOf(b);
+  const pick = items[at] || items[pickedTab(items)];
+  if (pick?.s) return openSceneLarge(pick.s);
+  const ds = b?.diagrams || [];
+  let active = pick?.d;
   if (!active) return;
   const opener = document.activeElement;
   const scrim = document.createElement('div');
@@ -525,7 +565,7 @@ function openLarge(focusNode, at) {
     if (e.target.closest('[data-mb="close"]')) return close();
     const tab = e.target.closest('[data-mb="tab"]');
     if (tab) { // the card behind follows, so closing it shows the drawing you were on
-      active = ds[Number(tab.dataset.i)] || active; pref.set('mapTab', ds.indexOf(active)); fill(); hooks.mapChanged?.();
+      active = ds[Number(tab.dataset.i)] || active; pickTab(items, items.findIndex((x) => x.d === active)); fill(); hooks.mapChanged?.();
       scrim.querySelector(`[data-mb="tab"][data-i="${ds.indexOf(active)}"]`)?.focus();
       return;
     }
@@ -549,6 +589,31 @@ function openLarge(focusNode, at) {
     (node || scrim.querySelector('[data-mb="close"]'))?.focus({ preventScroll: true });
   });
 }
+// a scene across the whole window: the same dialog frame, its player wider
+function openSceneLarge(scene) {
+  const opener = document.activeElement, scrim = document.createElement('div');
+  scrim.className = 'sheetscrim';
+  scrim.innerHTML = `<div class="sheet k-map k-scene" role="dialog" aria-modal="true" aria-labelledby="scenebigt" id="mapbig"><header class="shh"><h2 class="t" id="scenebigt">${esc(scene.title)}</h2><span class="sp"></span><button class="icon" data-mb="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
+    `<div class="mbview scene">${sceneSlot(scene, 'large')}</div><div class="mbcap md"${scene.why ? '' : ' hidden'}>${hooks.sceneCaption(scene)}</div></div>`;
+  let muted = [];
+  const close = () => { if (!scrim.isConnected) return; scrim.remove(); document.removeEventListener('keydown', key, true); for (const el of muted) el.inert = false; mountScenes(); for (const el of [opener === document.body || opener === document.documentElement ? null : opener, $('#mapcard [data-act="mapbig"]'), $('#mapcard .mtoggle'), $('.ptabs .tab[aria-selected="true"]'), ...document.querySelectorAll('header.top button')]) { if (!el?.isConnected || el.disabled) continue; el.focus(); if (document.activeElement === el) break; } }; // the first that really takes focus
+  scrim.close = close; // the scene's player closes it this way when its scene goes
+  const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+  scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) close(); });
+  scrim.addEventListener('click', (e) => {
+    if (e.target.closest('[data-mb="close"]')) return close();
+    const link = e.target.closest('a.loc');
+    if (link) { e.preventDefault(); close(); hooks.goLoc?.({ path: link.dataset.p, line: Number(link.dataset.l), excerpt: link.dataset.excerpt }, link, () => hooks.openScene(scene.id)); } // Back opens it again, if it is still there
+  });
+  document.addEventListener('keydown', key, true);
+  document.body.append(scrim);
+  muted = [...document.body.children].filter((el) => el !== scrim && !el.inert); // the page behind cannot be reached while it is open
+  for (const el of muted) el.inert = true;
+  mountScenes(scrim);
+  requestAnimationFrame(() => scrim.querySelector('[data-mb="close"]')?.focus({ preventScroll: true })); // keys reach the page here, so Escape closes it (inside the scene's frame they are the scene's)
+}
+// a scene by id, opened large: from Back after a link out of it
+hooks.openScene = (id) => { const s = (S.review.brief?.scenes || []).find((x) => x.id === id); if (s) openSceneLarge(s); };
 // the column changes width when a pane opens or closes: turn the drawing when the other way fits better
 let watched = null, observer = null, rz = 0;
 function watchWidth() {
@@ -559,7 +624,7 @@ function watchWidth() {
   watched = cards;
   if (!cards) return;
   observer = new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => {
-    const fig = $('#mapcard .dg'), ds = S.review.brief?.diagrams || [], d = ds[Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0))];
+    const fig = $('#mapcard .dg'), items = tabsOf(S.review.brief), d = items[pickedTab(items)]?.d;
     if (!fig || !d) return;
     const dir = pickDir(d), lanes = dir === 'tb' && Math.abs(room() - Number(fig.dataset.room)) >= 8;
     if (fig.dataset.dir !== dir || lanes) hooks.mapChanged?.();
@@ -591,9 +656,10 @@ document.addEventListener('click', (e) => {
   if (!card) return;
   const b = e.target.closest('[data-act]');
   if (b?.dataset.act === 'maptoggle') { const open = card.classList.toggle('shut') === false; pref.set('mapOpen', open); b.setAttribute('aria-expanded', String(open)); return; }
-  if (b?.dataset.act === 'maptab') { pref.set('mapTab', Number(b.dataset.i)); card.outerHTML = mapCardHTML(S.review.brief); return; }
+  if (b?.dataset.act === 'maptab') { pickTab(tabsOf(S.review.brief), Number(b.dataset.i)); parkScenes(card); card.outerHTML = mapCardHTML(S.review.brief); return; }
   if (b?.dataset.act === 'mapstart') return hooks.goLoc?.({ path: b.dataset.p, line: 0 }, b);
   if (b?.dataset.act === 'mapbig') return openLarge();
+  if (b?.dataset.act === 'scene') return hooks.redrawScene?.();
   const nd = e.target.closest('.nd[data-ref]');
   if (nd) return goRef(nd);
 });

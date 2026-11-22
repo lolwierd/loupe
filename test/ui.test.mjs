@@ -194,11 +194,11 @@ test('the Stop button sends a stop request for its containing conversation', asy
 
 test('a rejected manual brief can be retried without reloading', async () => {
   const source = fs.readFileSync(new URL('../web/js/panel.js', import.meta.url), 'utf8');
-  const brief = source.slice(source.indexOf('export function rebrief()'), source.indexOf('hooks.rebrief =')).replace('export ', '');
+  const brief = source.slice(source.indexOf('export function rebrief('), source.indexOf('hooks.rebrief =')).replace('export ', '');
   const S = { id: 'pr', tab: 'chat', review: { brief: { tldr: 'Old brief' } } };
   let refreshed = 0;
   await vm.runInNewContext(brief + '\nrebrief()', {
-    S, hooks: {}, renderTabs() { refreshed++; }, toast() {}, wsApi: (p) => p, briefRun: () => ({}),
+    S, hooks: {}, renderTabs() { refreshed++; }, toast() {}, wsApi: (p) => p, briefRun: () => ({}), dropsOnRegenerate: () => 0,
     api: async () => { throw new Error('daemon unavailable'); },
   });
   assert.equal(S.review.brief.pending, false);

@@ -181,6 +181,32 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
   Remembered in the browser, and followed by its other tabs.
   Away, he is not mounted, so nothing of him runs.
 
+- **Scene** (an animation of the change's core, in the map card's tabs, in its guide section's head, and opened large):
+  a document its writer makes for that change, its own HTML, CSS and JavaScript, served by loupe at `/scene-doc` in a
+  sandboxed frame (an opaque origin, no network of any kind: the policy closes the rest and the shim takes WebRTC
+  away; nothing of loupe's in reach). loupe hands it material, not rules: its colour and type tokens as CSS variables,
+  the plate engine (`web/js/scene-kit.js`) as an optional global, and `loupe.open('file.go:120')`, which opens a line of
+  the change (from the large view: it closes, and Back opens it again). Under the frame: the scene's why (13 px). What
+  the scene shows and how it moves are its writer's, its own controls included; with reduced motion it starts still.
+  Before a scene is kept loupe renders it in a headless Chrome as the card shows it (680 px wide, light and dark):
+  errors, loads its frame refused, content cut off or a frame with nothing in it go back to the writer with its own
+  stills, which it reads and fixes (`src/scene-render.mjs`). A scene that stops answering for eight seconds is stopped
+  ("Run it again"), and one flooding the page with messages too; its frame is made only near the view and let go a
+  while after it leaves or the tab hides. A scene runs only where its no-connections header is kept (Chromium 152 on),
+  so nothing its script adds can reach out; elsewhere the card says it plays in Chrome 152 or later, and loupe's own
+  render check needs that Chrome too. It starts by itself on desktop Chromium without a touch screen, which runs a
+  sandboxed frame in a process of its own, so the stop works; on a phone, a tablet or a touch screen it waits for
+  "Play the scene". (The page cannot tell when a reader has turned either off in their own Chromium, the header with
+  a flag or site isolation; a scene could then reach out, or, stuck in a loop, freeze the page. loupe's render Chrome
+  is its own, started with a fresh profile and its own flags.) The brief decides whether
+  a change needs one (most do not) and says why in a line; a second run writes it. While it is written the card's tabs
+  say so ("Drawing the scene · reading …").
+- **Made in chat**: a part of the guide a chat added or changed says so in 11 px `--ink-3` (`made in chat`) where its
+  label is (a section's head line, a scene's caption). The Overview's brief lists the edits ("Changed in chat"), newest
+  first, each with Undo; a chat's edit also lands with a toast whose action is Undo. Regenerate keeps what chats added;
+  when it would drop a chat's edits to the brief's own parts it asks in its own place first ("Regenerate, dropping a
+  chat edit?" on the faint red, 3 s).
+
 ## Easter eggs
 Small things for whoever plays, and only things from loupe's own world: the loupe itself, and Mote being a beetle. Each
 is found by doing something a person might do anyway, never by a code; none fires during work (a dialog, an answer

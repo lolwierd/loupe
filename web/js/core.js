@@ -102,6 +102,7 @@ export function toast(msg, opt = {}) {
     t.addEventListener('mouseenter', () => { t.dataset.hover = '1'; clearTimeout(toastT); });
     t.addEventListener('mouseleave', () => { delete t.dataset.hover; if (!t.hidden) { clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 1600); } });
   }
+  delete t.dataset.edit; // what a toast offers to undo is its own; a new toast offers nothing of the last one's
   t.setAttribute('role', opt.fail ? 'alert' : 'status');
   t.classList.toggle('fail', !!opt.fail);
   t.innerHTML = `${opt.fail ? '<canvas class="pxi tx" data-i="cross" data-c="--danger" width="5" height="5" style="width:10px;height:10px" aria-hidden="true"></canvas>' : ''}<span>${esc(msg)}</span>${opt.action ? `<button class="tb">${esc(opt.action)}</button>` : ''}`;

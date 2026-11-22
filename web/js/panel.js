@@ -123,7 +123,7 @@ const tldrText = (t) => {
 function tldrHTML() {
   const b = S.review.brief;
   const write = (label) => `<div class="row"><button class="link" data-act="brief">${label}</button>${briefRunBtn()}</div>`;
-  if (b?.pending) return `<div class="card tldr"><div class="working big">${modelKind(briefRun().model) === 'claude' ? spark(32) : ''}<span class="shimmer" style="${shimmerSync()}">${b.step ? `Reading ${esc(b.step)}` : `Reading the change and the code around it${b.tldr ? ' again' : ''}…`}</span></div>${b.tldr ? `<div class="md">${md(tldrText(b.tldr), { images: modelKind(b.model) !== 'codex', citations: b.citations })}</div>` : ''}</div>`;
+  if (b?.pending) return `<div class="card tldr"><div class="working big">${modelKind(briefRun().model) === 'claude' ? spark(32) : ''}<span class="shimmer" style="${shimmerSync()}">${b.step ? `Reading ${esc(b.step)}` : `Reading the change and the code around it${b.tldr ? ' again' : ''}…`}</span></div>${b.tldr ? `<div class="md">${md(tldrText(b.tldr), { images: modelKind(b.model) !== 'codex', citations: b.citations })}</div>` : ''}${editsHTML()}</div>`;
   if (!b?.tldr) {
     return `<div class="card tldr"><div class="empty"><p class="big">No brief yet.</p><p>The model you pick reads the change and the code around it, then writes what it does and why, how that part of the system works, a map with the change marked on it, and how to review it.</p>${b?.error ? `<p class="err">${esc(b.error)}</p>` : ''}</div>${write('Write the brief')}</div>`;
   }
@@ -134,9 +134,23 @@ function tldrHTML() {
     (b.startHere ? `<div class="risk"><span class="faint">Start with</span><button class="chip" data-act="gofile" data-p="${esc(b.startHere)}"><span>${esc(b.startHere)}</span></button></div>` : '') +
     (b.context?.system || b.diagrams?.length ? `<div class="risk"><button class="link" data-act="gomap">The map of this change, above the code</button></div>` : '') +
     `<div class="mfoot"><span>${esc(modelName(b.model))} · ${esc(b.effort)}${b.ms ? ' · ' + (b.ms / 1000).toFixed(0) + ' s' : ''}${b.cost ? ' · $' + b.cost.toFixed(2) : ''} · ${ago(b.at)}</span></div>` +
+    editsHTML() +
     `<div class="row rebrief"><span class="sp"></span>${briefRunBtn()}<button class="link" data-act="brief" title="Write the guide and the map again with this model">Regenerate</button></div>` +
     (b.error ? `<div class="err">${esc(b.error)}</div>` : '') + `</div>`;
 }
+// What chats changed in the guide, newest first, each one undoable from here (the daemon refuses one a later edit
+// built on, and says so).
+const EDIT_VERB = { add: 'Added', replace: 'Replaced', remove: 'Removed' };
+function editsHTML() {
+  const all = S.review.brief?.edits || [], edits = all.slice(0, 6);
+  const can = all.find((e) => e.undo); if (can && !edits.includes(can)) edits.unshift(can); // the one Undo can do is always in view
+  if (!edits.length) return '';
+  const what = (e) => (e.kind === 'tldr' ? 'the TLDR' : `${e.kind === 'scene' ? 'animation' : e.kind} \u201c${esc(e.title)}\u201d`);
+  return `<div class="gedits"><div class="sh">Changed in chat</div>${edits.map((e) => `<div class="gedit${e.undone ? ' undone' : ''}"><span class="w">${EDIT_VERB[e.op]} ${what(e)}</span><span class="faint">${e.undone ? 'undone' : ago(e.at)}</span>${e.undo ? `<button class="link" data-act="undoedit" data-id="${esc(e.id)}">Undo</button>` : ''}</div>`).join('')}</div>`;
+}
+// edits a new brief would drop: chat's changes to parts the brief wrote (what chat added is kept)
+// the daemon says how many chat edits a new brief drops, and which (a key the confirm sends back)
+const dropsOnRegenerate = () => S.review.brief?.drops?.n || 0;
 // The description at the panel's own size, as an outline. The lead (everything before the first heading, bold-only
 // paragraph or <details>) shows whole blocks within 8 lines and says what it hides; each part after it is one row with
 // what it holds (its items, or how many of its tasks are done) and opens in place. A body without parts is cut at 14
@@ -525,8 +539,20 @@ function renderReview(body) {
 
 // Write the brief (the guide and the map) again, on the model and effort chosen in the Overview. The old one stays on
 // screen until the new one lands.
-export function rebrief() {
+export function rebrief({ button = null, sure = null } = {}) {
   if (S.review.brief?.pending) return;
+  // a new brief keeps what chat added, not what it changed in the brief's own parts: whichever way you got here, it asks
+  const n = dropsOnRegenerate();
+  if (n && sure === null && button?.dataset.armed === undefined) {
+    const say = `Regenerate, dropping ${n === 1 ? 'a chat edit' : `${n} chat edits`}?`;
+    if (button) {
+      button.dataset.armed = S.review.brief?.drops?.key || ''; button.dataset.was = button.textContent; button.classList.add('confirm'); button.textContent = say;
+      setTimeout(() => { if (button.isConnected) { delete button.dataset.armed; button.classList.remove('confirm'); button.textContent = button.dataset.was; } }, 3000);
+      return;
+    }
+    const key = S.review.brief?.drops?.key || '', ws = S.id; // what the toast says, for this change only
+    if (!button) { toast(`A new guide drops ${n === 1 ? 'a chat edit' : `${n} chat edits`} to the brief's own parts.`, { action: 'Regenerate', run: () => { if (S.id === ws) rebrief({ sure: key }); } }); return; }
+  }
   const run = briefRun();
   const id = S.id;
   const pending = S.review.brief = { ...(S.review.brief || {}), pending: true, error: null, step: null };
@@ -536,7 +562,8 @@ export function rebrief() {
     hooks.syncMote?.();
   };
   refresh();
-  return api(wsApi('/brief'), { method: 'POST', body: run }).catch((err) => {
+  const expect = sure ?? (button?.dataset.armed ? button.dataset.armed : S.review.brief?.drops?.key || ''); // exactly what you were told it drops
+  return api(wsApi('/brief'), { method: 'POST', body: { ...run, expect } }).catch((err) => {
     if (S.id !== id || S.review.brief !== pending) return;
     S.review.brief = { ...pending, pending: false, error: err.message };
     refresh();
@@ -556,7 +583,8 @@ $('#root').addEventListener('click', async (e) => {
     if (id) return api(wsApi(`/convs/${encodeURIComponent(id)}/stop`), { method: 'POST' }).catch((err) => toast(err.message, { fail: true }));
     return;
   }
-  if (act === 'brief') return rebrief();
+  if (act === 'brief') return rebrief({ button: b });
+  if (act === 'undoedit') return hooks.undoEdit?.(b.dataset.id);
   if (act === 'order') return hooks.setOrder?.(b.dataset.order);
   if (act === 'basemenu') return hooks.baseMenu?.(b);
   if (act === 'gofile') return hooks.goLoc?.({ path: b.dataset.p, line: Number(b.dataset.l) || 0 });

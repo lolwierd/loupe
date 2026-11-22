@@ -97,3 +97,11 @@ test('settings: hiddenOrgs is a validated list, and a bad one changes nothing', 
   assert.equal(st.autoBrief, false);
   assert.deepEqual(JSON.parse((await post({ hiddenOrgs: [] })).body).hiddenOrgs, []);
 });
+
+test('a scene document that is not there, or a draft that is not, is not found; the check\'s host page runs no script', async () => {
+  const h = `127.0.0.1:${port}`;
+  assert.equal((await req('GET', '/scene-doc/draft/no-such-token-here', { host: h })).status, 404);
+  assert.equal((await req('GET', '/scene-doc/no-ws/no-scene', { host: h })).status, 404);
+  const host = await req('GET', '/scene-host', { host: h });
+  assert.equal(host.status, 200); assert.match(host.headers['content-security-policy'], /script-src 'none'/); assert.match(host.headers['content-security-policy'], /frame-ancestors 'none'/);
+});

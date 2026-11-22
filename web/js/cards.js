@@ -5,9 +5,11 @@ import { buildRows, buildSplit, wordRanges, rowPlans, findRow, findLine, revealA
 import { md } from './md.js';
 import { modelKind, msgHTML, runBtn, runOf, grow, menu, shimmerSync } from './ui.js';
 import { hooks } from './hooks.js';
-import { mapCardHTML } from './map.js';
+import { mapCardHTML, chatMark } from './map.js';
+import { sceneSlot, mountScenes, parkScenes } from './scene.js';
 import { spark, icon } from './pixel.js';
 import { eligibleForNotes, fileNoteKey } from './file-notes.js';
+import { checkId } from './check-id.js';
 
 // the glyph of a question: Claude's spark, or a plain bubble for Codex (the spark and orange are Claude's alone)
 const askGlyph = (r) => (modelKind(r?.model) === 'codex' ? I.codex : spark(16, true));
@@ -84,19 +86,22 @@ function cardHTML(f) {
 
 // A chapter head: the guide's section, written once where you read it. Its checks tick in place, kept with the brief
 // they came from.
-export const checkKey = (k, j) => `${S.review.brief?.at || 0}:${k}:${j}`;
+// a tick is kept with the brief it came from, its section and the check's own words (check-id.js)
+export const checkKey = (k, j, sec = S.review.brief?.sections?.[k]) => (sec?.id ? `${S.review.brief?.at || 0}:${sec.id}:${checkId(sec.check?.[j])}` : `${S.review.brief?.at || 0}:${k}:${j}`);
 function guideHeadHTML(sec, k) {
   const markdown = { images: modelKind(S.review.brief.model) !== 'codex', citations: S.review.brief.citations };
   const files = sec.files.map(fileOf).filter(Boolean);
   const left = files.filter((f) => !isViewed(f) && f.kind !== 'generated').reduce((n, f) => n + lines(f), 0);
   const checks = (sec.check || []).map((c, j) => {
-    const on = !!S.review.checks?.[checkKey(k, j)];
+    const on = !!S.review.checks?.[checkKey(k, j, sec)];
     const label = `check-${k}-${j}`;
-    return `<div class="gck${on ? ' on' : ''}" data-act="gck" data-key="${esc(checkKey(k, j))}"><button class="b" type="button" aria-pressed="${on}" aria-labelledby="${label}">${icon('check', '--on-act')}</button><span class="x" id="${label}">${md(c, markdown).replace(/^<p>|<\/p>\s*$/g, '')}</span></div>`;
+    return `<div class="gck${on ? ' on' : ''}" data-act="gck" data-key="${esc(checkKey(k, j, sec))}"><button class="b" type="button" aria-pressed="${on}" aria-labelledby="${label}">${icon('check', '--on-act')}</button><span class="x" id="${label}">${md(c, markdown).replace(/^<p>|<\/p>\s*$/g, '')}</span></div>`;
   }).join('');
   const n = S.review.brief.sections.length;
-  return `<div class="gsec" id="g-${k}"><div class="gmain"><div class="sh"><span>Section ${k + 1} of ${n}</span><span class="dot">·</span><span>${esc(sec.role)}</span><span class="sp"></span><span class="n">${left ? `${left.toLocaleString()} lines left` : 'all viewed'}</span></div><h2 class="tick">${tick(sec.title)}</h2>` +
-    (sec.context ? `<div class="ctx md">${md(sec.context, markdown)}</div>` : '') + `<div class="why md">${md(sec.why, markdown)}</div></div>${checks ? `<div class="gcks" aria-label="What to check"><div class="sh">What to check</div>${checks}</div>` : ''}</div>`;
+  const scenes = (hooks.scenes?.() || []).filter((s) => sec.id && s.sectionId === sec.id);
+  return `<div class="gsec" id="g-${k}"><div class="gmain"><div class="sh"><span>Section ${k + 1} of ${n}</span><span class="dot">·</span><span>${esc(sec.role)}</span>${sec.by === 'chat' ? `<span class="dot">·</span>${chatMark(sec)}` : ''}<span class="sp"></span><span class="n">${left ? `${left.toLocaleString()} lines left` : 'all viewed'}</span></div><h2 class="tick">${tick(sec.title)}</h2>` +
+    (sec.context ? `<div class="ctx md">${md(sec.context, markdown)}</div>` : '') + `<div class="why md">${md(sec.why, markdown)}</div></div>${checks ? `<div class="gcks" aria-label="What to check"><div class="sh">What to check</div>${checks}</div>` : ''}` +
+    (scenes.length ? `<div class="gscenes">${scenes.map((s) => `<div class="gscene"><div class="sh"><span>${esc(s.title)}</span>${s.by === 'chat' ? `<span class="dot">·</span>${chatMark(s)}` : ''}</div>${sceneSlot(s, `sec-${sec.id}`)}${s.why ? `<p class="gscap">${esc(s.why)}</p>` : ''}</div>`).join('')}</div>` : '') + `</div>`;
 }
 
 let io = null;
@@ -106,6 +111,7 @@ export function renderCards(keepFiles = false) {
   const order = orderedFiles();
   const sections = S.review.brief?.sections || [];
   const cards = $('#cards');
+  parkScenes(cards);
   const banner = bannerHTML();
   // the map of the change comes first: what the code around it does, before any file
   const intro = banner + (order.length ? mapCardHTML(S.review.brief) : '');
@@ -123,6 +129,7 @@ export function renderCards(keepFiles = false) {
       before = el.nextElementSibling;
     }
     paintSel();
+    mountScenes();
     return;
   }
   cards.innerHTML = intro + (order.length ? order.map(({ f, sec }) => (sec !== null ? guideHeadHTML(sections[sec], sec) : '') + cardHTML(f)).join('')
@@ -138,6 +145,7 @@ export function renderCards(keepFiles = false) {
   }, { root: $('#center'), rootMargin: '400px 0px' });
   for (const c of $$('.file', cards)) io.observe(c);
   hooks.filterCards?.();
+  mountScenes();
 }
 function bannerHTML() {
   const m = S.ws;

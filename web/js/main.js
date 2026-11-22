@@ -226,7 +226,7 @@ async function loadFiles(reason) {
   S.files = files.files.map((f, i) => ({ ...f, i }));
   S.byPath = new Map(S.files.map((f) => [f.path, f]));
   // A model result can land while the files request is still in flight.
-  if (S.review.brief !== briefAtRequest) review.brief = S.review.brief;
+  if (S.review.brief !== briefAtRequest) review.brief = S.review.brief; // (what can be undone on it travels with it, as brief.edits)
   if (S.review.notes !== notesAtRequest) review.notes = S.review.notes;
   S.review = review;
   S.github ||= { pr: null, threads: [] };
@@ -602,9 +602,11 @@ function listenWs() {
   });
   on('brief', (d) => {
     const was = S.review.brief;
-    S.review.brief = d;
-    // while it is being written, only the line that says what it is reading changes
-    if (d.pending && was?.pending) { hooks.briefStep?.(); hooks.mapStep?.(); return; }
+    S.review.brief = d; // it carries what can be undone on it (brief.edits): one event, so the two never disagree
+    guideEditsChanged(was?.edits, d.edits);
+    // while it is being written, only the line that says what it is reading changes (unless a chat changed the guide meanwhile)
+    const guideOf = (x) => JSON.stringify([x?.tldr, x?.sections, x?.diagrams, (x?.scenes || []).map((s) => [s.id, s.at, s.by]), x?.scene, x?.edits]);
+    if (d.pending && was?.pending && guideOf(d) === guideOf(was)) { hooks.briefStep?.(); hooks.mapStep?.(); return; }
     syncMote(); if (S.ws) renderScopebar();
     if (S.tab === 'overview') renderPanel(); else renderTabs();
     if (S.order === 'guide') { renderTree(); renderCards(true); renderProgress(); } else hooks.mapChanged?.();
@@ -625,6 +627,23 @@ function listenWs() {
   on('page', () => location.reload());
 }
 let changedT = null;
+let undoToast = null; // the chat edit the toast offers to undo
+// a chat changed the guide: say so, with a way to take it back while it can be
+function guideEditsChanged(before = [], edits = []) {
+  const seen = new Set(before.map((e) => e.id));
+  if (undoToast && !edits.some((e) => e.id === undoToast && e.undo)) { if ($('#toast')?.dataset.edit === undoToast) $('#toast').hidden = true; undoToast = null; }
+  const fresh = edits.find((e) => !seen.has(e.id) && !e.undone);
+  if (!fresh) return;
+  const what = fresh.kind === 'tldr' ? 'the TLDR' : `the ${fresh.kind === 'scene' ? 'animation' : fresh.kind} \u201c${fresh.title}\u201d`;
+  toast(`Chat ${{ add: 'added', replace: 'replaced', remove: 'removed' }[fresh.op]} ${what}.`, fresh.undo ? { action: 'Undo', run: () => undoEdit(fresh.id) } : {});
+  const t = $('#toast'); if (t && fresh.undo) { t.dataset.edit = fresh.id; undoToast = fresh.id; }
+}
+// a chat's edit to the guide, taken back; the brief's scene, drawn again
+function undoEdit(id) {
+  return api(wsApi('/guide/undo'), { method: 'POST', body: { id } }).then((r) => toast(r.message)).catch((e) => toast(e.message, { fail: true })); // the brief comes back by its event
+}
+hooks.undoEdit = undoEdit;
+hooks.redrawScene = () => api(wsApi('/scene'), { method: 'POST', body: {} }).catch((e) => toast(e.message, { fail: true }));
 // Every minute while the page is in view, and when you come back to it, GitHub is asked again in the background (the
 // daemon answers from cache at once and sends 'github' if anything changed).
 const ghPoke = () => { if (S.id && !document.hidden) api(`/api/w/${S.id}/github`).catch(() => {}); };
@@ -637,7 +656,7 @@ let homeEs = null;
 let sleepT = null, asleep = false;
 // with desk sounds on, a hidden tab keeps its stream while an answer or the guide is being written, so the bell for it can
 // ring there; it lets go once nothing is
-const writing = () => !!S.review?.brief?.pending || Object.values(S.review?.convs || {}).some((c) => c.messages?.some((m) => m.pending && m.role !== 'user'));
+const writing = () => !!S.review?.brief?.pending || !!S.review?.brief?.scene?.pending || Object.values(S.review?.convs || {}).some((c) => c.messages?.some((m) => m.pending && m.role !== 'user'));
 function sleep() {
   if (S.id && hooks.sound?.on() && writing()) { sleepT = setTimeout(sleep, 20000); return; }
   wsEs?.close(); homeEs?.close(); asleep = true; S.lost = true;
@@ -1155,7 +1174,7 @@ document.addEventListener('click', async (e) => {
   const gs = e.target.closest?.('#tlist [data-act="gosec"]');
   if (gs) { const g = document.getElementById('g-' + gs.dataset.k); const first = S.review.brief?.sections?.[Number(gs.dataset.k)]?.files?.[0]; return first ? goLoc({ path: first, line: 0 }) : g?.scrollIntoView({ block: 'start' }); }
   const wb = e.target.closest?.('#tlist [data-act="writebrief"]');
-  if (wb) { setPane('panel', true); setTab('overview'); return hooks.rebrief?.(); }
+  if (wb) { setPane('panel', true); setTab('overview'); return hooks.rebrief?.({ button: wb }); }
   if (e.target.closest?.('#tlist [data-act="clearfilter"]')) { hooks.clearFilter(); $('#filter').focus(); return; }
   const tr = e.target.closest?.('.trow');
   if (tr) {

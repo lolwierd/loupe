@@ -50,7 +50,7 @@ function guideSideHTML(match) {
   if (openSec < 0 && rest.some((f) => f.path === S.current)) openSec = secs.length;
   const row = (k, title, fs, checks) => {
     const left = leftIn(fs), open = k === openSec;
-    const ticked = checks.filter((_, j) => S.review.checks?.[checkKey(k, j)]).length;
+    const ticked = checks.filter((_, j) => S.review.checks?.[checkKey(k, j, secs[k])]).length;
     return `<section class="gside${left ? '' : ' done'}${open ? ' open' : ''}" id="gs-${k}"><button class="gsh" data-act="gosec" data-k="${k}" aria-expanded="${open}"><span class="gi">${k < secs.length ? k + 1 : ''}</span><span class="gt tick">${tick(title)}</span><span class="num">${left ? left.toLocaleString() : icon('check', '--ok')}</span></button>` +
       (open ? `<div class="gfiles">${fs.map((f) => fileRow(f, 0, f.path.split('/').pop())).join('')}</div>${checks.length ? `<div class="gsum">${ticked} of ${plural(checks.length, 'check')} ticked</div>` : ''}` : '') + '</section>';
   };

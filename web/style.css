@@ -1234,6 +1234,15 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 .mapcard .dg { margin: 0; padding: 0 var(--s5) var(--s5); border-bottom: 1px solid var(--rule); }
 .mapcard .dgbar { display: flex; align-items: stretch; gap: var(--s5); flex-wrap: wrap; margin-bottom: var(--s5); border-bottom: 1px solid var(--rule); }
 .mapcard .dgtabs { display: flex; gap: var(--s5); height: 36px; }
+/* many drawings, or long names: the tabs keep one line and the longest give way (an ellipsis; the whole name on hover),
+   so Open large and the scene's state stay on the line */
+.mapcard .dgbar:has(.dgtabs[role="tablist"]) { flex-wrap: nowrap; }
+.mapcard .dgtabs[role="tablist"] { flex-shrink: 0.001; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; padding-bottom: 1px; margin-bottom: -1px; } /* past their least widths the tabs scroll, their underline still on the bar's rule */
+:is(.mapcard, #mapbig) .dgtabs[role="tablist"] button { flex: 0 1 auto; min-width: 7ch; } /* at the reset's weight, so it holds */
+.mapcard .dgtabs .tn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mapcard .dgbar .mstate { flex: 0 1 auto; min-width: 8ch; align-self: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* the scene's state gives way before the tabs do, on their line */
+.mapcard .dgbar > .link[data-act="scene"] { align-self: center; flex-shrink: 0; }
+.mapcard .dgbar .dgbig { flex-shrink: 0; }
 /* in the large view the tabs are its title: the title's size, on the header's line */
 #mapbig .dgtabs.big { display: flex; gap: var(--s6); align-self: stretch; }
 #mapbig .dgtabs.big button { font-size: var(--t-title); font-weight: 600; }
@@ -1320,6 +1329,32 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 .sheet.k-map .mbview { overflow: auto; padding: var(--s2) var(--s6) var(--s5); }
 .sheet.k-map .dgsvg { display: block; max-width: none; }
 .sheet.k-map .mbcap { margin: 0; padding: 0 var(--s6) var(--s6); max-width: 72ch; font-size: var(--t-ui); color: var(--ink-2); }
+
+/* a scene: the change's core, animated (web/js/scene.js). The frame is the scene's own document, sandboxed, its
+   controls included; around it the page keeps only its caption and what it says when the scene is stopped. */
+.scn { display: grid; gap: var(--s2); }
+.scnpark { position: fixed; left: -10000px; top: 0; visibility: hidden; pointer-events: none; } /* scenes waiting out a redraw */
+.scnstage { position: relative; }
+.scnstage iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
+.scnerr { margin: 0; font-size: var(--t-ui); color: var(--danger); }
+.scnnone { font-size: var(--t-ui); color: var(--ink-3); } /* a browser a scene does not run in */
+.scnstart { position: absolute; inset: 0; margin: auto; width: max-content; height: max-content; } /* where a scene waits to be started */
+.gscene .gscap { margin: var(--s2) 0 0; font-size: var(--t-ui); color: var(--ink-2); }
+.mapcard .dg.scene .dgview { overflow: visible; }
+.mapcard .dgbar .mstate { font-size: var(--t-ui); color: var(--ink-3); margin-right: var(--s4); }
+.sheet.k-scene { width: min(1200px, calc(100vw - 48px)); }
+.sheet.k-scene .mbview { padding: var(--s3) var(--s6) var(--s5); }
+.sheet.k-scene .mbcap p { margin: 0 0 var(--s3); }
+.gscenes { grid-column: 1 / -1; display: grid; gap: var(--s5); margin-top: var(--s4); }
+.gscene > .sh { margin-bottom: var(--s3); }
+/* a part a chat made, or changed: said quietly where it is; the Overview lists the edits, each one undoable */
+.bychat { font-size: var(--t-meta); color: var(--ink-3); }
+.gedits { display: grid; gap: var(--s1); margin-top: var(--s4); }
+.gedits .sh { font-size: var(--t-meta); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-3); margin-bottom: var(--s2); }
+.gedit { display: flex; gap: var(--s3); align-items: baseline; font-size: var(--t-ui); }
+.gedit .w { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gedit.undone .w { color: var(--ink-3); text-decoration: line-through; }
+.link.confirm { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); font-weight: 500; }
 
 /* a guide section says where its code sits before what it changes */
 .gsec .ctx { font-size: var(--t-ui); line-height: 1.55; color: var(--ink-3); }

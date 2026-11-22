@@ -14,11 +14,17 @@ import { execFile } from 'node:child_process';
 import { query, createSdkMcpServer, tool, listSessions } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import * as codex from './codex.mjs';
-import { BIN, GO_ROOTS, GO_CACHE, MODELS, EFFORTS, DEFAULTS, STATE_DIR, HOME as HOME_DIR, modelKind, codexDefault, currentModel } from './config.mjs';
+import { BIN, GO_ROOTS, GO_CACHE, MODELS, EFFORTS, DEFAULTS, STATE_DIR, PORT, HOME as HOME_DIR, modelKind, codexDefault, currentModel } from './config.mjs';
 import { registry, contentKey, totalsOf, settings } from './workspaces.mjs';
 import { git, uid } from './util.mjs';
 import { WORKTREE, changedFiles, fileHunks, readWorktree } from './git.mjs';
 import { eligibleForNotes, fileNoteKey, filesNeedingNotes, currentNotes, NOTES_VERSION } from '../web/js/file-notes.js';
+import { normalizeGuide, carryChatParts, ensureIds, editGuide, guideSummary, guidePart, guideEdits, drops, chatTouchedScene } from './guide.mjs';
+import { normalizeScene } from './scenes.mjs';
+import { openMcp } from './mcp.mjs';
+import { docPrompt, DOC_SCHEMA, DOC_FRAME, DOC_LOOK } from './scene-doc-guide.mjs';
+import { renderScene, renderNotes } from './scene-render.mjs';
+export { normalizeGuide };
 
 // a model still offered, or the newest of its line (the list moves on as providers ship); else the default
 const pickModel = (m, d = DEFAULTS.model) => currentModel(m) || (modelKind(m) === 'codex' ? codexDefault() : d);
@@ -130,6 +136,7 @@ export function guardFor(roots, write = null) {
   };
   return (name, input = {}) => {
     if (name === 'mcp__loupe__list_threads' || name === 'mcp__loupe__read_thread') return null;
+    if (name === 'mcp__loupe__read_guide' || name === 'mcp__loupe__edit_guide' || name === 'mcp__loupe__scene_kit') return null; // the guide is loupe's state, not the repository
     if (name === 'StructuredOutput') return null; // the brief's answer: it returns JSON, nothing else
     if (name === 'mcp__loupe__git') return gitArgsProblem(input.args);
     if (write && EDIT_TOOLS.has(name)) return writable(input.file_path ?? input.notebook_path) ? null : `write only inside the checkout (${write}), outside its .git, with an absolute path`;
@@ -174,9 +181,9 @@ async function systemText(ws, scope, linked, forCodex = false, write = null) {
   const can = write
     ? (forCodex
       ? 'You can read and edit files in the checkout and run commands there. The sandbox has no network.'
-      : `Tools: Read, Grep and Glob; Edit and Write for files in the checkout; Bash for commands, run in a sandbox (no network, no writes outside the checkout and its git directory); \`git\` for read-only git as a list of arguments; list_threads and read_thread for the reviewer's other questions and chats on this change (use them when the reviewer refers to one).`)
+      : `Tools: Read, Grep and Glob; Edit and Write for files in the checkout; Bash for commands, run in a sandbox (no network, no writes outside the checkout and its git directory); \`git\` for read-only git as a list of arguments; list_threads and read_thread for the reviewer's other questions and chats on this change (use them when the reviewer refers to one); read_guide and edit_guide for the change's guide (its sections, diagrams and animated scenes; scene_kit before you draw a scene), which you may change when asked.`)
       + ' Nothing you do reaches GitHub: the reviewer commits and pushes from loupe, so leave commits and pushes to them unless they ask. When you change files, say which, as path:line.'
-    : forCodex ? 'Use read-only commands to inspect the workspace. Stay inside the checkout and do not write files.' : `Tools: Read, Grep and Glob inside the workspace; \`git\` for read-only git (diff, show, log, blame, grep, ls-files, ...: pass the arguments as a list); list_threads and read_thread for the reviewer's other questions and chats on this change. Use them when the reviewer refers to another thread, or when one bears on the question.`;
+    : forCodex ? 'Use read-only commands to inspect the workspace. Stay inside the checkout and do not write files.' : `Tools: Read, Grep and Glob inside the workspace; \`git\` for read-only git (diff, show, log, blame, grep, ls-files, ...: pass the arguments as a list); list_threads and read_thread for the reviewer's other questions and chats on this change. Use them when the reviewer refers to another thread, or when one bears on the question. read_guide reads the change's guide; in a chat, edit_guide changes it (sections, diagrams, animated scenes; scene_kit first for a scene) when the reviewer asks: the guide is loupe's, so this is allowed even here.`;
   const prCopy = ws.rec.kind === 'pr' && !write ? ' This is loupe\'s own checkout of the pull request: if asked to change the code, say what you would change, and that edits need a local checkout of the branch (open that in loupe and chat there).' : '';
   return `
 ${write ? 'You are working with a reviewer inside loupe, a local code-review desk, in their checkout of this repository.' : `You are answering a reviewer inside loupe, a local code-review desk. You are read-only here.${prCopy}`}
@@ -229,7 +236,53 @@ function threadTools(ws) {
   ];
 }
 
-function loupeServer(ws) {
+// The guide's tools: read the brief and its guide, and (in a chat) change it. The guide is loupe's own state, not the
+// repository, so a chat that only answers (a pull request's) may change it too; a mark's thread only reads it.
+function guideToolDefs(ws, conv, edit, turn = null) {
+  const defs = [{
+    name: 'read_guide',
+    description: "Read this change's guide: the TLDR, its sections (with the files in each), its diagrams and its scenes (the animations). Give part and id for one of them in full, as JSON (a scene's includes its code).",
+    shape: { part: z.enum(['section', 'diagram', 'scene']).optional(), id: z.string().optional() },
+    run: async ({ part, id }) => {
+      const b = ws.review.data.brief;
+      if (b?.sections && (b.sections.some((s) => !s.id) || (b.diagrams || []).some((x) => !x.id))) { ensureIds(ws.review.data); ws.review.save(); }
+      if (!part) return guideSummary(b);
+      return guidePart(b, part, id) || `No ${part} ${id}; read_guide without a part lists them.`;
+    },
+  }];
+  if (!edit) return defs;
+  defs.push({
+    name: 'scene_kit',
+    description: 'Read what a scene runs in before you add or change one: the frame, what loupe gives it, and loupe\'s look.',
+    shape: {},
+    run: async () => `A scene is an animation as a document: your own HTML, CSS and JavaScript.\n\n${DOC_FRAME}\n\n${DOC_LOOK}`,
+  }, {
+    name: 'edit_guide',
+    description: `Change this change's guide, which the reviewer reads beside the code: add, replace or remove a section, a diagram or a scene (an animation), or replace the TLDR. The reviewer sees the edit at once, marked as made in chat, and can undo it.
+- section: { title, role (core|supporting|tests|config|docs|other), why (markdown), context, check: [up to 3 things to verify], files: [paths from the change] }. Every changed file stays in exactly one section: a file you put in a section leaves the one it was in (an edit that would empty a section made in chat is refused: remove that one first). The guide cannot be changed while a new brief is being written.
+- diagram: as the brief's diagrams: { kind: map|flow, title, caption, nodes: [{ id, label, kind, col, row, change, ref }], edges: [{ from, to, label, change, step }], groups }.
+- scene: { title, why, section (1-based, 0 for the map), height, html }: an animation as your own HTML, CSS and JavaScript. Read scene_kit first. loupe renders it before keeping it; what it finds wrong comes back to you.
+- tldr: value is the markdown text.
+id names the part to replace or remove (read_guide lists ids); at is where to add a section (0-based).`,
+    shape: { op: z.enum(['add', 'replace', 'remove']), kind: z.enum(['section', 'diagram', 'scene', 'tldr']), id: z.string().optional(), at: z.number().int().optional(), value: z.any().optional().describe('the part as a JSON object (for tldr: the text)') },
+    run: async ({ op, kind, id, at, value }, ctx = turn) => {
+      if (typeof value === 'string' && kind !== 'tldr') { try { value = JSON.parse(value); } catch { return 'value must be the part as a JSON object'; } }
+      const files = await ws.files('all', { fresh: true }); // the change as it is now, not as the watcher last saw it
+      if (ctx?.live && !ctx.live()) return 'This turn is over; the edit was not made.';
+      const r = await editGuide(ws.review.data, files, { op, kind, id, at, value }, { conv: conv?.id || null, live: ctx?.live, signal: ctx?.signal, render: (html, height, signal) => renderScene(html, { origin: `http://127.0.0.1:${PORT}`, height, signal }) });
+      if (r.ok) { ws.review.save(); await emitBrief(ws); }
+      return r.message;
+    },
+  });
+  return defs;
+}
+// the same tools, in-process for Claude
+const guideTools = (ws, conv, edit, abort) => {
+  const turn = abort ? { live: () => !abort.signal.aborted, signal: abort.signal } : null; // a Stop ends the turn's edits too
+  return guideToolDefs(ws, conv, edit, turn).map((d) => tool(d.name, d.description, d.shape, async (a) => ({ content: [{ type: 'text', text: await d.run(a, turn) }] })));
+};
+
+function loupeServer(ws, conv = null, { guide = null, abort = null, threads = true } = {}) {
   return createSdkMcpServer({
     name: 'loupe', version: '1.0.0', alwaysLoad: true,
     tools: [
@@ -239,12 +292,13 @@ function loupeServer(ws) {
           const problem = gitArgsProblem(args);
           return { content: [{ type: 'text', text: problem ? `Refused: ${problem}` : await runGit(ws.root, args) }] };
         }),
-      ...threadTools(ws),
+      ...(threads ? threadTools(ws) : []),
+      ...(guide ? guideTools(ws, conv, guide === 'edit', abort) : []),
     ],
   });
 }
 
-function baseOptions(ws, { model, effort, roots, abort, append, resume, fork, cwd, write = null, sandbox = null }) {
+function baseOptions(ws, { model, effort, roots, abort, append, resume, fork, cwd, write = null, sandbox = null, conv = null, guide = null }) {
   const judge = guardFor(roots, write);
   const preToolUse = async (input) => {
     const problem = judge(input.tool_name, input.tool_input);
@@ -259,7 +313,7 @@ function baseOptions(ws, { model, effort, roots, abort, append, resume, fork, cw
     permissionMode: write ? 'acceptEdits' : 'default',
     ...(sandbox ? { sandbox } : {}),
     settingSources: [],
-    mcpServers: { loupe: loupeServer(ws) },
+    mcpServers: { loupe: loupeServer(ws, conv, { guide, abort }) },
     strictMcpConfig: true,
     hooks: { PreToolUse: [{ hooks: [preToolUse] }] },
     canUseTool: async (name, input) => { const p = judge(name, input); return p ? { behavior: 'deny', message: p } : { behavior: 'allow', updatedInput: input }; },
@@ -350,9 +404,14 @@ export function ask(ws, conv, msg, { model, effort, scope = 'all', thread = null
       if (conv.kind === 'chat' && conv.edits !== !!write) { conv.edits = !!write; ws.review.save(); ws.emit('chat', { conv }); }
       if (answer.role === 'codex') {
         const context = await systemText(ws, scope, false, true, write);
-        const input = [context, codex.otherQuestions(ws, conv), prompt(ws, conv, msg, thread)].filter(Boolean).join('\n\n');
+        const tools = conv.kind === 'chat'
+          ? "loupe's tools (an MCP server named loupe): read_guide reads the change's guide; edit_guide changes it (sections, diagrams, animated scenes; scene_kit first for a scene) when the reviewer asks. The guide is loupe's own state, not the repository."
+          : "loupe's tool read_guide (an MCP server named loupe) reads the change's guide.";
+        const input = [context, tools, codex.otherQuestions(ws, conv), prompt(ws, conv, msg, thread)].filter(Boolean).join('\n\n');
         const extra = write ? (await sandboxFor(write)).filesystem.allowWrite : [];
-        await codex.streamAnswer(ws, conv, answer, input, r.abort.signal, paint, write ? { root: write, extra } : null);
+        const mcp = openMcp(guideToolDefs(ws, conv, conv.kind === 'chat'), r.abort.signal);
+        try { await codex.streamAnswer(ws, conv, answer, input, r.abort.signal, paint, write ? { root: write, extra } : null, mcp.url); }
+        finally { mcp.close(); }
         if (!answer.text && answer.notes.length) answer.text = answer.notes.pop();
         return;
       }
@@ -364,6 +423,7 @@ export function ask(ws, conv, msg, { model, effort, scope = 'all', thread = null
         resume: conv.sessionId || linked?.sessionId, fork: !!linked,
         cwd: linkedCwd || ws.root,
         write, sandbox: write ? await sandboxFor(write) : null,
+        conv, guide: conv.kind === 'chat' ? 'edit' : 'read',
       });
       for await (const m of query({ prompt: prompt(ws, conv, msg, thread), options })) {
         if (m.type === 'system' && m.subtype === 'init') {
@@ -412,6 +472,13 @@ export function ask(ws, conv, msg, { model, effort, scope = 'all', thread = null
 }
 export function stop(convId) { const r = running.get(convId); r?.abort?.abort(); return !!r?.abort; }
 
+// what a scene's run is reading, for the card's line: the file, never a search pattern
+function sceneStep(root, name, input = {}) {
+  const rel = (p) => (typeof p === 'string' && root && p.startsWith(root + '/') ? p.slice(root.length + 1) : p);
+  if (name === 'Grep' || name === 'Glob') return input.path ? rel(input.path) : 'the code';
+  if (name === 'mcp__loupe__git') return 'the history';
+  return toolSummary(root, name, input);
+}
 function toolSummary(root, name, input = {}) {
   const rel = (p) => (typeof p === 'string' && root && p.startsWith(root + '/') ? p.slice(root.length + 1) : p);
   switch (name) {
@@ -426,6 +493,9 @@ function toolSummary(root, name, input = {}) {
     case 'mcp__loupe__git': return `git ${(input.args || []).join(' ')}`;
     case 'mcp__loupe__list_threads': return 'your other threads';
     case 'mcp__loupe__read_thread': return `thread ${input.id}`;
+    case 'mcp__loupe__read_guide': return input.part ? `the guide's ${input.part} ${input.id || ''}`.trim() : 'the guide';
+    case 'mcp__loupe__scene_kit': return 'how scenes are drawn';
+    case 'mcp__loupe__edit_guide': return `${{ add: 'adds', replace: 'replaces', remove: 'removes' }[input.op] || input.op} ${input.kind === 'tldr' ? 'the TLDR' : `a ${input.kind}${input.value?.title ? ` \u201c${String(input.value.title).slice(0, 60)}\u201d` : input.id ? ` ${input.id}` : ''}`}`;
     default: return JSON.stringify(input).slice(0, 140);
   }
 }
@@ -511,6 +581,18 @@ const BRIEF_SCHEMA = {
       required: ['start', 'steps'],
     },
     questions: { type: 'array', items: { type: 'string' }, description: 'Up to five questions the diff does not answer, worth asking the author or checking.' },
+    motion: {
+      type: 'object',
+      description: 'Whether the core of this change should be shown as a short animation (a scene), drawn after the brief. Yes when the core is a process over time or a state machine that a map cannot show: concurrency or a race, a GC or sweep cycle, retries and backoff, a pipeline or a queue, a protocol or handshake, a lease or a lock, a cache filling and expiring, a migration in phases, a rate limiter. Decide by what happens over time, not by the size of the diff: a one-line fix to something that accrues, expires, rotates or races is a yes; a large diff that only moves types or renames is a no. No for a rename, a config or dependency change, docs, tests alone, copy, styling, or a refactor that keeps behaviour.',
+      properties: {
+        warranted: { type: 'boolean' },
+        why: { type: 'string', description: 'One sentence: what in this change happens over time that words and the map cannot show, or why nothing does.' },
+        title: { type: 'string', description: 'When warranted: two to five words, the process it shows.' },
+        section: { type: 'integer', description: 'When warranted: the 1-based guide section it explains, or 0 for the change as a whole.' },
+        story: { type: 'string', description: 'When warranted: one mechanism (if the change has two, the one a reviewer is likelier to get wrong), in a few short lines: the things in play, what happens to them, what the reader should notice, each with the path:line that does it. When not: "".' },
+      },
+      required: ['warranted', 'why', 'title', 'section', 'story'],
+    },
     sections: {
       type: 'array',
       description: 'The guide: the change in parts, core first, then what supports it, then tests, config and docs. Every changed file in exactly one section.',
@@ -528,7 +610,7 @@ const BRIEF_SCHEMA = {
       },
     },
   },
-  required: ['tldr', 'risk', 'riskWhy', 'context', 'diagrams', 'plan', 'sections'],
+  required: ['tldr', 'risk', 'riskWhy', 'context', 'diagrams', 'plan', 'motion', 'sections'],
 };
 
 async function diffText(ws, files, budget = 180000, prepared) {
@@ -564,7 +646,7 @@ export function brief(ws, { model, effort } = {}) {
     ws.review.data.brief = { ...(ws.review.data.brief || {}), pending: true, error: null, step: null };
     // on disk at once, so a promote that checks for work in flight sees a brief from its first second
     ws.review.save(true);
-    ws.emit('brief', ws.review.data.brief);
+    ws.emit('brief', { ...ws.review.data.brief, edits: guideEdits(ws.review.data), drops: drops(ws.review.data.brief) });
     const abort = new AbortController();
     let timer;
     try {
@@ -594,6 +676,8 @@ Do not read everything: stop when you can explain where the change sits and how 
 
 Then answer through the structured output. Write plainly, as to a colleague: no filler, no praise, no hedging words. Ground every claim in code you read; say "I infer" when you infer. Write prose a person reads, not a list of identifiers: name a function, type or file in backticks the first time, then by its plain name (the batcher, the save step), and never put more than two backticked names in one sentence. Cite sparingly: at most two path:line references in a paragraph, at its end, for the places worth opening; the plan's steps name the file to read instead. The TLDR says what changes and why in words a newcomer follows. The context explains the system around the change, not the change again. The first diagram maps the components and marks this change on them; place parts on the grid so arrows mostly run left to right.
 
+Decide whether the change needs a scene (motion): an animation of its core, drawn after this brief by another run that reads your story. Most changes do not. Judge the behaviour, not the size of the diff: when the core is a process over time (things accruing, waiting, racing, expiring, rotating, being swept, retried or refilled), even in a one-line fix, say yes and tell the story exactly: one mechanism, what is on the sheet, what happens in order, what the reader should notice, and where the code does each step.
+
 The guide must account for every one of these paths, each in exactly one section:
 ${files.map((f) => f.path).join('\n')}`;
       timer = setTimeout(() => abort.abort(), 10 * 60 * 1000);
@@ -614,26 +698,159 @@ ${files.map((f) => f.path).join('\n')}`;
             if (c.type !== 'tool_use' || Date.now() - said < 500) continue;
             said = Date.now();
             ws.review.data.brief = { ...ws.review.data.brief, step: toolSummary(ws.root, c.name, c.input) };
-            ws.emit('brief', ws.review.data.brief);
+            ws.emit('brief', { ...ws.review.data.brief, edits: guideEdits(ws.review.data), drops: drops(ws.review.data.brief) });
           }
           if (msg.type === 'result') { out = msg.structured_output; cost = msg.total_cost_usd || 0; ms = msg.duration_ms || 0; if (!out && msg.subtype !== 'success') throw new Error(msg.subtype.replace(/_/g, ' ')); }
         }
         if (!out) throw new Error('Claude returned no brief');
       }
-      ws.review.data.brief = { key, at: Date.now(), ...run, cost, ms, head: m.headFull, ...normalizeGuide(out, files) };
+      // what chats made of the guide is kept: read now, so an edit made while this brief was being written is kept too
+      // chats' sections are placed against the change as it is now (a file can have come while the model read); the old
+      // brief is read after that wait, and nothing is awaited between reading it and writing the new one
+      const now = await ws.files('all', { fresh: true }).catch(() => files);
+      const next = carryChatParts(ws.review.data.brief, normalizeGuide(out, files), now);
+      ws.review.data.brief = { key, at: Date.now(), ...run, cost, ms, head: m.headFull, ...next };
+      sceneRuns.get(ws.id)?.abort.abort(); // a scene being drawn for the brief before is not wanted now
+      if (next.motion.warranted) queueMicrotask(() => writeScene(ws, next.motion, {}).catch((e) => console.error('loupe: scene:', e)));
     } catch (e) {
       ws.review.data.brief = { ...(ws.review.data.brief || {}), pending: false, error: abort.signal.aborted ? 'took longer than ten minutes' : String(e.message || e), step: null };
     } finally {
       clearTimeout(timer);
       ws.review.save();
-      const b = ws.review.data.brief;
-      const current = b.key && await ws.files('all').catch(() => null);
-      ws.emit('brief', { ...b, stale: !!b.key && (!current || contentKey(current) !== b.key) });
+      await emitBrief(ws); // assembled after its wait, like every other brief the page is sent
     }
     return ws.review.data.brief;
   })().finally(() => briefRuns.delete(ws.id));
   briefRuns.set(ws.id, p);
   return p;
+}
+
+// ------------------------------------------------------------------ a scene: the brief's story, drawn as bespoke code
+// The brief said the change needs one and told its story; this run reads around the change again and writes the
+// scene's code, which the daemon plays in a VM before keeping it (src/scenes.mjs). Code that fails goes back once with
+// its error. It lands only on the brief it was written for.
+// the brief as the page takes it: marked stale when the change it was written for is no longer the change
+export async function emitBrief(ws) {
+  const files = ws.review.data.brief?.key ? await ws.files('all').catch(() => null) : null;
+  const b = ws.review.data.brief; // read after the wait, with what can be undone, so the two describe the same brief
+  if (!b) return;
+  // one event: the brief, whether it is stale, and what can be undone on it, read together
+  ws.emit('brief', { ...b, stale: !!b.key && (!files || contentKey(files) !== b.key), edits: guideEdits(ws.review.data), drops: drops(b) });
+}
+const sceneRuns = new Map();
+// a scene's run is long (it reads, then writes a few hundred lines of drawing code at high effort): measured 6 to 13 min
+// on open-source changes, so it gets 25 before it is stopped
+const SCENE_MINUTES = 25, SCENE_LATE = 'took longer than twenty-five minutes';
+const SCENE_APPEND = 'You make animated explainers of code changes for loupe, each an HTML document of your own (HTML, CSS and JavaScript). Exact to the code, in loupe\'s look. Read the code before you make it. Answer only through the structured output.';
+export function writeScene(ws, plan, { model, effort } = {}) {
+  const b0 = ws.review.data.brief;
+  if (!b0?.key || b0.pending) return Promise.resolve(null); // not while the guide it belongs to is written again
+  // a scene belongs to one brief (its at is the brief's generation): asked again for the same one, the run in hand
+  // answers; for a newer one, the old run stops, so its scene never lands on a brief it was not written for
+  const cur = sceneRuns.get(ws.id);
+  if (cur && cur.gen === b0.at) return cur.p;
+  cur?.abort.abort();
+  // abort: stopped, or a newer brief; late: out of time; halt: either, for the model and the check
+  const gen = b0.at, abort = new AbortController(), late = new AbortController(), halt = new AbortController(), t0 = Date.now();
+  for (const sig of [abort.signal, late.signal]) sig.addEventListener('abort', () => halt.abort(), { once: true });
+  const timer = setTimeout(() => late.abort(), SCENE_MINUTES * 60 * 1000);
+  const entry = { gen, abort };
+  entry.p = (async () => {
+    const run = { model: pickModel(model, DEFAULTS.sceneModel), effort: pickEffort(effort, DEFAULTS.sceneEffort) };
+    const mine = () => ws.review.data.brief?.at === gen && !ws.review.data.brief?.pending && !abort.signal.aborted; // not while a new brief is written
+    const status = (x) => { if (!mine()) return; const b = ws.review.data.brief; b.scene = { ...b.scene, ...x }; ws.review.save(); emitBrief(ws); };
+    // a run starts from a fresh status: nothing of a run before it (its error, its costs) is carried into this one
+    if (mine()) { const b = ws.review.data.brief; b.scene = { pending: true, error: null, step: null, title: plan.title, model: run.model }; ws.review.save(); emitBrief(ws); }
+    let tries = 0, cost = 0; const costs = []; // what each call took, to see where a scene's cost goes (kept on a failure too)
+    try {
+      // a scene is drawn for the change its guide describes: not once the change has moved on (a new guide is wanted first)
+      const same = async () => contentKey(await ws.files('all', { fresh: true })) === b0.key;
+      if (!(await same())) throw new Error('the change has moved on since its guide was written; regenerate the guide first');
+      const m = ws.meta, b = ws.review.data.brief;
+      const parts = (b.sections || []).map((s, k) => `${k + 1}. ${s.title}: ${s.files.join(', ')}`).join('\n');
+      const change = `${m.pr ? `Pull request #${m.pr.number}: ${m.pr.title}` : `Local branch ${m.branch} (base ${m.base})`}\nCommits:\n${m.commits.slice(0, 40).map((c) => `${c.short} ${c.subject}`).join('\n')}\n\nWhat the change does (its brief):\n${String(b.tldr).slice(0, 2000)}\n\nIts parts:\n${parts}\n`;
+      const story = `${plan.title ? `${plan.title}. ` : ''}${plan.why}\n${plan.story}`;
+      const ask = async (prompt, turns, more = [], effort = run.effort) => {
+        tries++;
+        if (modelKind(run.model) === 'codex') { // tokens, not dollars: what Codex costs depends on its plan
+          try { const r = await codex.structured(ws, { ...run, effort }, SCENE_APPEND + '\n\n' + prompt, DOC_SCHEMA, halt.signal); costs.push({ tokens: r.usage || null }); return r.out; } catch (e) { if (e.usage) costs.push({ tokens: e.usage }); throw e; }
+        }
+        const options = baseOptions(ws, { ...run, effort, roots: [ws.root || ws.gitDir, ...more], abort: halt, append: SCENE_APPEND });
+        Object.assign(options, { maxTurns: turns, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema: DOC_SCHEMA } });
+        options.mcpServers = { loupe: loupeServer(ws, null, { guide: false, threads: false }) }; // the code is what it draws from
+        let said = 0, out = null;
+        for await (const msg of query({ prompt, options })) {
+          if (msg.type === 'assistant') for (const c of msg.message?.content || []) if (c.type === 'tool_use' && Date.now() - said > 500) { said = Date.now(); status({ step: sceneStep(ws.root, c.name, c.input) }); }
+          if (msg.type === 'result') { cost += Number(msg.total_cost_usd) || 0; costs.push(Math.round((Number(msg.total_cost_usd) || 0) * 10000) / 10000); out = msg.structured_output; if (!out && msg.subtype !== 'success') throw new Error(msg.subtype.replace(/_/g, ' ')); }
+        }
+        if (!out) throw new Error('no scene came back');
+        return out;
+      };
+      const first = docPrompt({ change, story }), dirs = [];
+      const look = async (sc) => { const r = await renderScene(sc.html, { origin: `http://127.0.0.1:${PORT}`, height: sc.height, signal: halt.signal }); if (r.dir) dirs.push(r.dir); return r; };
+      // what a render found, as a number to compare two versions by (a render that failed is the worst there is)
+      const faults = (r) => (r.unavailable ? 0 : r.failed ? 1e6 : (r.problem ? 100 : 0) + (r.errors?.length || 0) * 3 + (r.cut?.length || 0));
+      let kept = null;
+      try {
+        let out = await ask(first, 30);
+        let { scene, problem } = await normalizeScene(out, { by: 'brief', model: run.model });
+        if (!scene) { // not a document at all: once more, told why
+          status({ step: 'fixing the scene' });
+          ({ scene, problem } = await normalizeScene(await ask(`${first}\n\nWhat you returned was not kept: ${problem}. Return the whole animation.`, 6), { by: 'brief', model: run.model }));
+        }
+        if (!scene) throw new Error(`it was not kept: ${problem}`);
+        // loupe looks at it, then its writer does: its own frames (and what the check found) go back to it, once to look
+        // over and, while the check still finds faults, once more to fix; a fix that renders worse is let go
+        let seen = await look(scene);
+        if (seen.failed && !halt.signal.aborted) seen = await look(scene); // once more: a render can fail for reasons of its own
+        for (let round = 0; round < 2 && !seen.unavailable && !seen.failed; round++) {
+          const notes = renderNotes(seen);
+          if (round > 0 && !notes) break;
+          status({ step: notes ? 'fixing what the check found' : 'looking at how it renders' });
+          // Codex is not handed images, so it is told only what the check found (and with nothing found it is not asked)
+          const images = modelKind(run.model) !== 'codex';
+          if (!images && !notes) break;
+          const frames = seen.shots.map((x) => `- ${x.file} (${x.theme}, ${(x.at / 1000).toFixed(1)} s in)`).join('\n');
+          // lean on purpose: the story and the look, not the whole first prompt again; the frames, not the code again
+          const prompt = `You made this animation of a code change for loupe, a local code-review desk. What it shows:\n${story}\n\n${DOC_FRAME}\n\n${DOC_LOOK}\n\nloupe rendered it as the card shows it (680 px wide, ${scene.height} px tall).${notes ? `\n\nThe check found:\n${notes}\n` : ''}${images ? `\nIts frames (images; read each once):\n${frames}\n` : ''}\nCheck that it renders, reads and looks right: nothing overlapping or cut off, legible in light and in dark, in loupe's look. You need not read the code again. ${notes ? 'Fix what the check found, and anything else wrong,' : 'If anything is off, fix it and'} return the whole animation again. If it is right as it is, return it unchanged.\n\nYour animation:\n\`\`\`json\n${JSON.stringify({ title: scene.title, why: scene.why, section: scene.section, height: scene.height })}\n\`\`\`\n\`\`\`html\n${scene.html}\n\`\`\``;
+          let again;
+          try { again = await ask(prompt, 6, images && seen.dir ? [seen.dir] : [], 'medium'); } catch (e) { if (abort.signal.aborted) throw e; break; } // the look is optional: failed or out of time, the scene stands
+          const fixed = await normalizeScene(again, { by: 'brief', model: run.model });
+          if (!fixed.scene || (fixed.scene.html === scene.html && fixed.scene.height === scene.height)) break; // unchanged: its writer finds it right
+          fixed.scene.id = scene.id;
+          const seen2 = await look(fixed.scene);
+          if (seen2.failed || faults(seen2) > faults(seen)) break; // the last version that rendered stands
+          scene = fixed.scene; seen = seen2;
+        }
+        if (seen.failed) throw new Error(`it could not be rendered: ${seen.failed}`);
+        if (seen.problem) throw new Error(`it did not render: ${seen.problem}`);
+        kept = scene;
+      } finally { for (const d of dirs) fs.rm(d, { recursive: true, force: true }, () => {}); }
+      const scene = kept;
+
+      if (!(await same())) throw new Error('the change moved on while the scene was drawn; regenerate the guide first');
+      const b2 = ws.review.data.brief;
+      if (chatTouchedScene(b2)) throw new Error('a chat changed this guide\u2019s scene meanwhile; it stands'); // never over a chat's edit
+      if (!mine()) throw new Error('the brief was written again'); // this scene was for the one before
+      ensureIds(ws.review.data);
+      scene.sectionId = plan.sectionId && b2.sections.some((s) => s.id === plan.sectionId) ? plan.sectionId : null;
+      Object.assign(scene, { ms: Date.now() - t0, tries, ...(costs.length ? { costs } : {}), ...(cost ? { cost: Math.round(cost * 10000) / 10000 } : {}) }); // what it took, as the brief keeps its own
+      b2.scenes = [...(b2.scenes || []).filter((s) => (s.origin || (s.by === 'chat' ? 'chat' : 'brief')) === 'chat'), scene]; // the brief's own scene is replaced; chats' stay
+      status({ pending: false, step: null, error: null, title: scene.title });
+      return scene;
+    } catch (e) {
+      // stopped for a newer brief: nothing to say; out of time, or failed: said on the brief it was for
+      if (ws.review.data.brief?.at === gen) { const b = ws.review.data.brief; b.scene = { ...b.scene, pending: false, step: null, error: late.signal.aborted ? SCENE_LATE : String(e.message || e), ...(costs.length ? { costs } : {}), ...(cost ? { cost: Math.round(cost * 10000) / 10000 } : {}) }; ws.review.save(); emitBrief(ws); }
+      return null;
+    } finally {
+      clearTimeout(timer);
+      // however it ended, the brief it was for is not left saying a scene is being drawn
+      const b = ws.review.data.brief;
+      if (b?.at === gen && b.scene?.pending) { b.scene = { ...b.scene, pending: false, step: null, error: b.scene.error || (late.signal.aborted ? SCENE_LATE : 'stopped') }; ws.review.save(); emitBrief(ws); }
+    }
+  })().finally(() => { if (sceneRuns.get(ws.id) === entry) sceneRuns.delete(ws.id); });
+  sceneRuns.set(ws.id, entry);
+  return entry.p;
 }
 
 const NOTES_APPEND = "You write file notes for a code reviewer: one or two plain sentences above a file's diff that say what the diff cannot: what part of the system the file is, and what its part in this change is, how it connects to the other files changed. Exact, plain, short. Answer only through the structured output.";
@@ -878,56 +1095,6 @@ async function runNotes(ws, run, key, targets, previous, request) {
     publish();
   }
   return state;
-}
-
-// A guide never hides a file: unknown paths are dropped, a file named twice stays in its first section, and every
-// file no section named goes to a last section (generated ones to their own).
-export function normalizeGuide(out, files) {
-  const known = new Map(files.map((f) => [f.path, f]));
-  const seen = new Set();
-  const resolve = (p) => {
-    const s = String(p || '').trim().replace(/^\.?\//, '').replace(/^[ab]\//, '');
-    if (known.has(s)) return s;
-    const hit = files.find((f) => f.path.endsWith('/' + s));
-    return hit?.path || null;
-  };
-  const sections = (out.sections || []).map((s) => ({
-    title: String(s.title || 'Untitled').slice(0, 200), role: s.role || 'other', why: String(s.why || '').slice(0, 2000), context: String(s.context || '').slice(0, 1000),
-    check: (s.check || []).map(String).slice(0, 5),
-    files: (s.files || []).map(resolve).filter((p) => p && !seen.has(p) && seen.add(p)),
-  })).filter((s) => s.files.length);
-  const rest = files.filter((f) => !seen.has(f.path));
-  const gen = rest.filter((f) => f.kind === 'generated'), other = rest.filter((f) => f.kind !== 'generated');
-  if (other.length) sections.push({ title: 'Other changes', role: 'other', why: 'Files the guide did not place.', check: [], files: other.map((f) => f.path), synthetic: true });
-  if (gen.length) sections.push({ title: 'Generated and lock files', role: 'other', why: 'Machine-written; skim for surprises.', check: [], files: gen.map((f) => f.path), synthetic: true });
-  // Small models sometimes hand back the TLDR as a list, or as a list written into the string.
-  let tl = out.tldr;
-  if (typeof tl === 'string' && /^\s*\[/.test(tl)) { try { const a = JSON.parse(tl); if (Array.isArray(a)) tl = a; } catch { /* a string that starts with [ */ } }
-  if (Array.isArray(tl)) tl = tl.map(String).join('\n\n');
-  const str = (x, n = 4000) => String(x || '').slice(0, n);
-  const c = out.context || {};
-  const context = { system: str(c.system), before: str(c.before, 2000), after: str(c.after, 2000),
-    glossary: (Array.isArray(c.glossary) ? c.glossary : []).slice(0, 8).map((g) => ({ term: str(g.term, 80), meaning: str(g.meaning, 400), where: str(g.where, 200) })).filter((g) => g.term && g.meaning) };
-  // a diagram keeps only what it can draw: known kinds, nodes on the grid, edges between nodes that exist
-  const CH = new Set(['changed', 'new', 'removed']), KINDS = new Set(['code', 'data', 'external', 'actor', 'queue']);
-  const grid = (n) => Math.max(0, Math.min(5, Math.round(Number(n) || 0)));
-  const diagrams = (Array.isArray(out.diagrams) ? out.diagrams : []).slice(0, 3).map((d) => {
-    const seenIds = new Set(), taken = new Set();
-    const nodes = (Array.isArray(d.nodes) ? d.nodes : []).slice(0, 16).map((n) => ({ id: str(n.id, 40), label: str(n.label, 40), kind: KINDS.has(n.kind) ? n.kind : 'code', col: grid(n.col), row: grid(n.row), change: CH.has(n.change) ? n.change : 'none', section: Math.max(0, Math.round(Number(n.section) || 0)), ref: str(n.ref, 200) }))
-      .filter((n) => n.id && n.label && !seenIds.has(n.id) && seenIds.add(n.id))
-      .map((n) => { while (taken.has(`${n.col},${n.row}`)) n.row++; taken.add(`${n.col},${n.row}`); return n; }); // two nodes never share a cell
-    const edges = (Array.isArray(d.edges) ? d.edges : []).slice(0, 24).map((e) => ({ from: str(e.from, 40), to: str(e.to, 40), label: str(e.label, 30), change: CH.has(e.change) ? e.change : 'none', step: Math.max(0, Math.round(Number(e.step) || 0)) }))
-      .filter((e) => seenIds.has(e.from) && seenIds.has(e.to) && e.from !== e.to);
-    const groups = (Array.isArray(d.groups) ? d.groups : []).slice(0, 4).map((g) => ({ label: str(g.label, 40), nodes: (Array.isArray(g.nodes) ? g.nodes : []).map(String).filter((id) => seenIds.has(id)) })).filter((g) => g.label && g.nodes.length);
-    return { kind: d.kind === 'flow' ? 'flow' : 'map', title: str(d.title, 120), caption: str(d.caption, 400), nodes, edges, groups };
-  }).filter((d) => d.nodes.length >= 2);
-  const pl = out.plan || {};
-  const plan = { start: resolve(pl.start) || resolve(out.startHere), why: str(pl.why, 400), steps: (Array.isArray(pl.steps) ? pl.steps : []).slice(0, 8).map((x) => str(x, 400)).filter(Boolean) };
-  const questions = (Array.isArray(out.questions) ? out.questions : []).slice(0, 6).map((x) => str(x, 400)).filter(Boolean);
-  const citations = Object.fromEntries((Array.isArray(out.citations) ? out.citations : []).slice(0, 64)
-    .map((c) => [str(c?.ref, 250).trim(), str(c?.excerpt, 160).trim()])
-    .filter(([ref, excerpt]) => /:\d+$/.test(ref) && excerpt));
-  return { tldr: String(tl || ''), risk: out.risk, riskWhy: out.riskWhy || '', startHere: plan.start, context, diagrams, plan, questions, sections, citations, pending: false, error: null, step: null };
 }
 
 // ------------------------------------------------------------------ Claude Code sessions on this repository
