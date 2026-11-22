@@ -649,7 +649,6 @@ export function brief(ws, { model, effort } = {}) {
     ws.review.save(true);
     ws.emit('brief', { ...ws.review.data.brief, edits: guideEdits(ws.review.data), drops: drops(ws.review.data.brief) });
     const abort = new AbortController();
-    let timer;
     try {
       const files = await ws.files('all');
       const key = contentKey(files);
@@ -681,7 +680,6 @@ Decide whether the change needs a scene (motion): an animation of its core, draw
 
 The guide must account for every one of these paths, each in exactly one section:
 ${files.map((f) => f.path).join('\n')}`;
-      timer = setTimeout(() => abort.abort(), 10 * 60 * 1000);
       const run = { model: pickModel(model, DEFAULTS.briefModel), effort: pickEffort(effort, DEFAULTS.briefEffort) };
       const append = 'You write review maps: what a change does, the system around it, diagrams of it, and how to review it. Exact, plain, short. Read the code around the change before you write. Answer only through the structured output.';
       let out = null, cost = 0, ms = 0;
@@ -714,9 +712,8 @@ ${files.map((f) => f.path).join('\n')}`;
       sceneRuns.get(ws.id)?.abort.abort(); // a scene being drawn for the brief before is not wanted now
       if (next.motion.warranted) queueMicrotask(() => writeScene(ws, next.motion, {}).catch((e) => console.error('loupe: scene:', e)));
     } catch (e) {
-      ws.review.data.brief = { ...(ws.review.data.brief || {}), pending: false, error: abort.signal.aborted ? 'took longer than ten minutes' : String(e.message || e), step: null };
+      ws.review.data.brief = { ...(ws.review.data.brief || {}), pending: false, error: String(e.message || e), step: null };
     } finally {
-      clearTimeout(timer);
       ws.review.save();
       await emitBrief(ws); // assembled after its wait, like every other brief the page is sent
     }
@@ -741,9 +738,6 @@ export async function emitBrief(ws) {
 const sceneRuns = new Map();
 // a scene's run is long (it reads, then writes a few hundred lines of drawing code at high effort): measured 6 to 13 min
 // on open-source changes, so it gets 25 before it is stopped
-// a scene is worth waiting a few minutes for, never more: past five the run stops, and a look-over starts only while
-// there is time for it (the scene as first rendered stands)
-const SCENE_MINUTES = 5, SCENE_LATE = 'took longer than five minutes', LOOK_BY = 3.5 * 60 * 1000;
 const SCENE_APPEND = 'You make animated explainers of code changes for loupe, each an HTML document of your own (HTML, CSS and JavaScript). Exact to the code, in loupe\'s look. Answer only through the structured output.';
 export function writeScene(ws, plan, { model, effort } = {}) {
   const b0 = ws.review.data.brief;
@@ -753,10 +747,8 @@ export function writeScene(ws, plan, { model, effort } = {}) {
   const cur = sceneRuns.get(ws.id);
   if (cur && cur.gen === b0.at) return cur.p;
   cur?.abort.abort();
-  // abort: stopped, or a newer brief; late: out of time; halt: either, for the model and the check
-  const gen = b0.at, abort = new AbortController(), late = new AbortController(), halt = new AbortController(), t0 = Date.now();
-  for (const sig of [abort.signal, late.signal]) sig.addEventListener('abort', () => halt.abort(), { once: true });
-  const timer = setTimeout(() => late.abort(), SCENE_MINUTES * 60 * 1000);
+  // abort: stopped, or a newer brief (a run is never cut off for time: what it has spent would be thrown away)
+  const gen = b0.at, abort = new AbortController(), halt = abort, t0 = Date.now();
   const entry = { gen, abort };
   entry.p = (async () => {
     const run = { model: pickModel(model, b0.model || DEFAULTS.briefModel), effort: pickEffort(effort, b0.effort || DEFAULTS.briefEffort) }; // the model and effort its guide was written with
@@ -809,7 +801,7 @@ export function writeScene(ws, plan, { model, effort } = {}) {
         // over and, while the check still finds faults, once more to fix; a fix that renders worse is let go
         let seen = await look(scene);
         if (seen.failed && !halt.signal.aborted) seen = await look(scene); // once more: a render can fail for reasons of its own
-        for (let round = 0; round < 2 && !seen.unavailable && !seen.failed && Date.now() - t0 < LOOK_BY; round++) {
+        for (let round = 0; round < 2 && !seen.unavailable && !seen.failed; round++) {
           const notes = renderNotes(seen);
           if (round > 0 && !notes) break;
           status({ step: notes ? 'fixing what the check found' : 'looking at how it renders' });
@@ -848,14 +840,13 @@ export function writeScene(ws, plan, { model, effort } = {}) {
       status({ pending: false, step: null, error: null, title: scene.title });
       return scene;
     } catch (e) {
-      // stopped for a newer brief: nothing to say; out of time, or failed: said on the brief it was for
-      if (ws.review.data.brief?.at === gen) { const b = ws.review.data.brief; b.scene = { ...b.scene, pending: false, step: null, error: late.signal.aborted ? SCENE_LATE : String(e.message || e), ...(costs.length ? { costs } : {}), ...(cost ? { cost: Math.round(cost * 10000) / 10000 } : {}) }; ws.review.save(); emitBrief(ws); }
+      // stopped for a newer brief: nothing to say; failed: said on the brief it was for
+      if (ws.review.data.brief?.at === gen) { const b = ws.review.data.brief; b.scene = { ...b.scene, pending: false, step: null, error: String(e.message || e), ...(costs.length ? { costs } : {}), ...(cost ? { cost: Math.round(cost * 10000) / 10000 } : {}) }; ws.review.save(); emitBrief(ws); }
       return null;
     } finally {
-      clearTimeout(timer);
       // however it ended, the brief it was for is not left saying a scene is being drawn
       const b = ws.review.data.brief;
-      if (b?.at === gen && b.scene?.pending) { b.scene = { ...b.scene, pending: false, step: null, error: b.scene.error || (late.signal.aborted ? SCENE_LATE : 'stopped') }; ws.review.save(); emitBrief(ws); }
+      if (b?.at === gen && b.scene?.pending) { b.scene = { ...b.scene, pending: false, step: null, error: b.scene.error || 'stopped' }; ws.review.save(); emitBrief(ws); }
     }
   })().finally(() => { if (sceneRuns.get(ws.id) === entry) sceneRuns.delete(ws.id); });
   sceneRuns.set(ws.id, entry);
@@ -1044,7 +1035,6 @@ async function runNotes(ws, run, key, targets, previous, request) {
   const publish = () => { ws.review.save(true); ws.emit('notes', state); };
   publish();
   const abort = new AbortController();
-  let timer;
   async function work() {
     const m = ws.meta;
     const change = m.pr ? `Pull request #${m.pr.number}: ${m.pr.title}\nBy ${m.pr.author}, ${m.pr.headRefName} into ${m.pr.baseRefName}.\n\nDescription:\n${(m.pr.body || '(none)').slice(0, 1500)}\n` : `Local branch ${m.branch} (base ${m.base})${m.dirty ? `, with ${m.dirty} files of uncommitted work` : ''}.\n`;
@@ -1088,16 +1078,10 @@ async function runNotes(ws, run, key, targets, previous, request) {
     await Promise.all([worker(), worker()]);
   }
   try {
-    await Promise.race([work(), new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        abort.abort();
-        reject(new Error('File notes took longer than three minutes.'));
-      }, 180000);
-    })]);
+    await work();
   } catch (e) {
     state.error = String(e.message || e);
   } finally {
-    clearTimeout(timer);
     if (state.error) failedNotesKeys.set(ws, { key, retryAt: Date.now() + NOTES_RETRY_MS });
     else if (failedNotesKeys.get(ws)?.key === key) failedNotesKeys.delete(ws);
     state.pending = false;
@@ -1173,17 +1157,14 @@ ${what === 'pr' ? `\nCommits on the branch:\n${ws.meta.commits.map((c) => c.subj
 The diff:
 ${diff}`;
   const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), 3 * 60 * 1000);
   const run = { model: pickModel(model, DEFAULTS.briefModel), effort: pickEffort(effort, 'low') };
   const append = 'You write commit messages and pull request descriptions: plain, specific, no filler, no emoji. Answer only through the structured output.';
-  try {
-    if (modelKind(run.model) === 'codex') {
-      const { out } = await codex.structured(ws, run, append + '\n\n' + prompt, DRAFT_SCHEMA[what], abort.signal);
-      return out;
-    }
-    const options = baseOptions(ws, { ...run, roots: [ws.root || ws.gitDir], abort, append });
-    Object.assign(options, { tools: [], mcpServers: {}, maxTurns: 3, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema: DRAFT_SCHEMA[what] } });
-    for await (const m of query({ prompt, options })) if (m.type === 'result') { if (m.structured_output) return m.structured_output; throw new Error(m.subtype.replace(/_/g, ' ')); }
-    throw new Error('no draft came back');
-  } finally { clearTimeout(timer); }
+  if (modelKind(run.model) === 'codex') {
+    const { out } = await codex.structured(ws, run, append + '\n\n' + prompt, DRAFT_SCHEMA[what], abort.signal);
+    return out;
+  }
+  const options = baseOptions(ws, { ...run, roots: [ws.root || ws.gitDir], abort, append });
+  Object.assign(options, { tools: [], mcpServers: {}, maxTurns: 3, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema: DRAFT_SCHEMA[what] } });
+  for await (const m of query({ prompt, options })) if (m.type === 'result') { if (m.structured_output) return m.structured_output; throw new Error(m.subtype.replace(/_/g, ' ')); }
+  throw new Error('no draft came back');
 }

@@ -199,7 +199,7 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
   "Play the scene". (The page cannot tell when a reader has turned either off in their own Chromium, the header with
   a flag or site isolation; a scene could then reach out, or, stuck in a loop, freeze the page. loupe's render Chrome
   is its own, started with a fresh profile and its own flags.) The brief decides whether
-  a change needs one (most do not) and says why in a line; a second run writes it, handed the diff of what it shows so it draws instead of reading file by file, and held to five minutes (its look-over answers with edits, never the whole document, and starts only while there is time). While it is written the card's tabs
+  a change needs one (most do not) and says why in a line; a second run writes it, with the model and effort the guide was written with, handed the diff of what it shows so it draws instead of reading file by file; its look-over answers with edits, never the whole document. No run that uses a model is cut off for time (the guide, a scene, file notes, a draft): what it has spent would be thrown away; a stop button or a newer guide still ends one. While it is written the card's tabs
   say so ("Drawing the scene · reading …").
 - **Made in chat**: a part of the guide a chat added or changed says so in 11 px `--ink-3` (`made in chat`) where its
   label is (a section's head line, a scene's caption). The Overview's brief lists the edits ("Changed in chat"), newest
