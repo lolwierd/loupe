@@ -266,10 +266,12 @@ function renderOverview(body) {
 function stackHTML() {
   const s = S.stack;
   if (!s?.items?.length || s.items.length < 2) return '';
-  const kind = s.kind === 'github' ? `GitHub stack #${s.stackNumber}` : s.kind === 'chain' ? 'PRs based on each other' : 'branches built on each other';
-  const state = (it) => (it.merged ? 'merged' : it.state === 'closed' ? 'closed' : it.draft ? 'draft' : it.pr ? 'open' : 'local');
+  const kind = s.kind === 'github' ? `GitHub stack #${s.stackNumber}` : s.kind === 'chain' ? 'PRs based on each other' : 'changes stacked by commits';
+  const state = (it) => (it.merged || it.state === 'merged' ? 'merged' : it.state === 'closed' ? 'closed' : it.draft ? 'draft' : it.pr ? 'open' : 'local');
+  // Rows without a destination still describe the stack, but there is nothing to open.
+  const disabled = (it) => it.here || (!it.checkout && !it.pr);
   return `<div class="sect stack"><div class="sh">STACK<span class="n" title="${esc(kind)}">${s.items.length}</span></div>` +
-    s.items.map((it, i) => `<button class="srow${it.here ? ' here' : ''}" data-act="stackopen" data-si="${i}" title="${esc(it.title || it.branch || '')}"><span class="no">${it.pr ? `#${it.pr}` : ''}</span><span class="b">${esc(it.title || String(it.branch || '').split('/').pop())}</span><span class="ss">${it.here ? 'this one' : state(it)}</span></button>`).join('') +
+    s.items.map((it, i) => `<button class="srow${it.here ? ' here' : ''}" data-act="stackopen" data-si="${i}" title="${esc(it.title || it.branch || '')}"${disabled(it) ? ' disabled' : ''}><span class="no">${it.pr ? `#${it.pr}` : ''}</span><span class="b">${esc(it.title || it.branch || '')}</span><span class="ss">${it.here ? 'this one' : state(it)}${it.byCommits ? ' · by commits' : ''}</span></button>`).join('') +
     (S.ws.trunkMergeBase ? `<button class="link" data-act="scope" data-scope="${S.rangeKey === 'stack' ? 'all' : 'stack'}">${S.rangeKey === 'stack' ? 'Back to this change alone' : 'Read the whole stack together'}</button>` : '') + '</div>';
 }
 

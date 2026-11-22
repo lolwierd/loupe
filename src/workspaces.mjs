@@ -6,10 +6,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { STATE_DIR, SEARCH_ROOTS, BIN, HOME } from './config.mjs';
 import { git, gitOk, run, JsonFile, Lru, slug, isSha, safeRel, single, serial } from './util.mjs';
-import { WORKTREE, resolveBase, revParse, commitsBetween, changedFiles, fileHunks, readAt, lineCount, related, kindOf } from './git.mjs';
+import { WORKTREE, revParse, commitsBetween, changedFiles, fileHunks, readAt, lineCount, related, kindOf } from './git.mjs';
 import { goplsFor } from './lsp.mjs';
 import * as GH from './github.mjs';
-import { localParent } from './stacks.mjs';
+import { localParent, localTrunk, stackFor, stackSnapshot } from './stacks.mjs';
 import { fileNoteKey } from '../web/js/file-notes.js';
 
 export const registry = new JsonFile(path.join(STATE_DIR, 'state.json'), { workspaces: [], last: null, clones: {}, ownSessions: [] });
@@ -264,7 +264,7 @@ export class Workspace {
         this.status = 'preparing';
         this.setProgress(`Reading ${owner}/${repo}#${number} from GitHub…`);
         if (!BIN.gh) throw new Error('gh is not installed; loupe reads pull requests through it');
-        const fields = 'number,title,body,author,baseRefName,headRefName,headRefOid,baseRefOid,url,state,isDraft,additions,deletions,changedFiles,createdAt,updatedAt,labels,reviewDecision,mergeable,headRepositoryOwner';
+        const fields = 'number,title,body,author,baseRefName,headRefName,headRefOid,baseRefOid,url,state,isDraft,additions,deletions,changedFiles,createdAt,updatedAt,labels,reviewDecision,mergeable,headRepositoryOwner,isCrossRepository';
         // Three things at once: GitHub's details of the PR, the local clone, and (once the clone is known) a fetch of
         // the PR's head and the default branch, which need nothing from the details. Only a PR based on another
         // branch (a stack) then fetches its base on its own.
@@ -376,12 +376,13 @@ export class Workspace {
       }
       this.github = { at: Date.now(), pr, threads, owner, repo, number, repoFull: `${owner}/${repo}`, pending: pending?.review || null, pendingError: pending?.error, prId: pending?.prId || null };
       // A checkout's base follows its PR's base, once GitHub has said what that is.
-      if (this.rec.kind === 'local' && !this.rec.base && this.meta && this.meta.base !== `origin/${pr.baseRefName}` && pr.headRefName === this.meta.branch) this.sync(true).then(() => this.emit('changed', { reason: `comparing with origin/${pr.baseRefName}, the PR's base` })).catch(() => {});
+      if (this.rec.kind === 'local' && this.meta && pr.headRefName === this.meta.branch) this.sync().catch(() => {});
       if (this.rec.kind === 'pr') {
         const retargeted = this.rec.pr?.baseRefName && pr.baseRefName !== this.rec.pr.baseRefName;
         this.rec.pr = { ...(this.rec.pr || {}), title: pr.title, body: pr.body, state: pr.state, isDraft: pr.isDraft, labels: pr.labels };
         registry.save();
         if (retargeted && this.status === 'ready') this.prepareAgain().then(() => this.emit('changed', { reason: `#${number} now targets ${pr.baseRefName}` })).catch(() => {});
+        else if (this.status === 'ready') this.sync().catch(() => {});
       }
       this.emit('github', {});
       return this.github;
@@ -406,7 +407,7 @@ export class Workspace {
   async prepareAgainOnce() {
     const { owner, repo, number } = this.rec;
     this.rec.worktreeReady = false; // Claude and gopls wait until the checkout matches the new head
-    const fields = 'number,title,body,author,baseRefName,headRefName,headRefOid,baseRefOid,url,state,isDraft,additions,deletions,changedFiles,createdAt,updatedAt,labels,reviewDecision';
+    const fields = 'number,title,body,author,baseRefName,headRefName,headRefOid,baseRefOid,url,state,isDraft,additions,deletions,changedFiles,createdAt,updatedAt,labels,reviewDecision,isCrossRepository';
     const pr = JSON.parse(await run(BIN.gh, ['pr', 'view', String(number), '--repo', `${owner}/${repo}`, '--json', fields]));
     this.rec.pr = { ...pr, author: pr.author?.login, labels: (pr.labels || []).map((l) => l.name) };
     await this.fetchPr();
@@ -416,11 +417,12 @@ export class Workspace {
   }
 
   // -------------------------------------------------------------- the change itself
-  async sync(force = false) {
+  async sync(force = false, snapshot) {
     return this.serial('sync', async () => {
       const before = this.meta;
+      const beforeStack = this.stackSnapshotKey;
       const g = this.gitDir;
-      let head, branch, base, baseSha, mergeBase = null, trunk = null;
+      let head, branch, base, baseSha, mergeBase = null, trunk = null, parent, prBase;
       if (this.rec.kind === 'pr') {
         if (!this.rec.clone) return null;
         const n = this.rec.number;
@@ -431,26 +433,56 @@ export class Workspace {
         trunk = (await gitOk(g, ['rev-parse', '--verify', '--quiet', `refs/loupe/pr/${n}/trunk`])) ? `refs/loupe/pr/${n}/trunk` : null;
       } else {
         head = (await git(g, ['rev-parse', 'HEAD']).catch(() => '')).trim();
-        branch = (await git(g, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '')).trim() || 'HEAD';
+        branch = (await git(g, ['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim().replace(/^refs\/heads\//, '') || 'HEAD';
         // The base: what you chose, else the branch this one was built on (a stack), else the remote's default.
         // In order: what you chose; the base GitHub compares this branch's PR against; the local branch it was built
         // on; the remote's default branch.
-        trunk = await resolveBase(g);
-        const prBase = this.github?.pr?.headRefName === branch && this.github.pr.baseRefName ? `origin/${this.github.pr.baseRefName}` : null;
+        trunk = await localTrunk(g);
+        snapshot ||= await stackSnapshot(g);
+        if (this.github?.pr?.headRefName === branch && this.github.pr.baseRefName) {
+          const ref = `refs/remotes/origin/${this.github.pr.baseRefName}`;
+          if (await gitOk(g, ['rev-parse', '--verify', '--quiet', ref])) prBase = ref;
+        }
+        if (!prBase && head) parent = await localParent(g, branch, trunk, snapshot).catch(() => null);
         base = this.rec.base
-          || (prBase && await gitOk(g, ['rev-parse', '--verify', '--quiet', prBase]) ? prBase : null)
-          || (head ? (await localParent(g, branch, trunk).catch(() => null))?.ref : null)
+          || parent?.base || prBase
           || trunk;
         baseSha = (await git(g, ['rev-parse', '--verify', '--quiet', base]).catch(() => '')).trim();
+        if (!baseSha && base !== trunk) {
+          base = trunk;
+          baseSha = (await git(g, ['rev-parse', '--verify', '--quiet', trunk]).catch(() => '')).trim();
+          parent = null;
+        }
         if (head && baseSha) mergeBase = (await git(g, ['merge-base', baseSha, head]).catch(() => '')).trim() || null;
         if (!head) { head = null; branch = '(no commits yet)'; }
       }
       const commits = mergeBase ? await commitsBetween(g, mergeBase, head) : [];
       // The whole stack under this change: from where it leaves the trunk.
       const trunkSha = trunk ? (await git(g, ['rev-parse', '--verify', '--quiet', trunk]).catch(() => '')).trim() : '';
-      const trunkMergeBase = trunkSha && head && trunkSha !== baseSha ? (await git(g, ['merge-base', trunkSha, head]).catch(() => '')).trim() || null : null;
+      const trunkLabel = trunk?.replace(/^refs\/loupe\/pr\/\d+\/trunk$/, 'the trunk').replace(/^refs\/(heads\/|remotes\/)/, '') || null;
+      const trunkFork = trunkSha && head ? (await git(g, ['merge-base', trunkSha, head]).catch(() => '')).trim() : '';
+      let trunkMergeBase = null;
+      if (trunkFork && trunkFork !== mergeBase && parent) trunkMergeBase = trunkFork;
+      // A custom base alone does not give a PR a stack. Its first diff is ready before GitHub's side arrives.
+      if (head && (this.rec.kind === 'pr' || prBase) && this.github?.pr && trunkSha !== baseSha) {
+        // Commit discovery is for the panel. The existing comparison ranges use the declared stack.
+        const stack = await stackFor(this, { snapshot, commits: false, meta: { branch, headFull: head, trunk: trunkLabel, base } });
+        if (stack.items.findIndex((item) => item.current) > 0) {
+          let fork = trunkFork;
+          const { owner, repo } = this.github;
+          const defaultBranch = this.rec.kind === 'pr'
+            ? (await GH.mergeSettings(owner, repo))?.defaultBranchRef?.name
+            : trunkLabel?.replace(/^origin\//, '');
+          if (stack.trunk && defaultBranch && stack.trunk !== defaultBranch) {
+            // A stack can target a release branch. Use that boundary when its ref is available here.
+            const ref = `refs/remotes/${this.rec.remote || 'origin'}/${stack.trunk}`;
+            fork = (await git(g, ['merge-base', ref, head]).catch(() => '')).trim();
+          }
+          if (fork && fork !== mergeBase) trunkMergeBase = fork;
+        }
+      }
       const sig = `${head}|${baseSha}|${mergeBase}|${branch}`;
-      if (!force && before && before.sig === sig && this.rec.kind === 'pr') return before;
+      if (!force && before && before.sig === sig && before.trunkMergeBase === trunkMergeBase && this.rec.kind === 'pr') return before;
       if (!this.review.data.seenHead) { this.review.data.seenHead = head; this.review.save(); }
       const meta = {
         id: this.id, kind: this.rec.kind, url: this.url, sig,
@@ -458,7 +490,7 @@ export class Workspace {
         repoFull: this.rec.kind === 'pr' ? `${this.rec.owner}/${this.rec.repo}` : null,
         root: this.root, gitDir: g, branch, base, baseSha: baseSha?.slice(0, 9), head: head?.slice(0, 9), headFull: head, mergeBase: mergeBase?.slice(0, 9), mergeBaseFull: mergeBase,
         commits, totals: null, dirty: 0, pr: this.rec.pr || null, seenHead: this.review.data.seenHead,
-        trunk: trunk ? String(trunk).replace(/^refs\/loupe\/pr\/\d+\/trunk$/, 'the trunk') : null, trunkMergeBase, baseAuto: this.rec.kind === 'local' && !this.rec.base && base !== trunk,
+        trunk: trunkLabel, trunkMergeBase, baseAuto: this.rec.kind === 'local' && !this.rec.base && base !== trunk,
         sinceCount: this.review.data.seenHead && head && this.review.data.seenHead !== head ? (await commitsBetween(g, this.review.data.seenHead, head).catch(() => [])).length : 0,
       };
       this.meta = meta; // range() reads it
@@ -469,11 +501,12 @@ export class Workspace {
       meta.dirty = wip.length;
       meta.wipPaths = wip.flatMap((f) => f.oldPath ? [f.oldPath, f.path] : [f.path]);
       this.contentSig = `${sig}|${contentKey(allFiles)}|${meta.dirty}`;
+      this.stackSnapshotKey = snapshot?.key;
       if (before && (before.branch !== branch || before.headFull !== head)) this.fetchGithub(true).catch(() => {});
       if (before && before.sig !== sig) {
         const reason = before.branch !== branch ? `switched to ${branch}` : before.headFull !== head ? 'new commits' : 'the base moved';
         this.emit('changed', { reason });
-      }
+      } else if (before && (beforeStack !== this.stackSnapshotKey || before.trunkMergeBase !== trunkMergeBase)) this.emit('changed', { reason: 'stack changed' });
       return this.meta;
     });
   }
@@ -645,11 +678,13 @@ export class Workspace {
     // Commits, checkouts, rebases and fetches change refs, not files: poll the refs.
     const poll = setInterval(async () => {
       if (!this.meta) return;
-      const [head, branch] = await Promise.all([git(root, ['rev-parse', 'HEAD']).catch(() => ''), git(root, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '')]);
+      const [head, branch, snapshot] = await Promise.all([git(root, ['rev-parse', 'HEAD']).catch(() => ''),
+        git(root, ['symbolic-ref', '--quiet', 'HEAD']).then((ref) => ref.trim().replace(/^refs\/heads\//, '')).catch(() => 'HEAD'), stackSnapshot(root)]);
       const base = await git(root, ['rev-parse', '--verify', '--quiet', this.meta.base]).catch(() => '');
-      if (head.trim() !== (this.meta.headFull || '') || branch.trim() !== this.meta.branch || base.trim().slice(0, 9) !== (this.meta.baseSha || '')) {
+      const stackChanged = snapshot.key !== this.stackSnapshotKey;
+      if (head.trim() !== (this.meta.headFull || '') || (head.trim() && branch !== this.meta.branch) || stackChanged || base.trim().slice(0, 9) !== (this.meta.baseSha || '')) {
         this.version++;
-        await this.sync(true).catch(() => {});
+        await this.sync(true, snapshot).catch(() => {});
       }
     }, 2000);
     this.watch = { close: () => { fsw?.close(); clearInterval(poll); clearTimeout(timer); } };

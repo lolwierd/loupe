@@ -122,6 +122,8 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
   never what it does, so actions carry none; a rule sits only between rows (never first, last or twice), and a row that cannot be undone asks in its own
   place: its first pick turns the label to "Delete it?" on a faint red fill for 3 s, the second does it. Never the
   browser's `confirm()`; a step that needs more than a question is a dialog, weighted by how hard it is to undo.
+- **Stack row**: keep the PR state or “this one” in the trailing meta column. Append “by commits” in the same quiet
+  text for a relationship inferred from Git history. A landed parent keeps its “merged” state.
 - **Palette** (⌘K, and `f` for the repository): the top bar's title opened, as an address bar opens. Flush to the top
   of the window, square above and `--r3` below; its field is the top bar's own row, the title's icon kept in the
   title's place and the typed text on the title's text edge; the bar stays lit and a click on it closes the palette.

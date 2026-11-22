@@ -35,7 +35,7 @@ function leftShare() {
 }
 Object.assign(hooks, {
   goLoc, goThread, openViewer, renderTree, renderPanel, openChat, progress,
-  loadStack: () => loadStack(), setScope: (s) => setScope(s), setOrder: (o) => setOrder(o),
+  loadStack: () => loadStack(true), setScope: (s) => setScope(s), setOrder: (o) => setOrder(o),
   stepFile: (d) => stepFile(d), openStackItem: (i) => openStackItem(i), openPrHere: (url) => openTarget(url),
   showPanel: () => setPane('panel', true),
   toggleMarks: () => setMarksHidden(!S.marksHidden),
@@ -163,6 +163,11 @@ async function readWorkspace(reason) {
   // the opening's roll finishes its pass before the change is drawn over it
   await endOpening();
   if (S.id !== id) return;
+  if (S.ws && (S.ws.branch !== m.branch || S.ws.headFull !== m.headFull)) {
+    // A checkout or rebase can change which row is current before the next stack request finishes.
+    S.stack = null;
+    stackRequest++;
+  }
   S.ws = m; S.opening = null;
   $('#wsbtn').innerHTML = wsTitle();
   const files = loadFiles(reason);
@@ -237,16 +242,21 @@ async function loadFiles(reason) {
   if (S.ws.kind === 'local') loadShip(true);
 }
 
-// The stack this change sits in, drawn as number chips beside the title: GitHub's own stack, else the PR base chain,
-// else local branches. Each opens its checkout when there is one, else its PR.
-async function loadStack() {
-  S.stack = await api(`/api/w/${S.id}/stack`).catch(() => null);
+// Read the Overview's stack after the diff opens. Each row opens its checkout or its PR.
+let stackRequest = 0;
+async function loadStack(fresh = false) {
+  const id = S.id, request = ++stackRequest;
+  const stack = await api(`/api/w/${id}/stack${fresh ? '?fresh=1' : ''}`).catch(() => null);
+  // A reply from the previous workspace or before a newer refresh belongs to that view.
+  if (id !== S.id || request !== stackRequest) return;
+  S.stack = stack;
   renderStack(); renderGo();
 }
 async function openStackItem(i) {
   const it = S.stack?.items?.[i];
   if (!it || it.here) return;
-  const target = it.checkout || (it.pr && S.github?.repoFull ? `${S.github.repoFull}#${it.pr}` : null);
+  const repo = S.stack?.repo || S.github?.repoFull;
+  const target = it.checkout || (it.pr && repo ? `${repo}#${it.pr}` : null);
   if (!target) return toast(`${it.branch} is not checked out here and has no PR`);
   openTarget(target);
 }
@@ -571,7 +581,12 @@ function listenWs() {
     updateFileNotes(before);
     maybeAutoNotes();
   });
-  on('github', async () => { S.github = await api(`/api/w/${S.id}/github`).catch(() => S.github); hooks.githubChanged(); if (S.ws) $('#wsbtn').innerHTML = wsTitle(); });
+  on('github', async () => {
+    const id = S.id, github = await api(`/api/w/${S.id}/github`).catch(() => null);
+    if (id !== S.id || !github) return;
+    S.github = github; hooks.githubChanged();
+    if (S.ws) { $('#wsbtn').innerHTML = wsTitle(); loadStack(); }
+  });
   on('page', () => location.reload());
 }
 let changedT = null;
@@ -1062,7 +1077,7 @@ document.addEventListener('click', async (e) => {
     const act = b.dataset.act;
     if (act === 'palette') openPalette();
     if (act === 'layout') setLayout(b.dataset.l);
-    if (act === 'refresh') { b.disabled = true; try { await api(`/api/w/${S.id}/refresh`, { method: 'POST' }); await loadWorkspace('Read again'); } catch (err) { toast(err.message, { fail: true }); } b.disabled = false; }
+    if (act === 'refresh') { b.disabled = true; try { await api(`/api/w/${S.id}/refresh`, { method: 'POST' }); await loadWorkspace('Read again'); await loadStack(true); } catch (err) { toast(err.message, { fail: true }); } b.disabled = false; }
     if (act === 'theme') {
       const cur = pref.get('theme', 'system'), st = S.app.settings || {};
       // choices (layout, theme, diff) and settings (on or off) each show their state as one check in one column;

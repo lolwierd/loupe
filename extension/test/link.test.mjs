@@ -29,10 +29,10 @@ test('a commit of a pull request opens as that commit, a range as the whole chan
 });
 
 test('names keep their case and their dots, dashes and underscores', () => {
-  const p = pr('https://github.com/Some-Org/my.repo_v2/pull/3070/files');
+  const p = pr('https://github.com/Some-Org/my.repo_v2/pull/1234/files');
   assert.equal(p.owner, 'Some-Org');
   assert.equal(p.repo, 'my.repo_v2');
-  assert.equal(L.prKey(p), 'some-org/my.repo_v2#3070');
+  assert.equal(L.prKey(p), 'some-org/my.repo_v2#1234');
 });
 
 test('pages that are not a pull request open loupe at its root', () => {

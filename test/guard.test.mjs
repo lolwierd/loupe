@@ -37,7 +37,7 @@ test('guide: every file lands in exactly one section; unknown paths drop', () =>
   assert.ok(g.sections.some((s) => s.synthetic && s.files.includes('go.sum')));
 });
 test('targets: PR links, loupe links, owner/repo#n, #n and paths', () => {
-  assert.deepEqual(parseTarget('https://github.com/acme/widgets/pull/3070/files'), { kind: 'pr', owner: 'acme', repo: 'widgets', number: 3070 });
+  assert.deepEqual(parseTarget('https://github.com/acme/widgets/pull/1234/files'), { kind: 'pr', owner: 'acme', repo: 'widgets', number: 1234 });
   assert.deepEqual(parseTarget('http://loupe.local/acme/gadgets/pull/12'), { kind: 'pr', owner: 'acme', repo: 'gadgets', number: 12 });
   assert.deepEqual(parseTarget('acme/tools#7'), { kind: 'pr', owner: 'acme', repo: 'tools', number: 7 });
   assert.equal(parseTarget('#42', '/tmp').kind, 'pr-here');
