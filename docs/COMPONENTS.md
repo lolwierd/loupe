@@ -28,34 +28,63 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   destructive.
 - Surfaces: `--bg` (code, fields), `--raise` (menus, dialogs), `--glass` (frame), `--hover`, `--press`.
 
+## Relief
+The controls are blind-embossed in the sheet: pressed by a die with no ink, so a control's shape is only light and
+shade, never an outline. One light, from above (the glass's lit top edge, the press's shadow inside a pushed top edge).
+- **What stands up, what is pressed in**: what you press stands up out of the sheet (buttons, chips, a select, a key,
+  the chosen segment, the map's parts); what you write in or only read is pressed into it (fields, composers, a dialog's
+  message box, pills, the segmented control's channel, what the map shows outside this repository). Pressing a raised
+  thing pushes it through to a well: its light and shade swap.
+- **Raised** (`--raised`): a plateau of `--face` (the sheet a little paler, as stretched paper is; under the pointer it
+  lifts: `--face-hi`, `--raised-hi`, a longer fall below), a lit line inside its top (`--lit`), faint sides (`--shade-2`), a sheen along its top (`--sheen`), and below
+  it a firm line of shade and a soft fall (`--shade`, `--shade-3`). Chips, the chosen segment and a lifted ghost use the
+  lower `--raised-soft`.
+- **Well** (`--well`): the sheet's white floor (`--bg`), shade inside its top wall and a soft fall under it, faint sides,
+  and a lit lip under its foot. Writing in it, its sides darken to ink-3 (`--well-in`).
+- **Ink**: the primary is a registered emboss, ink printed on the plateau (`--ink-raised`, pressed `--ink-well`).
+- **One list**: the composite reliefs (`--raised`, `--raised-hi`, `--raised-soft`, `--flat`, `--well`, `--well-in`,
+  `--ink-raised`, `--ink-well`, the split button's halves, the draft's landing flash) are the same eight shadows in the
+  same order (five inset: top, sides, foot, sheen, crease; three outer: the cast and its two softenings), unused ones
+  transparent (`--t0`, `--o0`), so a press and a hover blend instead of jumping. Smaller marks draw less: a key is two
+  inset lines and its skirt, a pill one inset line, a key hint inside a button keeps its outline (a key keeps its
+  shape), and the map's parts keep a faint stroke under their drop-shadows (SVG has no inset shadow).
+- **Edges that stay**: menus, dialogs, the palette, list boxes, the map card and checkboxes are surfaces or marks, not
+  reliefs, and keep their rules.
+
 ## Components
-- **Button**, four kinds only. The frame's top bar carries no primary: its next step is a default button. *Primary*: ink fill, on-act text. *Default*: `--bg`, 1 px `--rule-strong`, ink text.
-  *Ghost*: no border, `--ink-2`, hover `--hover`. *Danger*: default with red text; a destructive confirm is a red
-  fill. All 28 px (24 in rows, 32 in dialog footers), padding 0 12 (0 8 at 24), 13 px 500, `--r2` (`--r1` at 24).
-  A key hint is a `<kbd>` inside the button, after the label.
-  *Pressed* (by the pointer, or by its key: `strike.js` gives it `.struck`): a `--press` fill, a soft shadow inside the
-  top edge (`--press-in`, `--press-in-act` on a primary), and it gives to 97%, the way a pushed thing goes away from the
-  eye. No edge at rest; it lands at once (50 ms) and eases back (140 ms). Halves of a split button, segments, tabs and
-  the meter only shade, so no seam opens between neighbours.
-- **Icon button**: 28 square (24 compact), `--r2`, 16 px icon in `--ink-2`, hover `--hover` + ink; pressed, the pad is
-  `--press` and the glyph gives to 88%.
-- **Key hint** (`kbd`): a keycap, its bottom border two pixels. When its key is pressed it bottoms out on one, and the
-  control that key drives shows its press, if it is in view (`strike.js`).
+- **Button**, four kinds only. The frame's top bar carries no primary: its next step is a default button. *Primary*:
+  ink on a raised plateau (`--ink-raised`), on-act text. *Default*: raised (`--face`, `--raised`), ink text, no border.
+  *Ghost*: lies flat in the sheet, `--ink-2`; the pointer lifts it (`--face`, `--raised-soft`). *Danger*: default with
+  red text; a destructive confirm is a red plateau. All 28 px (24 in rows, 32 in dialog footers), padding 0 12 (0 8 at
+  24), 13 px 500, `--r2` (`--r1` at 24). A key hint is a `<kbd>` inside the button, after the label, pressed into it.
+  *Pressed* (by the pointer, or by its key: `strike.js` gives it `.struck`): pushed through to a well (`--well` on a
+  `--press` fill; a primary `--ink-well` on its ink mixed 72% with the sheet), and it gives to 97%, the way a pushed thing goes away from the eye. It
+  lands at once (50 ms) and eases back (140 ms). A split button is one plateau scored between its halves (a groove in
+  shade); its halves, segments, tabs and the meter only shade, so no seam opens between neighbours.
+- **Icon button**: 28 square (24 compact), `--r2`, 16 px icon in `--ink-2`, flat in the sheet; hover lifts its pad
+  (`--raised-soft`) + ink; pressed, the pad is a well on `--press` and the glyph gives to 88%.
+- **Key hint** (`kbd`): a keycap, a small plateau whose skirt is two pixels of shade. When its key is pressed it bottoms
+  out on one, into a well, and the control that key drives shows its press, if it is in view (`strike.js`). In a menu
+  or the palette, and in the find field, a key is a plain figure.
 - **Link button** (`.link`): inline text action, 12 or 13 px to match its line, `--ink-2`, hover ink + underline. Used
   for actions inside text or section headers ("All", "Rewrite", "Back to this change alone").
-- **Input / select / scope button**: 28 px, `--bg`, 1 px `--rule-strong`, `--r2`, padding 0 8, 13 px; focus: border
-  `--ink-3` (keyboard focus adds the blue ring). Large inputs (home Open box, dialog title): 40 px, 14 px.
-- **Segmented control**: 24 px buttons inside a 28 px `--hover` track, `--r2` track, `--r1` buttons; pressed = `--bg` +
-  1 px ring `--rule-strong` + ink text. Same everywhere (verdict, Write/Preview tabs are tabs, not segments).
+- **Input / select / scope button**: 28 px, `--r2`, padding 0 8, 13 px, no border. An input (and a composer, and a
+  dialog's message box) is a well on `--bg`; writing in it, its sides darken (`--well-in`, on the composer and the
+  message box while anything in them has focus); an input focused from the keyboard also takes the blue ring. A select is pressed, so the scope button is raised; the bin's own lies flat until the pointer lifts it. Large
+  inputs (home Open box, dialog title): 40 px, 14 px.
+- **Segmented control**: 24 px buttons inside a 28 px channel pressed into the sheet (`--hover`, `--well`), `--r2`
+  channel, `--r1` buttons; the chosen one stands in it (`--face`, `--raised-soft`) with ink text. Same everywhere (verdict, Write/Preview tabs are tabs, not segments).
 - **Tabs**: text, 13 px 500, `--ink-3`; selected ink with a 2 px ink underline. Panel tabs and Write/Preview alike.
-- **Chip** (a value you can act on: an attachment, a branch, a ref): 24 px, `--r1`, 1 px `--rule`, 12 px. A head and
+- **Chip** (a value you can act on: an attachment, a branch, a ref): 24 px, `--r1`, a low plateau (`--face`,
+  `--raised-soft`), 12 px; pressed, a well. A head and
   its base (`branch → main`) wrap as one unit.
 - **Model picker**: the model and effort as words with a chevron (`Sonnet 5.5 · high ⌄`), 24 px, 13 px 500 `--ink-2`, no
   box; hover `--hover`. The spark (the pixel sprite, still: the one spark) only for Claude models. The same drawing in a
   line of links and beside a send button, and always before the action it sets ("Sonnet 5.5 · low ⌄ Write it",
   "… Regenerate"). One picker and one Regenerate for the brief: the Overview's, beside the line that says what wrote it.
 - **Pill** (a state you only read: open, draft, test, new, high risk): 18 px, `--r1`, 11 px 500, padding 0 8,
-  `--hover` background, `--ink-2` text; semantic variants tint background and text with ok, warn or danger.
+  `--hover` background struck into the sheet (a line of `--shade-2` inside its top), `--ink-2` text; semantic variants
+  tint background and text with ok, warn or danger.
 - **Group header in a list** (the file list's guide sections): on the rows' own grid, its number in their glyph column
   and its title on their text edge, 13 px 600 ink, two lines at most; a 1 px rule and 8 above it. Never caps.
 - **Section header**: 11 px 600 caps (short labels only: caps never carry a sentence), tracking 0.05em, `--ink-3`; optional count (11 px mono `--ink-3`) after it, and
