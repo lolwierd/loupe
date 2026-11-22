@@ -9,7 +9,11 @@ const drop = () => { lens?.remove(); lens = null; peered = false; clearInterval(
 function drawMote(e, mote) {
   if (!lens) { lens = h('<div class="lens" aria-hidden="true"><div class="in"></div></div>'); document.body.append(lens); }
   const inner = lens.querySelector('.in'), rr = mote.getBoundingClientRect();
-  const copy = () => { if (!mote.isConnected || !mote.offsetParent) return drop(); const s = inner?.firstElementChild; if (s) s.style.cssText = mote.style.cssText; };
+  const copy = () => {
+    if (!mote.isConnected || !mote.offsetParent || mote.closest('#motedock.flying')) return drop();
+    const s = inner?.firstElementChild;
+    if (s) s.style.cssText = mote.style.cssText;
+  };
   if (!inner.classList.contains('of-mote')) { inner.className = 'in of-mote'; inner.innerHTML = '<span class="mote"></span>'; }
   copy();
   // his frames change while he waves: the glass follows them, at his own 12 fps

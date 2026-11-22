@@ -376,9 +376,16 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .split .ln.flash[data-fs="old"] > :nth-child(n+3), .split .ln.flash[data-fs="new"] > :nth-child(-n+2) { animation: none; }
 @keyframes flash { 0%, 30% { background: var(--flash); } }
 .ln.marked .no:first-child { box-shadow: inset 2px 0 0 var(--ink-3); }
-.plus { position: absolute; left: -10px; top: 1px; width: 20px; height: 18px; border: 0; border-radius: var(--r1); background: var(--act); color: var(--on-act); padding: 0; cursor: pointer; opacity: 0; transition: opacity 120ms var(--ease); z-index: 2; display: grid; place-items: center; }
+/* the + to start a mark: in the margin, over the empty left edge of its side's line-number gutter (where a hidden
+   mark's pin sits; a number up to three digits never reaches it), so it never covers a number or the diff's sign.
+   --gut is how far that edge is left of the code: both number columns in the unified view, one in split. */
+.fb { --gut: 96px; }
+.fb.split, .file:is(.allnew, .allgone) .fb { --gut: 48px; }
+.plus { position: absolute; left: calc(1px - var(--gut)); top: 2px; width: 16px; height: 16px; border: 0; border-radius: var(--r1); background: var(--act); color: var(--on-act); padding: 0; cursor: pointer; opacity: 0; transition: opacity 120ms var(--ease); z-index: 2; display: grid; place-items: center; }
 .plus svg { width: 12px; height: 12px; }
 .ln:hover .cd:not(.e) .plus, .plus:focus-visible { opacity: 1; }
+/* a hidden mark's pin has that spot (yours or a GitHub thread's): its line keeps the pin, and the number still selects it */
+.marks-hidden .fb:not(.split) .ln:has(.mpin) .plus, .marks-hidden .split .ln:has(.mpin) > .no:first-child + .cd .plus { display: none; }
 .hk { display: grid; grid-template-columns: 96px minmax(0, 1fr); background: var(--hunk-bg); color: var(--hunk-ink); min-height: var(--h2); font-size: var(--t-mono); }
 .split .hk { grid-template-columns: 48px minmax(0, 1fr); }
 .hk .hx { display: flex; justify-content: center; align-items: center; }
@@ -1226,8 +1233,8 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 @keyframes mote-shuffle { 0% { transform: none; } 12% { transform: translateX(-2px); } 25% { transform: translateX(-4px); } 40% { transform: translateX(-5px); } 55% { transform: translateX(-3px); } 70% { transform: translateX(-1px); } 85%, 100% { transform: none; } }
 @media (prefers-reduced-motion: reduce) { .moteprop, .motefloat.shuffle .mote { animation: none; display: none; } }
 .motefloat.drag .mote { cursor: grabbing; }
-/* away: flown off (mote.js); flying, his wings out from under his shell, behind him at the shell's top, one art pixel
-   to a CSS pixel, as he is drawn */
+/* Away: flown off (mote.js). Flying: an overlay draws his open shell halves and buzzing hind wings at 1×.
+   Hide the dock's standing sprite and its reflection in the Option lens while the overlay owns the pose. */
 .motefloat.away { display: none; }
 /* thrown (mote.js): on his back, legs at the air, and a rock before he heaves himself over; whole pixels, two steps */
 .motefloat.onback .mote { transform: rotate(180deg) translateY(-2px); }
@@ -1235,9 +1242,9 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 @keyframes mote-rock { 0% { transform: rotate(180deg) translateY(-2px); } 25% { transform: rotate(168deg) translate(2px, -2px); } 50% { transform: rotate(180deg) translateY(-2px); } 75% { transform: rotate(192deg) translate(-2px, -2px); } 100% { transform: rotate(180deg) translateY(-2px); } }
 .motefloat.onback .motelight { visibility: hidden; }
 .motefloat.flying .mw, .motefloat.flying .motelight, .motefloat.flying .motecheck, .motefloat.flying .moteprop { visibility: hidden; }
-.motewing { position: absolute; z-index: -1; top: 13px; width: 18px; height: 9px; background: 0 0 / 18px 9px no-repeat; image-rendering: pixelated; pointer-events: none; }
-.motewing.l { left: -8px; transform: scaleX(-1); }
-.motewing.r { right: -8px; }
+.motefloat.flying .mote { visibility: hidden; }
+body:has(#motedock.flying) .lens:has(.of-mote) { display: none; }
+.moteflight { position: absolute; top: -8px; left: -24px; width: 96px; height: 64px; image-rendering: pixelated; pointer-events: none; }
 .motefloat .mw { position: absolute; left: 52px; bottom: 16px; max-width: 280px; padding: var(--s1) var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r2); box-shadow: 0 1px 2px rgba(20, 20, 30, 0.08); font-size: var(--t-meta); color: var(--ink-2); pointer-events: none; }
 .motefloat .mw:empty { display: none; }
 .motefloat.flip .mw { left: auto; right: 52px; }

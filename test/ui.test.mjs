@@ -281,7 +281,7 @@ test('jump history restores two origins and is cleared with the comparison', asy
   const back = {};
   const S = { id: 'one', scope: 'all', view: null };
   const nav = vm.runInNewContext(source.slice(source.indexOf('const returns'), source.indexOf('export async function goThread')).replace(/^export /gm, '') + '\n({ goLoc, goBack, clearReturns })', {
-    S, $: (id) => ({ '#center': center, '#review-back': back })[id],
+    S, $: (id) => ({ '#center': center, '#vback': back })[id],
     hideTip() {}, closeViewer() { S.view = null; },
     openViewer(v) { S.view = v; center.scrollTop = 0; },
     resolvePath: (p) => p, fileOf: () => null,

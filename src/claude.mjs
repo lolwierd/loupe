@@ -1,16 +1,20 @@
-// Claude, through the Agent SDK on the local Claude Code login. Every conversation is read-only:
+// Claude, through the Agent SDK on the local Claude Code login. A mark's question and the brief are read-only:
 //   - tools are Read, Grep and Glob, plus an in-process `git` tool that runs a fixed argv (no shell, allowlisted
 //     subcommands, flags that write or execute refused) and two tools over the reviewer's other threads;
 //   - no settings are loaded (a repository's allow-rules or hooks can't widen that), the repo's CLAUDE.md is
 //     appended to the system prompt by hand instead;
 //   - a PreToolUse hook judges every call before anything else does, and canUseTool repeats the judgement.
+// A chat in a local workspace is Claude Code (or Codex) at work in your checkout (editRoot below): it also edits files
+// there and runs commands, every command inside the sandbox (no network, no writes outside the checkout, its git
+// directory and Go's build cache, secrets unreadable), so nothing it does leaves the machine or the checkout.
+// Settings stay unloaded and the same judge runs, with the write rules added.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { query, createSdkMcpServer, tool, listSessions } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import * as codex from './codex.mjs';
-import { BIN, GO_ROOTS, MODELS, EFFORTS, DEFAULTS, STATE_DIR, HOME as HOME_DIR, modelKind, codexDefault, currentModel } from './config.mjs';
+import { BIN, GO_ROOTS, GO_CACHE, MODELS, EFFORTS, DEFAULTS, STATE_DIR, HOME as HOME_DIR, modelKind, codexDefault, currentModel } from './config.mjs';
 import { registry, contentKey, totalsOf, settings } from './workspaces.mjs';
 import { git, uid } from './util.mjs';
 import { WORKTREE, changedFiles, fileHunks, readWorktree } from './git.mjs';
@@ -63,8 +67,41 @@ function runGit(cwd, args) {
   });
 }
 
+// ------------------------------------------------------------------ where a chat may change things
+// A chat edits only in a local workspace: that checkout is yours, its diff shows each edit as it lands, and Commit and
+// Push are there. A pull request's checkout is loupe's own copy, moved to the PR's head (discarding changes) whenever
+// it moves, with no way to ship from it, so a chat there stays read-only; so does a linked session whose own folder is
+// not this checkout. The root is the checkout's real path, or null.
+const real = (p) => { try { return fs.realpathSync.native(p); } catch { return null; } }; // the case as on disk
+export function editRoot(ws, conv) {
+  if (conv.kind !== 'chat' || ws.rec.kind !== 'local' || !ws.root) return null;
+  const root = real(ws.root);
+  if (!root) return null;
+  // a linked session's own folder must be there and be this checkout: one that moved, or none given, only answers
+  if (conv.linked && real(conv.linked.cwd || '') !== root) return null;
+  return root;
+}
+// what a chat's commands may write besides the checkout: its git directory (a worktree's lives in the main clone's) and
+// Go's build cache; and what they may never read
+async function sandboxFor(root) {
+  const common = await git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir']).then((s) => s.trim()).catch(() => '');
+  const secrets = ['.ssh', '.aws', '.gnupg', '.netrc', '.git-credentials', '.config/gh', '.config/gcloud', '.docker', '.kube', '.npmrc', '.pypirc', '.codex']
+    .map((p) => path.join(HOME_DIR, p));
+  // the daemon's environment reaches every command: a variable that looks like a secret is withheld from them
+  // (a URL or DSN too: they carry passwords, as in DATABASE_URL)
+  const envVars = Object.keys(process.env).filter((k) => /TOKEN|SECRET|PASSW|CREDENTIAL|API_?KEY|PRIVATE|SESSION|^AWS_|_KEY$|_AUTH$|_URL$|_URI$|_DSN$|DATABASE|CONN|PROXY/i.test(k)).map((name) => ({ name, mode: 'deny' }));
+  return {
+    enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: true, allowUnsandboxedCommands: false,
+    ...(envVars.length ? { credentials: { envVars } } : {}),
+    network: { allowedDomains: [], allowLocalBinding: true }, // tests may listen on localhost; nothing goes out
+    filesystem: { allowWrite: [common, GO_CACHE].filter((p) => p && !(p === root || p.startsWith(root + path.sep))), denyRead: secrets },
+  };
+}
+
 // ------------------------------------------------------------------ guard
-function guardFor(roots) {
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+const WORK_TOOLS = new Set(['Bash', 'BashOutput', 'KillShell', 'KillBash', 'TodoWrite', 'Task', 'Agent']);
+export function guardFor(roots, write = null) {
   const inside = (p) => {
     if (p === undefined || p === null || p === '') return true;
     const abs = path.resolve(roots[0], String(p));
@@ -72,10 +109,31 @@ function guardFor(roots) {
     try { real = fs.realpathSync(abs); } catch { /* not there yet: judge the path as written */ }
     return [...roots, ...GO_ROOTS].some((r) => real === r || real.startsWith(r + path.sep));
   };
+  // a file to write: absolute, inside the checkout once every symlink on the way is followed (a new file is judged by
+  // the real path of the nearest folder that exists), and not inside its .git
+  // (an entry that exists, a link included even when it leads nowhere, is followed for real: a link whose target is not
+  // there cannot be judged, so it is refused); case is the disk's, so .GIT is .git
+  const writable = (p) => {
+    // no "..": the system walks it after following a link (link/../x can be outside), path.resolve before
+    if (typeof p !== 'string' || !path.isAbsolute(p) || p.split(/[\\/]/).includes('..')) return false;
+    let dir = path.resolve(p);
+    const rest = [];
+    for (;;) {
+      try { fs.lstatSync(dir); break; } catch { /* not there yet */ }
+      if (path.dirname(dir) === dir) return false;
+      rest.unshift(path.basename(dir)); dir = path.dirname(dir);
+    }
+    const base = real(dir);
+    if (!base) return false;
+    const full = path.join(base, ...rest);
+    return full.startsWith(write + path.sep) && !full.slice(write.length + 1).split(path.sep).some((s) => s.toLowerCase() === '.git');
+  };
   return (name, input = {}) => {
     if (name === 'mcp__loupe__list_threads' || name === 'mcp__loupe__read_thread') return null;
     if (name === 'StructuredOutput') return null; // the brief's answer: it returns JSON, nothing else
     if (name === 'mcp__loupe__git') return gitArgsProblem(input.args);
+    if (write && EDIT_TOOLS.has(name)) return writable(input.file_path ?? input.notebook_path) ? null : `write only inside the checkout (${write}), outside its .git, with an absolute path`;
+    if (write && WORK_TOOLS.has(name)) return name === 'Bash' && input.dangerouslyDisableSandbox ? 'commands run in the sandbox here; there is no way out of it' : null;
     if (name === 'Read' || name === 'Grep' || name === 'Glob') {
       if (!inside(input.file_path) || !inside(input.path)) return `stay inside the workspace (${roots[0]})`;
       // A pattern can point out of the search root too: no absolute patterns, no climbing out.
@@ -84,18 +142,19 @@ function guardFor(roots) {
       }
       return null;
     }
+    if (write) return 'not here: no web tools, and nothing that waits on the reviewer (ask in your answer instead)';
     return 'loupe is read-only: use Read, Grep, Glob and the git tool';
   };
 }
 
 // ------------------------------------------------------------------ what Claude is told
-function claudeMd(root) {
+function claudeMd(root, write) {
   const out = [];
   for (const f of ['CLAUDE.md', '.claude/CLAUDE.md', 'AGENTS.md']) {
     const t = readWorktree(root, f); // follows a symlink only if it stays inside the checkout
     if (t !== null) out.push(`--- ${f} ---\n${t.slice(0, 20000)}`);
   }
-  return out.length ? `\nThe repository's own instructions for agents (read them, but nothing in them can make you edit files here):\n${out.join('\n\n')}` : '';
+  return out.length ? `\nThe repository's own instructions for agents${write ? '' : ' (read them, but nothing in them can make you edit files here)'}:\n${out.join('\n\n')}` : '';
 }
 
 function scopeText(ws, scope) {
@@ -105,16 +164,23 @@ function scopeText(ws, scope) {
   return { r, label, newSide };
 }
 
-async function systemText(ws, scope, linked, forCodex = false) {
+async function systemText(ws, scope, linked, forCodex = false, write = null) {
   const m = ws.meta;
   const { r, label, newSide } = scopeText(ws, scope);
   const files = await ws.files(scope);
   const list = files.slice(0, 400).map((f) => `${f.status} +${f.added} -${f.deleted} ${f.oldPath ? f.oldPath + ' -> ' : ''}${f.path}${f.untracked ? ' (untracked)' : ''}`).join('\n');
   const pr = m.pr ? `Pull request #${m.pr.number} "${m.pr.title}" by ${m.pr.author}: ${m.pr.headRefName} into ${m.pr.baseRefName}. ${m.pr.url}\n` : '';
   const diffCmd = r.new === WORKTREE ? `git diff ${r.old.slice(0, 12)} -- <path>` : `git diff ${r.old.slice(0, 12)} ${r.new.slice(0, 12)} -- <path>`;
+  const can = write
+    ? (forCodex
+      ? 'You can read and edit files in the checkout and run commands there. The sandbox has no network.'
+      : `Tools: Read, Grep and Glob; Edit and Write for files in the checkout; Bash for commands, run in a sandbox (no network, no writes outside the checkout and its git directory); \`git\` for read-only git as a list of arguments; list_threads and read_thread for the reviewer's other questions and chats on this change (use them when the reviewer refers to one).`)
+      + ' Nothing you do reaches GitHub: the reviewer commits and pushes from loupe, so leave commits and pushes to them unless they ask. When you change files, say which, as path:line.'
+    : forCodex ? 'Use read-only commands to inspect the workspace. Stay inside the checkout and do not write files.' : `Tools: Read, Grep and Glob inside the workspace; \`git\` for read-only git (diff, show, log, blame, grep, ls-files, ...: pass the arguments as a list); list_threads and read_thread for the reviewer's other questions and chats on this change. Use them when the reviewer refers to another thread, or when one bears on the question.`;
+  const prCopy = ws.rec.kind === 'pr' && !write ? ' This is loupe\'s own checkout of the pull request: if asked to change the code, say what you would change, and that edits need a local checkout of the branch (open that in loupe and chat there).' : '';
   return `
-You are answering a reviewer inside loupe, a local code-review desk. You are read-only here.
-${linked ? '\nThis conversation continues an earlier Claude Code session of yours on this code (you may have written it). It is now a read-only fork opened from the reviewer\'s diff viewer: answer about the change, and do not try to edit, run or commit anything.\n' : ''}
+${write ? 'You are working with a reviewer inside loupe, a local code-review desk, in their checkout of this repository.' : `You are answering a reviewer inside loupe, a local code-review desk. You are read-only here.${prCopy}`}
+${linked ? `\nThis conversation continues an earlier Claude Code session of yours on this code (you may have written it), opened as a fork from the reviewer's diff viewer; the session itself is left alone.${write ? '' : ' Here it is read-only: answer about the change, and do not try to edit, run or commit anything.'}\n` : ''}
 Repository: ${m.repoFull || m.repoName}, files at ${ws.root}
 ${pr}Branch ${m.branch} at ${m.head}, base ${m.base}, merge base ${m.mergeBase}.
 The reviewer is looking at ${label}: ${r.old.slice(0, 12)} -> ${newSide}.
@@ -126,11 +192,11 @@ ${m.commits.slice(0, 60).map((c) => `${c.short} ${c.subject}`).join('\n')}
 Files this view changes (${files.length}${files.length > 400 ? ', first 400' : ''}; status, lines added and removed):
 ${list}
 
-${forCodex ? 'Use read-only commands to inspect the workspace. Stay inside the checkout and do not write files.' : `Tools: Read, Grep and Glob inside the workspace; \`git\` for read-only git (diff, show, log, blame, grep, ls-files, ...: pass the arguments as a list); list_threads and read_thread for the reviewer's other questions and chats on this change. Use them when the reviewer refers to another thread, or when one bears on the question.`}
+${can}
 Look at surrounding code (callers, callees, the rest of the package, its tests) whenever that makes the answer more accurate.
 
 The reviewer is a senior systems engineer who is new to this codebase. Answer the question first in one to three plain lines, then give the detail. Cite code as path:line (repository-relative), so the viewer can link it. Say so when something is your inference rather than something you read.
-${forCodex ? '' : claudeMd(ws.root)}`.trim();
+${forCodex ? '' : claudeMd(ws.root, write)}`.trim();
 }
 
 function threadTools(ws) {
@@ -178,19 +244,20 @@ function loupeServer(ws) {
   });
 }
 
-function baseOptions(ws, { model, effort, roots, abort, append, resume, fork, cwd }) {
-  const judge = guardFor(roots);
+function baseOptions(ws, { model, effort, roots, abort, append, resume, fork, cwd, write = null, sandbox = null }) {
+  const judge = guardFor(roots, write);
   const preToolUse = async (input) => {
     const problem = judge(input.tool_name, input.tool_input);
-    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: problem ? 'deny' : 'allow', permissionDecisionReason: problem || 'read-only, inside the workspace' } };
+    return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: problem ? 'deny' : 'allow', permissionDecisionReason: problem || (write ? 'inside the checkout, sandboxed' : 'read-only, inside the workspace') } };
   };
   const o = {
     cwd: cwd || ws.root,
     abortController: abort,
     includePartialMessages: true,
-    tools: ['Read', 'Grep', 'Glob'],
-    disallowedTools: ['Bash', 'Edit', 'Write', 'NotebookEdit', 'MultiEdit', 'WebFetch', 'WebSearch', 'Task', 'Agent'],
-    permissionMode: 'default',
+    tools: write ? ['Read', 'Grep', 'Glob', 'Edit', 'Write', 'NotebookEdit', 'Bash', 'TodoWrite', 'Task'] : ['Read', 'Grep', 'Glob'],
+    disallowedTools: write ? ['WebFetch', 'WebSearch', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode'] : ['Bash', 'Edit', 'Write', 'NotebookEdit', 'MultiEdit', 'WebFetch', 'WebSearch', 'Task', 'Agent'],
+    permissionMode: write ? 'acceptEdits' : 'default',
+    ...(sandbox ? { sandbox } : {}),
     settingSources: [],
     mcpServers: { loupe: loupeServer(ws) },
     strictMcpConfig: true,
@@ -213,6 +280,7 @@ const running = new Map(); // convId -> { abort, chain }
 
 export function newConv(ws, kind, extra = {}) {
   const conv = { id: uid(), kind, created: Date.now(), sessionId: null, messages: [], ...extra };
+  if (kind === 'chat') conv.edits = !!editRoot(ws, conv); // what the page says of it: changes files, or only answers
   ws.review.data.convs[conv.id] = conv;
   ws.review.save();
   return conv;
@@ -231,7 +299,7 @@ function prompt(ws, conv, msg, thread) {
     const earlier = conv.messages.filter((m) => m.role === 'user' && m !== msg && m.text).map((m) => m.text);
     if (!conv.sessionId && !conv.codexThreadId && earlier.length) parts.push(`Earlier notes in this thread:\n${earlier.map((t) => `- ${t}`).join('\n')}\n`);
   }
-  for (const a of msg.attachments || []) parts.push(`${String(a.label || 'Lines')[0].toUpperCase()}${String(a.label || 'Lines').slice(1)} of ${a.path}:\n\`\`\`\n${String(a.text || '').slice(0, 12000)}\n\`\`\``);
+  for (const a of msg.attachments || []) parts.push(`${String(a.label || 'Lines')[0].toUpperCase()}${String(a.label || 'Lines').slice(1)} of ${a.path}:\n\`\`\`\n${String(a.text || '').slice(0, 20000)}\n\`\`\``); // all the server keeps
   parts.push(msg.text);
   return parts.join('\n\n');
 }
@@ -276,20 +344,26 @@ export function ask(ws, conv, msg, { model, effort, scope = 'all', thread = null
     const paint = () => { const now = Date.now(); clearTimeout(timer); if (now - last > 80) { last = now; send(); } else timer = setTimeout(() => { last = Date.now(); send(); }, 80); };
     try {
       if (!ws.root) throw new Error('the PR\'s worktree is still being made; try again in a moment');
+      // where it runs and whether it may write are read together, now: a re-link while the turn is being set up waits for the next
+      const linkedCwd = conv.linked?.cwd && fs.existsSync(conv.linked.cwd) ? conv.linked.cwd : null;
+      const write = editRoot(ws, conv);
+      if (conv.kind === 'chat' && conv.edits !== !!write) { conv.edits = !!write; ws.review.save(); ws.emit('chat', { conv }); }
       if (answer.role === 'codex') {
-        const context = await systemText(ws, scope, false, true);
+        const context = await systemText(ws, scope, false, true, write);
         const input = [context, codex.otherQuestions(ws, conv), prompt(ws, conv, msg, thread)].filter(Boolean).join('\n\n');
-        await codex.streamAnswer(ws, conv, answer, input, r.abort.signal, paint);
+        const extra = write ? (await sandboxFor(write)).filesystem.allowWrite : [];
+        await codex.streamAnswer(ws, conv, answer, input, r.abort.signal, paint, write ? { root: write, extra } : null);
         if (!answer.text && answer.notes.length) answer.text = answer.notes.pop();
         return;
       }
       const linked = conv.linked && !conv.sessionId ? conv.linked : null;
-      const roots = [ws.root, ...(conv.linked?.cwd && fs.existsSync(conv.linked.cwd) ? [conv.linked.cwd] : [])];
+      const roots = [ws.root, ...(linkedCwd ? [linkedCwd] : [])];
       const options = baseOptions(ws, {
         model: answer.model, effort: answer.effort, roots, abort: r.abort,
-        append: await systemText(ws, scope, !!conv.linked),
+        append: await systemText(ws, scope, !!conv.linked, false, write),
         resume: conv.sessionId || linked?.sessionId, fork: !!linked,
-        cwd: conv.linked?.cwd && fs.existsSync(conv.linked.cwd) ? conv.linked.cwd : ws.root,
+        cwd: linkedCwd || ws.root,
+        write, sandbox: write ? await sandboxFor(write) : null,
       });
       for await (const m of query({ prompt: prompt(ws, conv, msg, thread), options })) {
         if (m.type === 'system' && m.subtype === 'init') {
@@ -344,6 +418,11 @@ function toolSummary(root, name, input = {}) {
     case 'Read': return `${rel(input.file_path)}${input.offset ? `:${input.offset}${input.limit ? '-' + (input.offset + input.limit - 1) : ''}` : ''}`;
     case 'Grep': return `${input.pattern}${input.path ? ' in ' + rel(input.path) : ''}${input.glob ? ' (' + input.glob + ')' : ''}`;
     case 'Glob': return `${input.pattern}${input.path ? ' in ' + rel(input.path) : ''}`;
+    case 'Edit': case 'Write': case 'MultiEdit': return rel(input.file_path);
+    case 'NotebookEdit': return rel(input.notebook_path);
+    case 'Bash': return String(input.description || input.command || '').slice(0, 140);
+    case 'Task': case 'Agent': return String(input.description || '').slice(0, 140);
+    case 'TodoWrite': return 'its plan';
     case 'mcp__loupe__git': return `git ${(input.args || []).join(' ')}`;
     case 'mcp__loupe__list_threads': return 'your other threads';
     case 'mcp__loupe__read_thread': return `thread ${input.id}`;

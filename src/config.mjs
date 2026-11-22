@@ -46,6 +46,12 @@ export const GO_ROOTS = (() => {
   try { return execFileSync(BIN.go, ['env', 'GOROOT', 'GOMODCACHE']).toString().split('\n').filter(Boolean); } catch { return []; }
 })();
 
+// Go's build cache: a chat's commands may write there (go build, go test), the one place outside the checkout they may.
+export const GO_CACHE = (() => {
+  if (!BIN.go) return null;
+  try { return execFileSync(BIN.go, ['env', 'GOCACHE']).toString().trim() || null; } catch { return null; }
+})();
+
 // Where to look for a clone of a GitHub repository when a PR link is opened.
 // Where to look for an existing clone of a PR's repository (two levels deep), so a PR is fetched into it instead of
 // cloned again. LOUPE_SEARCH replaces the list (colon-separated).

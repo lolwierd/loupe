@@ -6,7 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 process.env.LOUPE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-test-'));
-const { gitArgsProblem, normalizeGuide, brief } = await import('../src/claude.mjs');
+const { gitArgsProblem, normalizeGuide, brief, guardFor, editRoot } = await import('../src/claude.mjs');
 const { parseTarget } = await import('../src/workspaces.mjs');
 
 test('git: read-only subcommands pass', () => {
@@ -78,4 +78,33 @@ test('brief preparation errors clear pending and preserve the previous guide', a
   assert.equal(events[1].error, 'Could not read the diff');
   assert.equal(events[1].tldr, 'Previous summary');
   assert.equal(events[1].stale, true);
+});
+
+test('a chat in your checkout writes only inside it, outside its .git, and runs commands only in the sandbox', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-write-')));
+  const root = path.join(dir, 'repo'), out = path.join(dir, 'elsewhere');
+  fs.mkdirSync(path.join(root, 'src'), { recursive: true }); fs.mkdirSync(path.join(root, '.git')); fs.mkdirSync(out);
+  fs.symlinkSync(out, path.join(root, 'link')); // a folder in the checkout that leads out of it
+  fs.symlinkSync(path.join(out, 'missing.go'), path.join(root, 'dangling.go')); // a file link to nothing, outside
+  fs.symlinkSync(path.join(root, '.git', 'hooks-new'), path.join(root, 'tohooks')); // and one into .git
+  const judge = guardFor([root], root), ro = guardFor([root]);
+  for (const p of [path.join(root, 'src/a.go'), path.join(root, 'new/dir/b.go'), path.join(root, '.github/workflows/ci.yml')]) assert.equal(judge('Edit', { file_path: p }), null, p);
+  for (const p of [path.join(out, 'a.go'), path.join(root, '.git/config'), path.join(root, 'link/a.go'), path.join(root, 'link/new/b.go'), 'src/a.go', path.join(root, '../elsewhere/a.go'), path.join(root, 'dangling.go'), path.join(root, 'tohooks'), path.join(root, '.GIT/config'), root + '/link/../a.go']) assert.notEqual(judge('Write', { file_path: p }), null, p);
+  assert.equal(judge('NotebookEdit', { notebook_path: path.join(root, 'n.ipynb') }), null);
+  assert.equal(judge('Bash', { command: 'go test ./...' }), null);
+  assert.notEqual(judge('Bash', { command: 'curl x', dangerouslyDisableSandbox: true }), null);
+  for (const t of ['WebFetch', 'WebSearch', 'AskUserQuestion']) assert.notEqual(judge(t, {}), null, t);
+  // a mark, the brief or a pull request's chat: nothing writes, nothing runs
+  for (const [t, i] of [['Edit', { file_path: path.join(root, 'src/a.go') }], ['Bash', { command: 'ls' }], ['Task', {}]]) assert.notEqual(ro(t, i), null, t);
+  assert.equal(ro('Read', { file_path: path.join(root, 'src/a.go') }), null);
+});
+
+test('a chat edits only in a local checkout, and a linked one only when its own folder is that checkout', () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-edit-'))), other = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-other-'));
+  const local = { rec: { kind: 'local' }, root }, pr = { rec: { kind: 'pr' }, root };
+  assert.equal(editRoot(local, { kind: 'chat' }), fs.realpathSync.native(root));
+  assert.equal(editRoot(local, { kind: 'thread' }), null); // a mark only answers
+  assert.equal(editRoot(pr, { kind: 'chat' }), null); // a pull request's checkout is loupe's copy
+  assert.equal(editRoot(local, { kind: 'chat', linked: { cwd: root } }), fs.realpathSync.native(root));
+  for (const cwd of [other, path.join(root, 'gone'), null, undefined]) assert.equal(editRoot(local, { kind: 'chat', linked: { cwd } }), null, String(cwd));
 });

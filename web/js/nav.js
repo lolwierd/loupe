@@ -15,7 +15,7 @@ export function resolvePath(p) {
 const returns = [];
 let jump = 0;
 function paintReturn() {
-  for (const id of ['#review-back', '#vback']) {
+  for (const id of ['#vback']) { // the whole-file viewer's own Back; in the review, [ goes back (no button in the top bar)
     const button = $(id);
     if (button) button.hidden = !returns.length;
   }

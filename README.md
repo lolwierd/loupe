@@ -19,6 +19,11 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
   opens at the line it quoted, even when the number is a few lines off.
 - **Ask about lines.** Select lines and press `a`, type, and press `↵`. The answer sits at the lines and opens beside
   the code. The model can read the repository and run read-only git; it cannot change anything.
+- **Chat, and change it.** Beside the diff of your own checkout, the chat is Claude Code or Codex at work there: ask
+  about the change, or have it changed. It edits files and runs commands without asking, all in a sandbox with no
+  network that writes nothing outside the checkout; commits and pushes stay yours. **Edit in chat** on a question or a
+  GitHub thread hands it over, with its lines and its words. A pull request's chat only answers: that checkout is
+  loupe's own copy.
 - **Claude or Codex.** One picker lists the newest model of each line from both, taken from your own accounts and kept
   current as new ones ship. A conversation stays with the kind of model it started on.
 - **A guide.** The change as a few sections in reading order, each with what to check. The file list switches between
@@ -33,8 +38,8 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
 - **Keyboard first.** `⌘K`, or a click on the title, finds any file, open change, commit or action; `f` searches the
   whole repository at the reviewed revision; `?` lists the keys.
 
-Mote, the small beetle floating in the corner (drag him anywhere; double-click him and he flies off, until Show Mote
-in `⌘K` calls him back), shows what the desk is doing: working while an answer or the map is being written, and
+Mote, the small beetle floating in the corner (drag him anywhere; double-click him and he lifts his shell and flies
+off, until Show Mote in `⌘K` calls him back), shows what the desk is doing: working while an answer or the map is being written, and
 jumping when you have read the last file. He looks with his eyes, at the pointer when it is near and at what just
 happened: the answer that landed, the file you viewed, which earns a little hop and a check off his head. Left alone
 he lives a little, every so often: looks around, blinks, peeks at the code, hums, catches a glint on his lens,
@@ -103,11 +108,13 @@ by default). [extension/README.md](extension/README.md) has how to load it and w
 
 One daemon serves every workspace and keeps its state in `~/.loupe`. A pull request is fetched into a clone you already
 have (looked for under `~/Projects`, `~/code`, `~/src` and `~/dev`, or the folders in `LOUPE_SEARCH`) and read from its
-own worktree, so your checkout is never touched. It answers only this machine. Every write to git or GitHub is
-previewed first and checked again just before it runs, and nothing is written without your click.
+own worktree, so your checkout is never touched. It answers only this machine. Every write loupe makes to git or
+GitHub is previewed first and checked again just before it runs, and nothing is written without your click. A chat in
+your own checkout edits it when you ask, in the sandbox: no network, so nothing it does leaves the machine.
 
 The models come from Claude Code's own list (asked at start and every six hours) and from the Codex CLI's model cache
-(read again when it changes). Codex runs in its read-only sandbox, with no approvals and no network. File notes are one
+(read again when it changes). Codex answers in its read-only sandbox (a chat in your checkout: workspace-write), with
+no approvals and no network. File notes are one
 small call per change, made again only for the files that changed since; the settings menu turns them off.
 
 `LOUPE_PORT` and `LOUPE_HOME` move the port and the state. `npm test` runs the tests. [docs/COMPONENTS.md](docs/COMPONENTS.md)

@@ -275,20 +275,23 @@ function stackHTML() {
 
 // ------------------------------------------------------------------ chat
 const chats = () => S.review.chats.map(convOf).filter(Boolean);
+// a chat changes files when it is in your own checkout (a local workspace): it edits and runs commands there, sandboxed;
+// a pull request's checkout is loupe's copy, so a chat there only answers (src/claude.mjs, editRoot)
+const chatEdits = (conv) => S.ws?.kind === 'local' && (conv?.edits ?? !conv?.linked);
 function renderChat(body) {
   let conv = convOf(S.chat);
   if (!conv) { conv = chats().at(-1) || null; S.chat = conv?.id || null; }
   const title = conv ? conv.title || (conv.linked ? conv.linked.title : 'New chat') : 'New chat';
-  const linked = conv?.linked;
+  const linked = conv?.linked, edits = chatEdits(conv);
   // the rule book's empty state: what is empty, one quiet line, one action (the long story is the action's title)
-  const empty = `<div class="pane"><div class="empty chatempty"><p class="big">Ask about the whole change.</p>` +
-    `<p>Select lines and press <kbd>l</kbd> to quote them here, or <kbd>a</kbd> to ask at the lines.</p>` +
-    `<p><button class="link" data-act="linkpick" title="Ask the session that wrote the code: it answers from what it already knows, as a read-only fork, and the session itself is left alone">${I.link}<span>Link the Claude Code session that wrote it</span></button></p></div></div>`;
+  const empty = `<div class="pane"><div class="empty chatempty"><p class="big">${edits ? 'Ask about the change, or have it changed.' : 'Ask about the whole change.'}</p>` +
+    `<p>${edits ? 'It edits and runs commands in this checkout, sandboxed: no network, nothing written outside it. ' : ''}Select lines and press <kbd>l</kbd> to quote them here, or <kbd>a</kbd> to ask at the lines.</p>` +
+    `<p><button class="link" data-act="linkpick" title="Ask the session that wrote the code: it answers from what it already knows, in a fork, and the session itself is left alone">${I.link}<span>Link the Claude Code session that wrote it</span></button></p></div></div>`;
   body.innerHTML = `<div class="pane fill"><div class="chathead"><button class="btn ghost chatpick" data-act="chatpick" title="${esc(title)}">${linked ? I.link : I.chat}<span class="l">${esc(title)}</span>${I.chev}</button>` +
     `<button class="icon sm" data-act="newchat" title="New chat">${I.plus}</button></div>` +
-    `<div class="chatlog" id="chatlog">${linked ? linkbarHTML(linked) : ''}` +
+    `<div class="chatlog" id="chatlog">${linked ? linkbarHTML(linked, edits) : ''}` +
     (conv?.messages.length ? `<div data-conv="${conv.id}">${conv.messages.map((m) => msgHTML(m)).join('')}</div>` : empty) + `</div>` +
-    `<div class="chatfoot">${attachHTML()}<div class="composer" id="chatbox"><textarea rows="2" placeholder="${linked ? 'Ask the session…' : 'Ask about the change…'}" aria-label="Question about the change"></textarea>` +
+    `<div class="chatfoot">${attachHTML()}<div class="composer" id="chatbox"><textarea rows="2" placeholder="${linked ? 'Ask the session…' : edits ? 'Ask, or ask for a change…' : 'Ask about the change…'}" aria-label="${edits ? 'Question or change' : 'Question about the change'}"></textarea>` +
     `<div class="row">${linked?.live ? '<span class="hint">the live session picks its own model</span>' : runBtn(conv?.model ? { model: conv.model, effort: conv.effort } : lastRun(), { conv })}<span class="sp"></span>` +
     `<button class="btn sm primary" data-act="chatsend">Send <kbd>↵</kbd></button></div></div></div></div>`;
   const log = $('#chatlog');
@@ -298,10 +301,10 @@ function renderChat(body) {
   grow(ta);
   if (S.focusChat) { ta.focus(); S.focusChat = false; }
 }
-function linkbarHTML(l) {
+function linkbarHTML(l, edits) {
   const name = `<b>${esc(l.title || l.sessionId.slice(0, 8))}</b>`;
   if (l.live) return `<div class="linkbar">${I.link}<span>Live: questions go into ${name} as prompts, and it answers with its own tools and permissions. Its answers come back here.</span></div>`;
-  return `<div class="linkbar">${I.link}<span>A read-only fork of ${name}${l.branch ? ` on ${esc(l.branch)}` : ''}${l.tokens ? `. It starts with ~${Math.round(l.tokens / 1000)}k tokens of context: the first question pays for all of it, later ones read it from cache` : ''}. The session itself is untouched.</span></div>`;
+  return `<div class="linkbar">${I.link}<span>${edits ? 'A fork' : 'A read-only fork'} of ${name}${l.branch ? ` on ${esc(l.branch)}` : ''}${l.tokens ? `. It starts with ~${Math.round(l.tokens / 1000)}k tokens of context: the first question pays for all of it, later ones read it from cache` : ''}. The session itself is untouched.</span></div>`;
 }
 function attachHTML() {
   if (!S.attach.length) return '';
@@ -337,6 +340,7 @@ async function chatSend() {
   let conv = convOf(S.chat);
   const run = conv?.linked?.live ? {} : runOf($('#chatbox'));
   rememberRun(run);
+  let attachments = S.attach;
   try {
     if (!conv) {
       const r = await api(wsApi('/chats'), { method: 'POST', body: {} });
@@ -344,10 +348,10 @@ async function chatSend() {
       if (!S.review.chats.includes(conv.id)) S.review.chats.push(conv.id);
       S.chat = conv.id;
     }
-    const attachments = S.attach;
+    attachments = S.attach;
     S.attach = []; S.chatDraft = ''; ta.value = '';
     await api(`/api/w/${S.id}/convs/${conv.id}/messages`, { method: 'POST', body: { text, attachments, ...run } });
-  } catch (e) { toast(e.message, { fail: true }); ta.value = text; }
+  } catch (e) { toast(e.message, { fail: true }); S.attach = attachments || []; S.chatDraft = text; renderPanel(); } // nothing is lost: the lines come back too
   finally { chatSending = false; }
 }
 
@@ -372,6 +376,19 @@ async function newChat() {
   if (!S.review.chats.includes(r.conv.id)) S.review.chats.push(r.conv.id);
   S.chat = r.conv.id; S.focusChat = true;
   renderPanel();
+}
+// A mark (yours, or a GitHub thread) handed to a chat to act on: a new chat, its lines attached and its first message
+// written, but not sent: you read it, add to it, and send. A mark's own conversation stays read-only.
+// attach: the lines, then what it is about in full (the question and its answer, or the review comments as written, a
+// suggested change included), so the first message itself can stay one line
+async function chatFrom({ attach, draft }) {
+  hooks.showPanel?.(); setTab('chat');
+  try { await newChat(); } catch (e) { return toast(e.message, { fail: true }); } // made first: nothing lands in the chat you were on
+  S.attach = attach.map((a) => ({ ...a, text: String(a.text || '').slice(0, 20000) })); // the server keeps 20,000 of each
+  S.chatDraft = draft;
+  renderPanel();
+  const ta = $('#chatbox textarea');
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
 }
 async function deleteChat(id) {
   await api(`/api/w/${S.id}/convs/${id}`, { method: 'DELETE' }).catch((e) => toast(e.message, { fail: true }));
@@ -422,7 +439,7 @@ function githubThreadsHTML(show, head) {
 // The quoted lines on top (so you never need to look back at the code to know what it is about), the conversation,
 // and the follow-up box docked at the bottom. The mark's lines stay lit in the code while it is open.
 function quoteHTML(path, side, from, to, fallback) {
-  const rows = (S.rows.get(path) || S.waves.get(path) || []).filter((r) => !r.hdr && (side === 'old' ? r.t === '-' && r.o >= from && r.o <= to : r.t !== '-' && r.n >= from && r.n <= to));
+  const rows = (S.rows.get(path) || S.waves.get(path) || []).filter((r) => !r.hdr && (side === 'old' ? r.t !== '+' && r.o >= from && r.o <= to : r.t !== '-' && r.n >= from && r.n <= to));
   const shown = rows.length ? rows.slice(0, 12).map((r) => ({ t: r.t, n: side === 'old' ? r.o : r.n, s: r.s })) : (fallback || []).slice(0, 12).map((r, i) => ({ t: r.t, n: from + i, s: r.s }));
   if (!shown.length) return '';
   return `<div class="quote" data-act="markgo">${shown.map((r) => `<div class="ql ${r.t === '+' ? 'a' : r.t === '-' ? 'd' : ''}"><span class="no">${r.n ?? ''}</span><span class="tx">${esc(r.s)}</span></div>`).join('')}${rows.length > 12 ? `<div class="ql more">${rows.length - 12} more lines</div>` : ''}</div>`;
@@ -434,6 +451,7 @@ function renderMark(body) {
   if (!th) { S.mark = null; return renderReview(body); }
   const conv = convOf(th.conv) || { messages: [] };
   body.innerHTML = `<div class="pane fill markview"><div class="mhead"><button class="link" data-act="markback">${I.chevL} Marks</button><span class="sp"></span>` +
+    (chatEdits() ? `<button class="link" data-act="markchat" title="A new chat, with these lines and this question in its first message, ready for you to send">Edit in chat</button>` : '') +
     `<button class="link" data-act="markresolve">${th.resolved ? 'Reopen' : 'Resolve'}</button><button class="link danger" data-act="markdel">Delete</button></div>` +
     `<div class="chatlog" id="marklog"><div class="mtitle"><span class="kind ask">Question</span><button class="loc" data-act="markgo" title="${esc(th.path)} · ${esc(th.label)}: go to the lines"><bdi dir="ltr">${esc(th.path)} · ${esc(th.label)}</bdi></button>${th.resolved ? '<span class="pill">resolved</span>' : ''}</div>` +
     quoteHTML(th.path, th.side, th.startLine || th.line, th.line, th.preview) +
@@ -451,7 +469,7 @@ function renderGhMark(body, gid) {
   const first = t.comments[0];
   const mine = (t.comments || []).find((c) => c.pending);
   body.innerHTML = `<div class="pane fill markview"><div class="mhead"><button class="link" data-act="markback">${I.chevL} Marks</button><span class="sp"></span>` +
-    `<button class="link" data-act="ghask">Ask about it</button>` + (mine ? `<button class="link danger" data-act="ghdrop" data-n="${esc(mine.nodeId)}">Delete</button>` : t.resolved ? (t.canUnresolve ? `<button class="link" data-act="ghresolve" data-on="0">Reopen</button>` : '') : t.canResolve ? `<button class="link" data-act="ghresolve" data-on="1">Resolve</button>` : '') + `</div>` +
+    `<button class="link" data-act="ghask">Ask about it</button>` + (chatEdits() ? `<button class="link" data-act="ghchat" title="A new chat, with these lines and the comments in its first message, ready for you to send">Edit in chat</button>` : '') + (mine ? `<button class="link danger" data-act="ghdrop" data-n="${esc(mine.nodeId)}">Delete</button>` : t.resolved ? (t.canUnresolve ? `<button class="link" data-act="ghresolve" data-on="0">Reopen</button>` : '') : t.canResolve ? `<button class="link" data-act="ghresolve" data-on="1">Resolve</button>` : '') + `</div>` +
     `<div class="chatlog" id="marklog"><div class="mtitle"><span class="kind gh">${t.pending ? 'Your review · pending' : 'GitHub'}</span><button class="loc" data-act="markgo" title="${esc(t.path)}: go to the lines"><bdi dir="ltr">${esc(t.path)} · ${t.startLine && t.startLine !== t.line ? `lines ${t.startLine}–${t.line}` : `line ${t.line}`}</bdi></button>${t.resolved ? '<span class="pill">resolved</span>' : ''}</div>` +
     quoteHTML(t.path, t.side, t.startLine || t.line, t.line) +
     t.comments.map((c) => `<div class="msg"><div class="mmeta"><span class="who">${esc(c.author)}</span><span class="t">${ago(Date.parse(c.at))}</span><span class="sp"></span><a class="link" href="${esc(c.url)}" target="_blank" rel="noopener" title="On GitHub">${I.ext}</a></div><div class="md">${md(c.body || '')}</div></div>`).join('') + `</div>` +
@@ -547,6 +565,16 @@ $('#root').addEventListener('click', async (e) => {
   if (act === 'newchat') return newChat();
   if (act === 'linkpick') return linkPicker(b);
   if (act === 'chatsend') return chatSend();
+  if (act === 'markchat') {
+    const th = S.review.threads.find((t) => t.id === S.mark);
+    if (!th) return;
+    const msgs = (convOf(th.conv)?.messages || []).filter((m) => m.text);
+    const asked = msgs.find((m) => m.role === 'user')?.text || '';
+    const talk = msgs.map((m) => `${m.role === 'user' ? 'Me' : m.role === 'codex' ? 'Codex' : 'Claude'}: ${m.text}`).join('\n\n');
+    return chatFrom({
+      attach: [{ path: th.path, side: th.side, line: th.line, label: th.label, text: th.snippet }, { path: th.path, side: th.side, line: th.line, label: 'Q&A', text: talk }],
+      draft: `Make the change from my question on ${th.path} ${th.label}: “${oneLine(asked, 160)}” ` });
+  }
   if (act === 'unattach') { e.stopPropagation(); S.attach.splice(Number(b.dataset.i), 1); return renderPanel(); }
   if (act === 'nshow') { pref.set('marksShow', b.dataset.v); return renderPanel(); }
   if (act === 'gothread') return hooks.goThread?.(b.dataset.t);
@@ -597,6 +625,15 @@ $('#root').addEventListener('click', async (e) => {
     if (!text) return ta.focus();
     if (await hooks.act?.('reply', { commentId: Number(box.dataset.cid), body: text })) { delete S.replyDrafts['gh:' + ght.id]; ta.value = ''; }
     return;
+  }
+  if (ght && act === 'ghchat') {
+    // the review comment, to act on: its lines as they read in the diff, and the comments in the first message
+    const from = ght.startLine || ght.line, label = ght.outdated ? 'an outdated thread' : from !== ght.line ? `lines ${from}–${ght.line}` : `line ${ght.line}`;
+    const rows = ght.outdated ? [] : (S.rows.get(ght.path) || []).filter((r) => !r.hdr && (ght.side === 'old' ? r.t !== '+' && r.o >= from && r.o <= ght.line : r.t !== '-' && r.n >= from && r.n <= ght.line));
+    const comments = ght.comments.map((c) => `${c.author}:\n${c.body}`).join('\n\n'); // as written: a suggested change stays code
+    return chatFrom({
+      attach: [...(rows.length ? [{ path: ght.path, side: ght.side, line: ght.line, label, text: rows.map((r) => r.s).join('\n') }] : []), { path: ght.path, side: ght.side, line: ght.outdated ? undefined : ght.line, label: 'review thread', text: comments }], // an outdated thread's lines are history: only its words
+      draft: `Address the review comment on ${ght.path} ${label}: “${oneLine(ght.comments[0]?.body, 160)}” ` });
   }
   if (ght && act === 'ghask') {
     // A question about someone's comment: a new question at the same lines, with the comment as its context.

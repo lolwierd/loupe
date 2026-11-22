@@ -101,7 +101,6 @@ function frame() {
     <a class="btn ghost mark" href="/home" title="Home: everything open here, and whose move it is">${icon('loupe', '--pencil')}<span>loupe</span></a>
     <span class="crumb-sep">/</span>
     <button class="btn ghost wsbtn" data-act="palette" title="Switch, open, or do anything (⌘K)" id="wsbtn"><span class="t">…</span></button>
-    <button class="icon" id="review-back" title="Return to where you were ([)" aria-label="Return to where you were" hidden>${I.chevL}</button>
     <span class="sp"></span>
     <span class="lsp" id="lsp"></span>
     <button class="btn ghost tally" id="tally" data-act="nextleft"></button>
@@ -115,7 +114,6 @@ function frame() {
     <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon" data-act="keys" title="Keys (?)" aria-label="Keys">${I.keys}</button></div><div class="pbody" id="pbody"></div></aside><div class="motefloat" id="motedock"></div>
   </div></div>`;
   applyMode(S.mode, true);
-  $('#review-back').onclick = goBack;
   // only a width you dragged is set here; the defaults live in the style sheet, where the narrow-window rule can change them
   for (const [v, k] of [['--bin-w', 'binW'], ['--panel-w', 'panelW']]) { const w = pref.get(k, null); if (w) document.documentElement.style.setProperty(v, w + 'px'); }
   for (const b of $$('.ptabs .tab')) b.setAttribute('aria-selected', String(b.dataset.tab === S.tab));

@@ -167,7 +167,7 @@ test('Codex streams a line answer, resumes its thread, and refuses cross-kind re
     await api(route, { text: 'What else?', model: 'gpt-6.2-astra', effort: 'xhigh' });
     await until(() => events.find((e) => e.conv === conv.id && !e.msg.pending && e.msg.text === 'Follow-up answer'));
     const [chat, initial, followUp] = calls();
-    assertInvocation(chat, 'gpt-6.2-sol', 'high');
+    assertInvocation(chat, 'gpt-6.2-sol', 'high', 'workspace-write'); // a chat in a local checkout edits; a mark only answers
     assertInvocation(initial, 'gpt-6.2-sol', 'max');
     assertInvocation(followUp, 'gpt-6.2-astra', 'xhigh');
     assert.match(initial.stdin, /file\.txt line 1[\s\S]*\+new[\s\S]*Why this change\?/);
@@ -192,9 +192,9 @@ test('Codex streams a line answer, resumes its thread, and refuses cross-kind re
   }
 });
 
-function assertInvocation(call, model, effort) {
+function assertInvocation(call, model, effort, sandbox = 'read-only') {
   const value = (flag) => call.argv[call.argv.indexOf(flag) + 1];
-  assert.equal(value('--sandbox'), 'read-only');
+  assert.equal(value('--sandbox'), sandbox);
   assert.equal(value('--cd'), root);
   assert.equal(value('--model'), model);
   for (const flag of ['--ignore-user-config', '--ignore-rules']) assert.ok(call.argv.includes(flag), flag);

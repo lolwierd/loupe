@@ -81,6 +81,19 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   ref as chips, and the commits that go), never a list of one bullet. The footer says what else comes of it.
 - **List box** (files in a dialog, commits, home lists): 1 px `--rule`, `--r3`, rows divided by 1 px `--rule`.
 - **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`.
+- **The + that starts a mark**: in the margin, on the empty left edge of its side's line-number gutter (where a hidden
+  mark's pin sits), 16 px, shown on the line's hover; never over a number or the diff's sign. A line whose pin is there
+  keeps the pin; its number still selects it.
+- **Going back** after a jump (a definition, a cited line): `[`, with no button in the top bar; the whole-file viewer
+  keeps its own Back in its header.
+- **Meter**: one block of lamps per file; the gap between two blocks is empty, never a dim lamp, so a board that is all
+  viewed reads all lit.
+- **Chat**: in your own checkout (a local workspace) it is Claude Code or Codex at work there: it reads, edits and runs
+  commands, sandboxed (no network, nothing written outside the checkout, its git directory and Go's build cache), and
+  leaves commits and pushes to you. Its empty state and its box say so ("Ask about the change, or have it changed").
+  A pull request's chat only answers: that checkout is loupe's copy. A mark's own conversation only answers too; Edit
+  in chat on a mark (yours or a GitHub thread) opens a new chat with its lines attached and its first message written,
+  not sent.
 - **File note**: a caption between an unfolded file's header and diff, aligned to the code's text edge where room permits.
   14 px `--ink-2` prose, 8 px above and below, with inline code in mono and the same colour. An earlier version is
   marked in 11 px amber. New notes fade in once over 120 ms, with reduced motion shown immediately.
@@ -105,8 +118,9 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   plucked string for a push, a dull knock for a failed send, one bell for an answer that lands in a hidden tab. Nothing
   for typing, clicks or scrolling. Made in the page (`voices.js`), no files.
 
-- **Mote away**: double-click him, or Hide Mote (⌘K, the view menu): he flies off, wings out from under his shell,
-  out of the window; Show Mote flies him back to his spot. Remembered in the browser, and followed by its other tabs.
+- **Mote away**: double-click him, or Hide Mote (⌘K, the view menu): his green and red shell halves open as wings,
+  with the hind wings buzzing beneath, and he flies out of the window. Show Mote flies him back to his spot.
+  Remembered in the browser, and followed by its other tabs.
   Away, he is not mounted, so nothing of him runs.
 
 ## Easter eggs

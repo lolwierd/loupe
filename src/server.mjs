@@ -492,12 +492,13 @@ function linkChat(ws, link) {
   const live = !!link.live;
   const existing = Object.values(ws.review.data.convs).find((c) => c.linked?.sessionId === link.sessionId && !!c.linked.live === live);
   // a session registering again says it is still working here
-  if (existing) { existing.linked.at = Date.now(); ws.review.save(); return existing; }
+  // (and says where it runs now: whether the fork may edit follows that folder)
+  if (existing) { existing.linked.at = Date.now(); if (typeof link.cwd === 'string') existing.linked.cwd = link.cwd; existing.edits = !!C.editRoot(ws, existing); ws.review.save(); ws.emit('chat', { conv: existing }); return existing; }
   const conv = C.newConv(ws, 'chat', {
     modelKind: 'claude',
     title: String(link.title || (live ? 'Live session' : 'Linked session')).slice(0, 120),
     linked: { sessionId: link.sessionId, cwd: typeof link.cwd === 'string' ? link.cwd : null, title: String(link.title || '').slice(0, 200), branch: link.branch || null, tokens: link.tokens || null, live, at: Date.now() },
-  });
+  }); // newConv judges edits from the linked folder
   if (!ws.review.data.chats.includes(conv.id)) ws.review.data.chats.push(conv.id);
   ws.review.save();
   ws.emit('chat', { conv });

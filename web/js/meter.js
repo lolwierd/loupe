@@ -88,7 +88,7 @@ export function meter(host, { onPick, onHover } = {}) {
       if (b && burn > 0 && !still && Math.random() < 0.55) spark(cx, top + Math.random() * ROWS * PITCH, p.s.state);
       for (let row = 0; row < ROWS; row++) {
         const cy = top + row * PITCH + PITCH / 2;
-        if (!within) { ctx.fillStyle = css(colors.left, 0.1); dot(ctx, cx, cy, r * 0.8); continue; }
+        if (!within) continue; // the gap between two files is empty: a faint lamp there read as a file not yet viewed
         const s = p.s, lv = level.get(s.path) ?? 1;
         const state = b && cx > bx ? (prev.get(s.path) || s.state) : s.state;
         const kind = hashf(c, row), phase = hashf(row + 101, c + 17);

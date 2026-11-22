@@ -32,7 +32,6 @@ function target(e) {
     v: () => cardNow()?.querySelector('[data-act="viewed"]'),
     o: () => cardNow()?.querySelector('.fh [data-act="fold"].icon'),
     t: () => $('[data-act="togglebin"]'), p: () => $('[data-act="togglepanel"]'), r: () => $('[data-act="refresh"]'),
-    '[': () => $('#review-back:not([hidden])'),
     g: () => $(`#ordseg [data-o="${order}"]`),
     1: () => $('#ptab-overview'), 2: () => $('#ptab-chat'), 3: () => $('#ptab-review'),
   }[k] || null;

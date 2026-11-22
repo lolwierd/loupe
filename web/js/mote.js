@@ -10,7 +10,8 @@
 // drawn at one sheet pixel per CSS pixel and kept crisp with image-rendering: pixelated. Frame times are the sheet's.
 import { S, $, pref, reducedMotion } from './core.js';
 import { hooks } from './hooks.js';
-import { fit, tok, isDark, watch, ordered, paint, lerp, smooth, rgba } from './dither.js';
+import { fit, tok, isDark, watch, ordered, paint, lerp, smooth } from './dither.js';
+import { makeFlightFrames, FLY_OFF, FLY_BACK, FLY_STEP, FLY_TRAVEL } from './motefly.js';
 
 const W = 48, H = 52;
 const ROW = { idle: 0, 'running-right': 1, 'running-left': 2, waving: 3, jumping: 4, failed: 5, waiting: 6, running: 7, review: 8 };
@@ -34,16 +35,17 @@ const LOOK_NEAR = 36, LOOK_FAR = 480, LOOK_HOLD = 2500, GLANCE_HOLD = 1200; // p
 const EYES = [[19, 30], [28, 30]]; // each pupil's top left on the idle frame, 2 × 2 sheet pixels, with cream round it
 const DIRS = [[0, 0], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1]]; // centre, then clockwise from up
 const BLINK = 9, EYE_STEP = 120, BLINK_MS = 90;
-let strip = null;
+let strip = null, flightFrames = null;
 (async () => {
   try {
-    const im = new Image(); im.src = '/web/img/mote.png'; await im.decode();
+    const sheet = new Image(); sheet.src = '/web/img/mote.png'; await sheet.decode();
+    prepareFlight(sheet).catch(() => { /* no frames, so hide and show immediately */ });
     const c = Object.assign(document.createElement('canvas'), { width: W * 10, height: H }), g = c.getContext('2d', { willReadFrequently: true });
-    g.drawImage(im, 0, 0, W, H, 0, 0, W, H);
+    g.drawImage(sheet, 0, 0, W, H, 0, 0, W, H);
     const at = (x, y) => `rgba(${[...g.getImageData(x, y, 1, 1).data].slice(0, 3).join(',')},1)`;
     const cream = at(22, 30), pupil = at(EYES[0][0], EYES[0][1]);
     for (let i = 0; i < 10; i++) {
-      g.drawImage(im, 0, 0, W, H, i * W, 0, W, H);
+      g.drawImage(sheet, 0, 0, W, H, i * W, 0, W, H);
       for (const [x, y] of EYES) {
         g.fillStyle = cream; g.fillRect(i * W + x, y, 2, 2);
         g.fillStyle = pupil;
@@ -54,6 +56,14 @@ let strip = null;
     strip = c.toDataURL('image/png'); // a data: URL: the page's img-src allows data:, not blob:
   } catch { strip = null; } // no strip, no looking: he stays as he is
 })();
+
+async function prepareFlight(sheet) {
+  const frames = makeFlightFrames(sheet);
+  await Promise.all(Object.values(frames).map((src) => {
+    const frame = new Image(); frame.src = src; return frame.decode();
+  }));
+  flightFrames = frames;
+}
 
 export const moteHTML = (pose = '') => `<span class="mote"${pose ? ` data-pose="${pose}"` : ''} aria-hidden="true"></span>`;
 
@@ -251,6 +261,7 @@ hooks.moteMount = (allViewed, left = 1) => {
     share = left; allNow = !!allViewed; allWas = allNow; drawLens(); hooks.mote.sync(); return;
   }
   mountedFor = S.id;
+  landing?.(); // a flight under way ends now: the dock is drawn again below
   main?.pause(); life.stop();
   clearTimeout(wordsTimer); clearTimeout(helloTimer);
   words = null;
@@ -443,56 +454,48 @@ document.addEventListener('pointermove', () => { if (life.dozing || Date.now() -
 
 
 // ------------------------------------------------------------------ away, and back
-// A double click on him (or Hide Mote in ⌘K or the view menu) and he does what a beetle does when it is done: a crouch,
-// his wings out from under the shell, buzzing, and he lifts off, swaying, faster as he climbs, out of the window toward
-// the nearer side. Show Mote brings him back the same way, down to the spot he left from, slowing to land, where his
-// wings fold and he waves. Frame-stepped at 12 fps like the rest of his drawing; with reduced motion he is just gone, or
-// there. Away, he is not mounted (main is null), so every hook and his life do nothing without a guard of their own;
+// A double click (or Hide Mote in ⌘K or the view menu) makes him crouch and lift the green and red halves of his shell
+// as wings, with his hind wings buzzing beneath. He climbs out of the window toward the nearer side, swaying as he
+// picks up speed. Show Mote brings him back to his spot, where he touches down, folds his wings and waves. The 12 fps
+// cels are drawn over the dock. With reduced motion or unavailable cels he is just gone, or there.
+// Away, he is not mounted (main is null), so every hook and his life do nothing without a guard of their own;
 // the dock stays, hidden, for him to come back to, and a change in another tab is followed here.
-const AWAY = 'moteAway', FLY_STEP = 83;
+const AWAY = 'moteAway';
 const away = () => !!pref.get(AWAY, false);
-// the wings: two frames (spread, and swept down mid-beat), a membrane lifted toward the page with an ink-3 rim, drawn at
-// art size from the theme's colours when he takes off, so they are right in either theme
-const WING = [ // 18 × 9, one art pixel to a CSS pixel, as he is drawn; the right wing (the left is it mirrored)
-  ['..........######..', '......####oooooo#.', '...###oooooooooo#.', '.##oooooooooooo#..', '#ooooooooooooo#...', '#oooooooooooo#....', '.#oooooooooo#.....', '..##oooooo##......', '....######........'],
-  ['..................', '..................', '.........#######..', '.....####ooooooo#.', '..###oooooooooo#..', '.#oooooooooooo#...', '#oooooooooo###....', '.##oooo####.......', '...####...........'],
-];
-let wingArt = null;
-function drawWings() {
-  const css = (c) => `rgb(${c[0]},${c[1]},${c[2]})`, rim = css(rgba('var(--ink-3)')), fill = css(rgba('color-mix(in srgb, var(--ink-2) 28%, var(--bg))'));
-  wingArt = WING.map((rows) => {
-    const c = document.createElement('canvas'); c.width = 18; c.height = 9;
-    const x = c.getContext('2d');
-    rows.forEach((row, yy) => [...row].forEach((ch, xx) => { if (ch === '.') return; x.fillStyle = ch === '#' ? rim : fill; x.globalAlpha = ch === '#' ? 0.9 : 0.6; x.fillRect(xx, yy, 1, 1); }));
-    return c.toDataURL();
-  });
-}
 let flight = 0, leaving = false;
 function fly(dock, out, done) {
-  clearTimeout(flight); flight = 0; landing = null; // a flight under way is superseded, with its end
-  dock.querySelectorAll('.motewing').forEach((w) => w.remove());
-  if (reducedMotion() || document.hidden) { dock.style.transform = ''; done(); return; }
-  drawWings();
-  const wl = document.createElement('i'), wr = document.createElement('i');
-  wl.className = 'motewing l'; wr.className = 'motewing r';
-  for (const w of [wl, wr]) { w.setAttribute('aria-hidden', 'true'); dock.append(w); }
+  landing?.();
+  if (!out) dock.classList.remove('away'); // an interrupted takeoff just completed its hide
+  if (!flightFrames || reducedMotion() || document.hidden) { dock.style.transform = ''; done(); return; }
+  const art = document.createElement('img');
+  art.className = 'moteflight'; art.alt = '';
+  const frames = out ? FLY_OFF : FLY_BACK;
+  const takeoff = FLY_OFF.length - FLY_TRAVEL;
   const r = dock.getBoundingClientRect(), side = r.left + W / 2 < innerWidth / 2 ? -1 : 1;
-  const rise = r.top + H + 32, drift = 120 + Math.random() * 80, ms = out ? 1150 : 1050, t0 = performance.now();
-  let beat = 0;
-  const step = () => {
-    const t = document.hidden ? 1 : Math.min(1, (performance.now() - t0) / ms), u = out ? t : 1 - t; // coming in is leaving, played backwards
-    let x = 0, y = 0;
-    if (u < 0.14) y = u < 0.07 ? 1 : -2; // the crouch and the hop off (or the bump of landing)
-    else { const k = (u - 0.14) / 0.86, e = k * k; y = -2 - e * rise; x = side * e * drift + Math.round(Math.sin(k * Math.PI * 5) * 3); }
-    dock.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
-    const f = wingArt[beat++ % 2];
-    for (const w of [wl, wr]) w.style.backgroundImage = `url(${f})`;
-    if (u >= 0.04) dock.classList.add('flying'); else dock.classList.remove('flying');
-    if (t < 1) { flight = setTimeout(step, FLY_STEP); return; }
-    land();
+  const rise = r.top + H + 32, drift = 120 + Math.random() * 80;
+  let index = 0;
+  const land = () => {
+    if (landing !== land) return;
+    clearTimeout(flight); flight = 0; landing = null;
+    art.remove(); dock.classList.remove('flying'); dock.style.transform = '';
+    done();
   };
-  const land = () => { clearTimeout(flight); flight = 0; landing = null; wl.remove(); wr.remove(); dock.classList.remove('flying'); dock.style.transform = ''; done(); };
   landing = land;
+  dock.append(art);
+  dock.classList.add('flying');
+  const step = () => {
+    if (document.hidden || index === frames.length) { land(); return; }
+    const path = out ? index - takeoff + 1 : FLY_TRAVEL - index;
+    let x = 0, y = 0;
+    if (path > 0) {
+      const k = path / FLY_TRAVEL, e = k * k;
+      y = -2 - e * rise;
+      x = side * e * drift + Math.round(Math.sin(k * Math.PI * 5) * 3);
+    }
+    dock.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    art.src = flightFrames[frames[index++]];
+    flight = setTimeout(step, FLY_STEP);
+  };
   step();
 }
 let landing = null; // the flight under way's end, for a tab hidden mid-flight
