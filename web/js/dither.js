@@ -1,7 +1,7 @@
 // Print textures: the few places loupe draws a halftone, a line screen or a forme of dots instead of a flat colour.
-// They live only where nothing is being read (a change opening, a change that could not open, the dim behind a write's
-// dialog, the desk under Mote) and each is drawn from the change's own state, never from a picture. docs/COMPONENTS.md
-// ("Print textures") holds the rules; this file holds the screens.
+// They live only where nothing is being read (a change opening, a change that could not open, the desk under Mote) and
+// each is drawn from the change's own state, never from a picture. docs/COMPONENTS.md ("Plates") holds the rules; this
+// file holds the screens. The page behind a dialog is a plate of the page itself, in plate.js.
 //
 // A texture is a field, f(x, y) → 0..1 in CSS pixels (0 bare paper, 1 full ink), handed to a screen, which decides
 // for every device pixel of its canvas whether ink lands there. The canvas's backing store is its CSS size times the
@@ -145,81 +145,3 @@ export function frames(fn, { rest = 0 } = {}) {
   raf = requestAnimationFrame(tick);
   return () => cancelAnimationFrame(raf);
 }
-
-// ------------------------------------------------------------------ the tone screen behind every dialog
-// Every dialog's dim is a tone screen: a write's as heavy as it is hard to undo (sheets.js sets data-weight), any other
-// (the palette, the keys, the map opened large) at the lightest. One cell of the matrix to a CSS pixel, so it reads as a
-// fine screen rather than a grey, nearly even and a little lighter round the dialog. The canvas is drawn at CSS pixels
-// and shown pixelated, so a 2× screen draws a quarter of the pixels; it is drawn once, whole, and fades in with the
-// dialog, never building up in steps.
-const TONE = { local: 0.25, public: 0.375, destructive: 0.5625 }; // a quarter heavier in dark: black on a dark page dims it less
-export function toneScreen(scrim, box) {
-  const cv = document.createElement('canvas');
-  cv.className = 'tone'; cv.setAttribute('aria-hidden', 'true');
-  scrim.prepend(cv);
-  let drawn;
-  const draw = () => {
-    const r = cv.getBoundingClientRect(), W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
-    const weight = scrim.dataset.weight || 'local', dark = isDark();
-    const L = (TONE[weight] ?? TONE.local) * (dark ? 1.25 : 1);
-    const s = box?.isConnected ? box.getBoundingClientRect() : null, reach = 0.45 * Math.max(W, H);
-    const position = s ? [s.left - r.left, s.top - r.top, s.width, s.height].map((v) => Math.round(v / 8)) : [];
-    const key = [W, H, weight, dark, ...position].join('/');
-    if (key === drawn && cv.width === W && cv.height === H) return;
-    drawn = key;
-    if (cv.width !== W) cv.width = W;
-    if (cv.height !== H) cv.height = H;
-    const [R, G, B, A] = rgba(weight === 'destructive' ? 'var(--danger)' : 'var(--tone-ink)');
-    const ink = ((A << 24) | (B << 16) | (G << 8) | R) >>> 0;
-    const ctx = cv.getContext('2d');
-    // Light local dialogs use a single repeated tile across the whole scrim.
-    const low = Math.ceil(16 * L * 0.9 - 0.5), high = Math.ceil(16 * L * 1.1 - 0.5);
-    if (low === high) {
-      const tile = document.createElement('canvas');
-      tile.width = tile.height = 4;
-      const t = tile.getContext('2d'), data = t.createImageData(4, 4);
-      new Uint32Array(data.data.buffer).set(BAYER4.map((rank) => rank < low ? ink : 0));
-      t.putImageData(data, 0, 0);
-      ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = ctx.createPattern(tile, 'repeat');
-      ctx.fillRect(0, 0, W, H);
-      return;
-    }
-    const img = ctx.createImageData(W, H), px = new Uint32Array(img.data.buffer);
-    // the level changes slowly, so it is read once per 4×4 tile of the matrix, at the tile's centre
-    for (let ty = 0; ty < H; ty += 4) {
-      const gy = r.top + ty + 2, dy = s ? Math.max(s.top - gy, 0, gy - s.bottom) : reach;
-      for (let tx = 0; tx < W; tx += 4) {
-        const gx = r.left + tx + 2, dx = s ? Math.max(s.left - gx, 0, gx - s.right) : reach;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        const v16 = 16 * L * (0.9 + 0.2 * smooth(0, reach, distance));
-        for (let y = ty, ye = Math.min(H, ty + 4); y < ye; y++) {
-          const row = (y & 3) * 4, base = y * W;
-          for (let x = tx, xe = Math.min(W, tx + 4); x < xe; x++) if (v16 > BAYER4[row + (x & 3)] + 0.5) px[base + x] = ink;
-        }
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-  };
-  // drawn now (watch calls it at once), and again when the window, the theme or the dialog's size changes, or the write
-  // turns harder to undo
-  const stopWatch = watch(cv, draw);
-  const ro = new ResizeObserver(draw); if (box) ro.observe(box);
-  const mo = new MutationObserver(draw); mo.observe(scrim, { attributes: true, attributeFilter: ['data-weight'] });
-  return () => { stopWatch(); ro.disconnect(); mo.disconnect(); cv.remove(); };
-}
-// Any dialog the page opens gets its screen, wherever it is put, and loses it (and its observers) when it leaves the page.
-const toned = new Map();
-const scrimsIn = (n) => (n.nodeType !== 1 ? [] : [...(n.matches('.scrim, .sheetscrim') ? [n] : []), ...n.querySelectorAll('.scrim, .sheetscrim')]);
-new MutationObserver((records) => {
-  for (const r of records) {
-    // the diff, the panels and the file list redraw often and never hold a dialog: their changes are not looked through
-    if (r.target.closest?.('#cards, #pbody, #tree, #vbody')) continue;
-    for (const n of r.removedNodes) for (const s of scrimsIn(n)) if (toned.has(s) && !s.isConnected) { toned.get(s)(); toned.delete(s); }
-    for (const n of r.addedNodes) for (const s of scrimsIn(n)) {
-      if (toned.has(s) || !s.isConnected) continue;
-      if (!s.dataset.weight) s.dataset.weight = 'local';
-      toned.set(s, toneScreen(s, s.querySelector(':scope > .palette, :scope > .sheet') || s.firstElementChild));
-    }
-  }
-}).observe(document.body, { childList: true, subtree: true });

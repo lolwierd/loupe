@@ -1,0 +1,29 @@
+# The unit tests, on every push to main and every pull request. loupe is a macOS desk, so they run on macOS, on the
+# oldest Node the package says it supports.
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # some tests make small git repositories and commit in them
+      - run: |
+          git config --global user.name "loupe tests"
+          git config --global user.email "tests@loupe.invalid"
+          git config --global init.defaultBranch main
+      - run: npm test

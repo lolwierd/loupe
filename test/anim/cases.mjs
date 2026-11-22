@@ -68,6 +68,10 @@ export async function motionCases(checkResize = false) {
       }
     }
     if (node.classList.contains('scroll-probe')) v.push(node.scrollTop);
+    if (node.dataset.plate !== undefined) { // a plate developing: where its screen's threshold stands
+      const id = /#([\w-]+)/.exec(node.style.filter)?.[1], dev = id && document.getElementById(id)?.querySelector('.dev');
+      v.push(Number(dev?.getAttribute('values').trim().split(/\s+/).pop()) || 0);
+    }
     return v;
   }
   const results = {};
@@ -87,7 +91,6 @@ export async function motionCases(checkResize = false) {
 
   const fixture = append('<div id="motion-fixture" style="position:fixed;z-index:95;left:15px;bottom:15px"></div>');
   const node = (html) => append(html, fixture);
-  await play('Ambient drift', 1100, () => {}, '.app', { pseudo: '::before' });
   await play('Stamp touchdown', 170, () => hooks.stamp({ head: '7654321', at: Date.now() }), '.impress', { pixels: true });
   await play('Stamp lift', 1700, () => {}, '.impress', { pixels: true, from: 1250 });
   const file = S.files.find((f) => !isViewed(f));
@@ -149,7 +152,7 @@ export async function motionCases(checkResize = false) {
   $('.palette input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await play('Write sheet', 220, () => openSheet('commit'), '.sheet');
   closeSheet();
-  await play('Dialog tone', 210, () => openSheet('commit'), '.sheetscrim > canvas.tone');
+  await play('Dialog plate', 210, () => openSheet('commit'), '[data-plate]');
   const send = $('.sheet [data-sh="go"]');
   send.querySelector(".gl").innerHTML = '<span class="launch"><canvas></canvas></span>Sending…';
   await play('Sending launch', 480, () => send.classList.add('sending'), '.sheet [data-sh="go"] .launch canvas');

@@ -10,7 +10,7 @@ import { preview, run } from './actions.js';
 import { armRoll, rollNext } from './acts.js';
 import { flipCommitId } from './receipt.js';
 import { hooks } from './hooks.js';
-import './dither.js'; // every dialog's dim is its tone screen
+import './plate.js'; // what opens over the page pulls a plate of it
 import { modelKind, runBtn, runOf } from './ui.js';
 
 // ------------------------------------------------------------------ the branch, read from git (checkouts only)

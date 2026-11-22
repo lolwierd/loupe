@@ -4,7 +4,8 @@ Every control in loupe is one of the components below, drawn exactly this way. A
 else gets a new entry here first. Values are tokens from the top of `web/style.css`.
 
 ## Scale
-- Spacing: `--s1..--s6` = 2, 4, 8, 12, 16, 24 px. Nothing else.
+- Spacing: `--s1..--s6` = 2, 4, 8, 12, 16, 24 px. Nothing else. `--off` (8 px) names one use of it: how far a box that
+  appears under the pointer stands off its ink.
 - Type: `--t-meta` 11 (labels, meta, counts), `--t-mono` 12 (code-ish values, paths, kbd), `--t-ui` 13 (all control
   and body text in chrome), `--t-read` 14 (reading text: answers, TLDR, why), `--t-title` 16 (one title per surface).
 - Weights: 400 body, 500 controls and row titles, 600 titles and section labels. No 700.
@@ -26,85 +27,97 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
 - Orange (`--claude`): Claude itself. The spark and the word Claude. Nothing else.
 - Green (`--ok`): viewed or passing. Amber (`--warn`): changed or uncommitted, and risk. Red (`--danger`): failing or
   destructive.
-- Surfaces: `--bg` (code, fields), `--raise` (menus, dialogs), `--glass` (frame), `--hover`, `--press`.
+- Surfaces: `--bg` (code, paper), `--chrome` (the frame: top bar, files, inspector), `--raise` (menus, dialogs), `--hover`, `--press`.
 
-## Relief
-The controls are blind-embossed in the sheet: pressed by a die with no ink, so a control's shape is only light and
-shade, never an outline. One light, from above (the glass's lit top edge, the press's shadow inside a pushed top edge).
-- **What stands up, what is pressed in**: what you press stands up out of the sheet (buttons, chips, a status pill you
-  can press, a select, a key, the chosen segment, the + that starts a mark, the map's parts); what you write in or only
-  read is pressed into it (fields, composers, the draft in the code, a dialog's message box, the palette's field row,
-  pills, read-only chips such as a route's branch names, the segmented control's channel, what the map shows outside
-  this repository). Pressing a raised thing pushes it down flush with the sheet, never through it into a dent: its cast slides
-  under it and goes, its top loses the light, its face dims a touch (`--face-down`, `--pressed`; on ink `--ink-pressed`),
-  and it gives to 97%. A latch stays held down
-  while it is on: the top bar's Files and Inspector toggles, and a file's Viewed box once the file is viewed.
-- **Ghosts**: everything else you can press lies flat in the page until the pointer lifts it: ghost and icon buttons,
-  link buttons (a plate round their words, standing out by its padding so the words keep their place), the model
+## The plain ground
+Everything you read or press is flat paint: type, thin rules, flat ink, and keys in whole pixels. **Nothing blurs.**
+There is no blurred shadow, no glow, no glass and no gradient of light anywhere in the app (a key's skirt is a
+`box-shadow` with no blur radius), and no dither on any control,
+menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates), and a plate is never part of a control.
+- **What stands up, what is sunk**: what you press stands up out of the sheet as a key (buttons, chips, a status pill
+  you can press, a select, a key, the chosen segment, the + that starts a mark); what you write in or only read is sunk
+  into it (fields, composers, the draft in the code, a dialog's message box, the palette's field row, read-only chips
+  such as a route's branch names, the segmented control's channel, what the map shows outside this repository).
+- **A key** is a flat face and a skirt of solid shade below it: one pixel for a thing standing low, two for the act
+  and for anything under the pointer. In dark it also has a lit line inside its top (`--lit`); in light the paper's own
+  contrast is enough. Pressing a key sends it down by its skirt: the skirt goes, the face dims a touch (`--face-down`),
+  one line of shade shows under its top edge (`--edge-in`), and the key travels one pixel (two for the act). A latch
+  stays down while it is on: the top bar's Files and Inspector toggles, and a file's Viewed box once the file is viewed.
+  Halves of a split button, segments, tabs and the tally do not travel, so no seam opens between neighbours.
+- **Ghosts**: everything else you can press lies flat in the page until the pointer makes it a key: ghost and icon
+  buttons, link buttons (a key round their words, standing out by its padding so the words keep their place), the model
   picker, the map card's title, an open mark's place (`file · line`), a pull request's figures, "N more lines", a
-  hidden mark's pin, a toast's action (on the ink, keeping its underline), and tabs (a plate lifts behind the
-  word; the selected tab keeps its ink underline).
-- **Two heights**: the act (a primary, ink) stands full height at rest; a default (secondary) button, a chip you can
-  press and the scope button stand low (`--raised-soft`) and rise to full height (`--raised`) only under the pointer, so
-  a page of secondary actions stays quiet and the act is the one thing standing. (The bin's scope picker is a ghost,
-  read-only chips are pressed in, and a latched Viewed box stays in its well.)
-- **Raised** (`--raised`): a plateau of `--face` (the sheet a little paler, as stretched paper is), a lit line inside
-  its top (`--lit`), faint sides (`--shade-2`), a sheen along its top (`--sheen`), and below it a firm line of shade and
-  a soft fall (`--shade`, `--shade-3`). Low (`--raised-soft`): the same with a lighter foot and fall, for things
-  standing at rest that are not the act (see Two heights) and the chosen segment; a lifted ghost stays low.
-- **Well** (`--well`): a floor a hair below the sheet (`--floor`, so it reads pressed in on a white dialog too), shade
-  inside its top wall and a soft fall under it, faint sides, and a lit lip under its foot. Writing in it, its sides go
-  to ink-3 (`--well-in`, 4.7:1): that is a field's focus mark, from the pointer or the keyboard alike, so a field takes
-  no blue ring.
-- **Ink**: the primary is a registered emboss, ink printed on the plateau (`--ink-raised`, pressed `--ink-pressed`).
-- **One list**: the composite reliefs (`--raised`, `--raised-soft`, `--flat`, `--well`, `--well-in`,
-  `--ink-raised`, `--pressed`, `--ink-pressed`, the split button's halves, the draft's landing flash) are the same eight shadows in the
-  same order (five inset: top, sides, foot, sheen, crease; three outer: the cast and its two softenings), unused ones
-  transparent (`--t0`, `--o0`), so a press and a hover blend instead of jumping. Smaller marks draw less: a key is two
-  inset lines and its skirt, a read-only pill one inset line (a pill you can press stands low, as a chip), a key hint inside a button keeps a half-strength outline (a key
-  keeps its shape), and the map's parts have no stroke: a half-pixel soft edge and drop-shadows (SVG has no inset
-  shadow), the change's parts standing higher.
-- **Edges that stay**: menus, dialogs, the palette, list boxes, the map card and checkboxes are surfaces or marks, not
-  reliefs, and keep their rules. A quote you can press (above a mark's thread) is a list box that, under the pointer,
-  trades its rule for a card's lift.
-- **Forced colours** drop every shadow, so there raised controls take a `ButtonText` rule, wells a `CanvasText` one,
-  a focused well the system's `Highlight` ring and the chosen segment an underline.
+  hidden mark's pin, a toast's action (on the ink, keeping its underline), and tabs (a key shows behind the word; the
+  selected tab keeps its ink underline).
+- **Two heights**: the act (a primary, ink) stands two pixels at rest; a default (secondary) button, a chip you can
+  press and the scope button stand one (`--raised-soft`) and rise to two (`--raised`) only under the pointer, so a page
+  of secondary actions stays quiet and the act is the one thing standing. (The bin's scope picker is a ghost, read-only
+  chips are sunk, and a latched Viewed box stays down.)
+- **A well** (`--well`): a floor a step darker than the sheet (`--floor`) and one line of shade under its lip
+  (`--edge-in`). Writing in it, its sides go to ink-3 (`--well-in`, 4.7:1): that is a field's focus mark, from the
+  pointer or the keyboard alike, so a field takes no blue ring.
+- **On white paper** (the diff column, the whole-file viewer, and what floats: menus, tips, the palette, dialogs) a
+  face cannot be paler than its ground, so there a key's face is a tint of ink and a well's floor a lighter one
+  (`--face-paper`, `--floor-paper`); the chosen segment is paper itself in the tinted channel. In dark the same values
+  serve both grounds.
+- **What floats** over the page (menus, tips, the palette, dialogs, the selection's tools, Mote's word and label, the
+  lens's rim) is paper with a rule of ink-3 (`--float`) and casts nothing. A toast is ink.
+- **The frame** (top bar, files, inspector) is the sheet: `--chrome`, flat and opaque, with a thin rule where it meets
+  the code. A file's header that sticks over its code is opaque paper with its rule.
+- **One list**: the composite reliefs (`--raised`, `--raised-soft`, `--flat`, `--well`, `--well-in`, `--ink-raised`,
+  `--pressed`, `--ink-pressed`, the split button's halves, the draft's landing flash) are the same eight shadows in
+  the same order (five inset: the top edge, the sides, three spares; three outer: the skirt and two spares), unused
+  ones transparent (`--t0`, `--o0`), so a press moves from one to the other instead of jumping. None has a blur radius.
+- **Edges that stay**: list boxes, the map card, checkboxes and the map's parts are surfaces or marks and keep their
+  rules. A map part is paper with a thin rule; a part of the change takes an ink rule (`--ink-2`); a part outside this
+  repository is a floor with no rule. A quote you can press (above a mark's thread) is a list box whose rule turns to
+  ink under the pointer.
+- **A box under the pointer**: a control that lies flat until the pointer finds it (a link, a picker, a tab, the map's
+  toggle, a toast's action, a row of Marks) shows a box that stands 8 px (`--off`) off its first and last ink, on both
+  sides alike: an icon's ink, not its square, so a leading icon or a trailing chevron is pulled in by its own empty
+  margin. Where such a control starts or ends a line its words keep their place: the padding is taken back by a margin
+  of the same size, and the box reaches into the gutter. The next thing in its row is 16 px away, so the box comes no
+  nearer a neighbour's ink than its own; it keeps at least 4 px from an edge of the surface it sits in. A box is as wide
+  as what it holds, never the row. A link inside a sentence has no room for a box: it carries a thin rule under its
+  words and takes the ink under the pointer. A link that is one icon is boxed as an icon is: square, 4 px round the glyph.
+- **Forced colours** drop every shadow, so there keys take a `ButtonText` rule, wells a `CanvasText` one, a focused
+  well the system's `Highlight` ring and the chosen segment an underline; no plate is pulled behind a dialog.
 
 ## Components
 - **Button**, four kinds only. The frame's top bar carries no primary: its next step is a default button. *Primary*:
-  ink on a raised plateau (`--ink-raised`), on-act text: the one thing standing full height at rest. *Default* (every
-  secondary action): a low plateau (`--face`, `--raised-soft`), ink text, no border; the pointer lifts it to full height
+  a key of ink (`--ink-raised`), on-act text: the one thing standing two pixels at rest. *Default* (every
+  secondary action): a low key (`--face`, `--raised-soft`), ink text, no border; under the pointer it stands two pixels
   (`--raised`).
-  *Ghost*: lies flat in the sheet, `--ink-2`; the pointer lifts it (`--face`, `--raised-soft`). *Danger*: default with
-  red text; a destructive confirm is a red plateau. All 28 px (24 in rows, 32 in dialog footers), padding 0 12 (0 8 at
+  *Ghost*: lies flat in the sheet, `--ink-2`; under the pointer it is a low key (`--face`, `--raised-soft`). *Danger*: default with
+  red text; a destructive confirm is a red key. All 28 px (24 in rows, 32 in dialog footers), padding 0 12 (0 8 at
   24), 13 px 500, `--r2` (`--r1` at 24). A key hint is a `<kbd>` inside the button, after the label, pressed into it.
-  *Pressed* (by the pointer, or by its key: `strike.js` gives it `.struck`): pushed down flush with the sheet (`--pressed` on
-  `--face-down`; a primary `--ink-pressed` on its ink mixed 90% with the sheet), and it gives to 97%, the way a pushed thing goes away from the eye. It
-  lands at once (50 ms) and eases back (140 ms). A split button is one plateau scored between its halves (a groove in
+  *Pressed* (by the pointer, or by its key: `strike.js` gives it `.struck`): sent down by its skirt (`--pressed` on
+  `--face-down`; a primary `--ink-pressed` on its ink mixed 90% with the sheet), travelling one pixel, two for the act. It
+  lands at once (50 ms) and eases back (140 ms). A split button is one key scored between its halves (a line of
   shade); its halves, segments, tabs and the meter only shade, so no seam opens between neighbours.
-- **Icon button**: 28 square (24 compact), `--r2`, 16 px icon in `--ink-2`, flat in the sheet; hover lifts its pad
-  (`--raised-soft`) + ink; pressed, the pad goes down flush (`--pressed`) and the glyph gives to 88%.
-- **Key hint** (`kbd`): a keycap, a small plateau whose skirt is two pixels of shade. When its key is pressed it bottoms
+- **Icon button**: 28 square (24 compact), `--r2`, 16 px icon in `--ink-2`, flat in the sheet; under the pointer its pad is a low
+  key (`--raised-soft`) + ink; pressed, the pad goes down (`--pressed`) and the glyph gives to 88%.
+- **Key hint** (`kbd`): a keycap, a small face whose skirt is two pixels of shade. When its key is pressed it bottoms
   out on one, its face dimmed, and the control that key drives shows its press, if it is in view (`strike.js`). In a menu
   or the palette, and in the find field, a key is a plain figure.
-- **Link button** (`.link`): a text action, 12 or 13 px to match its line, `--ink-2`, a ghost: the pointer lifts a
-  plate round its words (`--raised-soft`; 4 px of padding with 4 px taken back by margin, so the words keep their place),
-  a press pushes it down flush. Used for actions inside text or section headers ("All", "Rewrite", "Back to this change alone").
+- **Link button** (`.link`): a text action, 12 or 13 px to match its line, `--ink-2`, a ghost: under the pointer a
+  low key shows round its words (`--raised-soft`; 8 px of padding, `--off`, with 8 px taken back by margin, so the words keep their place),
+  a press sends it down. Used for actions inside text or section headers ("All", "Rewrite", "Back to this change alone").
 - **Input / select / scope button**: 28 px, `--r2`, padding 0 8, 13 px, no border. An input (and a composer, and a
   dialog's message box) is a well on `--floor`; writing in it, its sides darken (`--well-in`, on the composer and the
   message box while anything in them has focus); that is their focus mark, with no blue ring (with forced colours, which
-  drop shadows, the system's highlight ring). A select is pressed, so the scope button is raised; the bin's own lies flat until the pointer lifts it. Large
+  drop shadows, the system's highlight ring). A select is pressed, so the scope button is a key; the bin's own lies flat until the pointer makes it one. Large
   inputs (home Open box, dialog title): 40 px, 14 px.
-- **Segmented control**: 24 px buttons inside a 28 px channel pressed into the sheet (`--hover`, `--well`), `--r2`
-  channel, `--r1` buttons; the chosen one stands in it (`--face`, `--raised-soft`) with ink text. Same everywhere (verdict, Write/Preview tabs are tabs, not segments).
-- **Tabs**: text, 13 px 500, `--ink-3`; selected ink with a 2 px ink underline. Under the pointer a plate lifts behind
-  the word (28 px in a 40 px tab row; on the map's tabs, 26 px reaching 8 px past the word), pressed, down flush. Panel tabs,
-  Write/Preview and the map's tabs alike; a map tab already chosen does not lift.
-- **Chip** (a value you can act on: an attachment, a branch, a ref): 24 px, `--r1`, a low plateau (`--face`,
-  `--raised-soft`), 12 px; pressed, down flush. A head and
+- **Segmented control**: 24 px buttons inside a 28 px channel sunk into the sheet (`--floor`, `--well`), `--r2`
+  channel, `--r1` buttons; the chosen one is a low key in it (`--face`, `--raised-soft`; paper itself on white paper) with ink text. Same everywhere (verdict, Write/Preview tabs are tabs, not segments).
+- **Tabs**: text, 13 px 500, `--ink-3`; selected ink with a 2 px ink underline. Under the pointer a low key shows behind
+  the word (28 px in a 40 px tab row; on the map's tabs, 26 px reaching 8 px past the word), pressed, down. Panel tabs,
+  Write/Preview and the map's tabs alike; a map tab already chosen shows none.
+- **Chip** (a value you can act on: an attachment, a branch, a ref): 24 px, `--r1`, a low key (`--face`,
+  `--raised-soft`), 12 px; pressed, down. A head and
   its base (`branch → main`) wrap as one unit.
 - **Model picker**: the model and effort as words with a chevron (`Sonnet 5.5 · high ⌄`), 24 px, 13 px 500 `--ink-2`, a
-  ghost: it lies flat and the pointer lifts it (`--raised-soft`). The spark (the pixel sprite, still: the one spark) only for Claude models. The same drawing in a
+  ghost: it lies flat and is a low key under the pointer (`--raised-soft`), 8 px off the spark's first ink and the chevron's last. The spark (the pixel sprite, still: the one spark) only for Claude models. The same drawing in a
   line of links and beside a send button, and always before the action it sets ("Sonnet 5.5 · low ⌄ Write it",
   "… Regenerate"). One picker and one Regenerate for the brief: the Overview's, beside the line that says what wrote it.
 - **Pill** (a state you only read: open, draft, test, new, high risk): 18 px, `--r1`, 11 px 500, padding 0 8,
@@ -139,7 +152,7 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
 - **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`. A draft's words sit in a well that
   starts after its glyph, on the 20 px grid; its send is the primary.
 - **The + that starts a mark**: in the margin, on the empty left edge of its side's line-number gutter (where a hidden
-  mark's pin sits), 16 px, ink on a small plateau (`--ink-raised`), shown on the line's hover; never over a number or the diff's sign. A line whose pin is there
+  mark's pin sits), 16 px, a small key of ink (`--ink-raised`), shown on the line's hover; never over a number or the diff's sign. A line whose pin is there
   keeps the pin; its number still selects it.
 - **Going back** after a jump (a definition, a cited line): `[`, with no button in the top bar; the whole-file viewer
   keeps its own Back in its header.
@@ -158,8 +171,8 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
 - **Status**: M / A / D / R letters (11 px mono 600: amber, green, red, ink-2); the pixel check for viewed; counts as
   tabular figures.
 - **Empty state**: one line in `--ink-3` 13 px, with the one action that fills it as a link button.
-- **Toast**: bottom centre, `--act` background, on-act text, `--r2`, 13 px; an action in it is a ghost on the ink (the
-  pointer lifts an ink plate, `--ink-raised`). A
+- **Toast**: bottom centre, `--act` background, on-act text, `--r2`, 13 px; an action in it is a ghost on the ink (under the
+  pointer, a key of ink, `--ink-raised`). It casts no shadow. A
   failure carries the pixel cross in red before its words, is said as an alert, and stays 6 s; any toast waits while the
   pointer is on it and goes when clicked. A
   commit's toast flips the new commit's id in from its parent's, split-flap cells one mono character wide (`receipt.js`).
@@ -211,33 +224,52 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
 Small things for whoever plays, and only things from loupe's own world: the loupe itself, and Mote being a beetle. Each
 is found by doing something a person might do anyway, never by a code; none fires during work (a dialog, an answer
 being written), none makes a sound, and with reduced motion none happens. They are not in the README.
-- Hold ⌥ over code: a 2× lens follows the pointer (`eggs.js`). Over Mote, he is under the glass too, and waves back.
+- Hold ⌥ over code: a 2× lens follows the pointer (`eggs.js`). Over Mote, he is under the lens too, and waves back. The lens is paper with a ruled rim; it has no shine.
 - Throw Mote (let go of him mid-swing, faster than 1.4 px/ms): he flies on, skids, lands on his back with his legs at
   the air, rocks, and heaves himself over with a hop.
 
+## Plates
+Dither in loupe is a plate: a print of a real, tonal subject in a few inks, with paper between the dots. It is never
+laid over something to dim it and never part of a control. The method is the one on lolwierd.com's sky, and the engine
+is `web/js/plate.js` (its pure part, `plate-core.js`, loads on its own in a scene's frame).
+- **What a plate is made of**: an 8×8 ordered screen for air and edges; Atkinson error diffusion into three inks plus
+  paper for mass, so a body has depth and grain and not a cutout's one tone; ink ramps per theme (`RAMPS`), neutral in
+  loupe's own ink; organic variation from seeded noise. One dot is 1 CSS px, snapped to whole device pixels: the size of
+  a pixel in Mote and the spark.
+- **The plate of the page**: opening a dialog prints the app behind it from its own pixels (an SVG filter: luminance,
+  the screen, an uneven air seeded by the change, four tones, the ramp). The page's words land in the middle ink, so
+  they sit back in the print and no screen is laid over them (the scrim adds only a faint flat wash, which is all that
+  sets the page back in a browser where the filter is not checked). Its exposure is as heavy as the write is hard to undo:
+  the keys and the map opened large at the lightest, a local write, a public one, and a write that cannot be undone,
+  which also prints in red (`sheets.js` sets `data-weight`); when overlays stack, the one on top decides. The palette is the top bar opened: the bar stays lit, so
+  it pulls no plate and the page under it only steps back under a flat wash. The dialog is paper with a rule.
+- **Where a plate may be**: behind a dialog; in a scene, as its subject (the labels stay type); and in the pauses that
+  have a texture of their own, below. Nowhere else: not under a button, a menu or a card.
+- **Motion**: nothing in a plate moves. A plate comes up dot by dot in the screen's own order (180 ms, eased) and then
+  holds still while someone writes in front of it. A plate that is the subject of a scene may breathe: a slow noise
+  nudges the threshold, so only cells already near it are re-decided and the shape never shifts. With reduced motion a
+  plate is simply there.
+- **Ink**: the page's own. Red only for a write that cannot be undone. Blue and orange keep their one job.
+
 ## Print textures
-A few states are drawn as a print shop would show them instead of in flat colour. They are the only textures in the
-app, and they follow one set of rules (screens in `web/js/dither.js`).
+A few pauses are drawn as a print shop would show them instead of in flat colour (screens in `web/js/dither.js`).
+They came before the plates, are drawn from the change's own state, and stay as they are.
 - **Where**: only where nothing is being read. The opening state (the forme), the state of a change that could not
-  open (the moiré), the dim behind a write's dialog (the tone screen), and the desk under Mote (the lens's light).
-  Never behind code, prose or glass, with two exceptions: Mote floats over the diff's bottom-right corner, so his light,
-  no wider than his feet, can land on the end of a line (drag him off it); and the approval's stamp is pressed over the
-  diff for 1.7 s, its ink multiplied into the page so the code stays legible through it. The stamp leaves its
-  impression on the pull request in the inspector, a row of its own.
+  open (the moiré), and the desk under Mote (the lens's light). Never behind code or prose, with two exceptions: Mote
+  floats over the diff's bottom-right corner, so his light, no wider than his feet, can land on the end of a line (drag
+  him off it); and the approval's stamp is pressed over the diff for 1.7 s, its ink multiplied into the page so the
+  code stays legible through it. The stamp leaves its impression on the pull request in the inspector, a row of its own.
 - **What draws them**: the change's own state, never a picture. The forme has one dot per changed line (past 2,560 a
-  dot stands for several), as GitHub counts them before the fetch; the daemon sends the counts on its progress lines. The moiré's two screens are turned by the base's and the head's names. The tone's
-  weight is how hard the write is to undo: local 25%, public 37.5%, destructive 56%, each a quarter heavier in dark,
-  nearly even (a little lighter round the dialog).
-  The lens's spot gathers as the share of lines left falls. The stamp prints the head you approved and the day, seeded
-  by that head (the same head always prints the same stamp); its impression slips out of register when the head moves on.
-- **Screens**: the app's 4×4 Bayer matrix (`--d0`..`--d16`, one cell to a device pixel, or to an art pixel on Mote's
-  grid; the tone screen uses 1 CSS px cells, a fine screen rather than a grey), hairline line screens, and letterpress
-  dots. Every one is drawn at device pixels, never scaled or smoothed.
-- **Ink**: the page's own (`--ink`, `--ink-3`, black under dark dialogs, `--hi` for light). Red only for a
-  destructive write; amber only for the impression's second plate, when the head has moved past your approval (changed
-  since). Blue and orange keep their one job: no texture uses them.
-- **Motion**: frame-stepped, at 12 fps at most (the brayer's passes; the tone screen alone fades in, with its dialog). With
-  reduced motion each is the still that says the same thing.
+  dot stands for several), as GitHub counts them before the fetch; the daemon sends the counts on its progress lines.
+  The moiré's two screens are turned by the base's and the head's names. The lens's spot gathers as the share of lines
+  left falls. The stamp prints the head you approved and the day, seeded by that head (the same head always prints the
+  same stamp); its impression slips out of register when the head moves on.
+- **Screens**: the 4×4 Bayer matrix (one cell to a device pixel, or to an art pixel on Mote's grid), hairline line
+  screens, and letterpress dots. Every one is drawn at device pixels, never scaled or smoothed. The top bar's meter
+  (one block of lamps per file) and the theme's wave use the same matrix.
+- **Ink**: the page's own (`--ink`, `--ink-3`, `--hi` for light). Amber only for the impression's second plate, when
+  the head has moved past your approval (changed since). Blue and orange keep their one job: no texture uses them.
+- **Motion**: eased, at the display's rate. With reduced motion each is the still that says the same thing.
 
 ## Model-written text
 The map, the guide's heads and the TLDR are prose a person reads. Code in them is the mono face in the text's own

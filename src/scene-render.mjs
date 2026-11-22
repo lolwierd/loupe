@@ -136,7 +136,7 @@ export async function renderScene(html, { origin, height = 320, signal = null, t
       // kept small and few here, before any of it comes back
       const ok = await ev(`(async () => {
         const cs = getComputedStyle(document.documentElement), v = (k) => cs.getPropertyValue(k).trim();
-        const keys = ['--bg', '--chrome', '--ink', '--ink-2', '--ink-3', '--rule', '--rule-strong', '--on-act', '--ok', '--warn', '--danger', '--pencil', '--shade', '--shade-3', '--lit', '--f-ui', '--f-mono'];
+        const keys = ['--bg', '--chrome', '--ink', '--ink-2', '--ink-3', '--rule', '--rule-strong', '--on-act', '--ok', '--warn', '--danger', '--pencil', '--shade', '--lit', '--f-ui', '--f-mono'];
         const vars = Object.fromEntries(keys.map((k) => [k, v(k)]).filter(([, x]) => x));
         window.__got = []; window.__report = null; window.__asked = false;
         const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts');

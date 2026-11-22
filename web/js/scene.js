@@ -6,7 +6,7 @@
 import { esc, S, fileOf } from './core.js';
 import { hooks } from './hooks.js';
 
-const KEYS = ['--bg', '--chrome', '--ink', '--ink-2', '--ink-3', '--rule', '--rule-strong', '--on-act', '--ok', '--warn', '--danger', '--pencil', '--shade', '--shade-3', '--lit', '--f-ui', '--f-mono'];
+const KEYS = ['--bg', '--chrome', '--ink', '--ink-2', '--ink-3', '--rule', '--rule-strong', '--on-act', '--ok', '--warn', '--danger', '--pencil', '--shade', '--lit', '--f-ui', '--f-mono'];
 const isDark = () => { const t = document.documentElement.dataset.theme; return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; };
 const theme = () => { const cs = getComputedStyle(document.documentElement); return JSON.stringify({ dark: isDark(), vars: Object.fromEntries(KEYS.map((k) => [k, cs.getPropertyValue(k).trim()]).filter(([, v]) => v)) }); };
 const REF = /^([^\s:]+)(?::(\d+)(?:-\d+)?)?$/; // path, or path:line, or path:a-b

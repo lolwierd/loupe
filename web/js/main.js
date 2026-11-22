@@ -1032,7 +1032,6 @@ async function renderHome(error) {
   const paint = (ib) => {
     const v = $('#go')?.t?.value || '', focused = document.activeElement?.closest?.('.hrow')?.querySelector('.hl')?.getAttribute('href');
     $('#root').innerHTML = draw(ib);
-    $('.home')?.style.setProperty('--drift-at', `-${Math.round(performance.now() % 80000)}ms`); // the drift goes there and back in 80 s
     wakeMotes();
     if (v) $('#go').t.value = v;
     if (focused) $(`.hl[href="${CSS.escape(focused)}"]`)?.focus();

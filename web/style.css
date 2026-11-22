@@ -4,7 +4,7 @@
    A Guide layout swaps the bin for Claude's guide. A write (review, commit, push, open PR) opens one dialog in the
    middle of the window, and the dialog is the preview. A mark (Claude's question, a GitHub thread) sits in the code as one
    line on its 20 px grid, its glyph in the column of the +/- signs and its text where code text starts; it opens in the inspector.
-   The chrome (top bar, bin, inspector) is frosted glass over two soft lights; the code is never behind glass.
+   The chrome (top bar, bin, inspector) is the sheet itself, flat and opaque; nothing in the app blurs or glows.
    docs/COMPONENTS.md is the spec; each component is drawn once below (buttons, icon buttons, links, fields, segmented controls,
    tabs, chips, pills, section headers, rows, list boxes, mark rows, messages, status, empty states, toasts) and a surface that
    needs something else gets a new entry there first. Rules this sheet keeps:
@@ -23,7 +23,7 @@
 :root {
   color-scheme: light;
   --bg: #ffffff; --chrome: #f6f6f7; --raise: #ffffff;
-  --hover: rgba(24, 24, 32, 0.045); --press: rgba(24, 24, 32, 0.08); --press-in: rgba(24, 24, 32, 0.14); --press-in-act: rgba(0, 0, 0, 0.35); /* the shadow inside a pressed control's top edge */
+  --hover: rgba(24, 24, 32, 0.045); --press: rgba(24, 24, 32, 0.08);
   --rule: #e4e4e8; --rule-strong: #d0d0d7;
   --ink: #1b1b20; --ink-2: #55555f; --ink-3: #72727d;
   --pencil: #2f67dd; --pencil-ink: #2457c4;
@@ -33,26 +33,24 @@
   --del-bg: #fdeeed; --del-gutter: #f8d8d6; --del-word: #f2b9b5; --del-ink: #c0352d;
   --hunk-bg: #f3f5f9; --hunk-ink: #6c7280;
   --sel-bg: #fff5d1; --sel-gutter: #f9e39b; --flash: #f7d96b;
-  --shadow: 0 1px 2px rgba(20, 20, 30, 0.06), 0 10px 30px rgba(20, 20, 30, 0.12);
-  --shadow-lg: 0 1px 2px rgba(20, 20, 30, 0.08), 0 24px 56px rgba(20, 20, 30, 0.22);
-  --scrim: rgba(12, 12, 18, 0.26); --scrim-soft: rgba(10, 10, 15, 0.18);
+  --scrim: rgba(12, 12, 18, 0.06); --scrim-flat: rgba(12, 12, 18, 0.26); --scrim-soft: rgba(10, 10, 15, 0.18);
   --hi: #ffffff; /* white for a highlight that stays light in both themes (a glint, a divider on the filled button) */
-  /* the tone screen behind a write's dialog: its ink (dither.js sets its weight) */
-  --tone-ink: #1b1b20;
-  /* relief: the controls are blind-embossed in the sheet, one light from above (docs/COMPONENTS.md, Relief). --lit is
-     the slope that faces the light, --shade the one turned away (and the sides, --shade-2; the soft fall below a raised
-     thing and inside a well, --shade-3). --face is a raised plateau, a little paler than the sheet, as stretched paper is;
-     --face-hi the same under the pointer. --sheen is the light along a raised face's top, --ink-* the same on ink. */
-  --lit: #ffffff; --shade: rgba(28, 28, 40, 0.2); --shade-2: rgba(28, 28, 40, 0.075); --shade-3: rgba(28, 28, 40, 0.1);
+  /* relief, in whole pixels: nothing blurs (docs/COMPONENTS.md, The plain ground). A control is a key: a flat face
+     (--face, paler than the chrome; --face-hi under the pointer; --face-down pushed), a lit top edge where the theme is
+     dark (--lit), and a skirt of solid shade below it (--shade; --ink-skirt on ink). --edge-in is the one line of shade
+     under a well's lip and on a face pushed down; --floor a well's floor. On white paper a face cannot be paler than its
+     ground, so there it is a tint of ink (the -paper values). --float is the rule round what floats over the page. */
+  --lit: transparent; --shade: #c4c4cb; --shade-2: rgba(28, 28, 40, 0.075); --edge-in: #cfcfd6; --float: var(--ink-3);
   --face: color-mix(in srgb, var(--bg) 70%, transparent); --face-hi: var(--bg);
-  --floor: color-mix(in srgb, var(--bg) 98%, var(--ink)); /* a well's floor: a hair below the sheet, so it reads pressed in on white */
-  --face-down: color-mix(in srgb, var(--bg) 95%, var(--ink)); /* a plateau pushed down flush: out of the light, a touch dimmer */
-  --sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.6);
-  --ink-lit: rgba(255, 255, 255, 0.22); --ink-shade: rgba(0, 0, 0, 0.5); --ink-sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.14);
+  --floor: color-mix(in srgb, var(--chrome) 95%, var(--ink)); /* a well's floor: a hair below the sheet, so it reads pressed in on white */
+  --face-down: color-mix(in srgb, var(--chrome) 92%, var(--ink)); /* a plateau pushed down flush: out of the light, a touch dimmer */
+  --face-paper: color-mix(in srgb, var(--ink) 6%, var(--bg)); --face-paper-hi: color-mix(in srgb, var(--ink) 3%, var(--bg)); --face-paper-down: color-mix(in srgb, var(--ink) 9%, var(--bg)); --floor-paper: color-mix(in srgb, var(--ink) 5%, var(--bg));
+  --ink-lit: rgba(255, 255, 255, 0.2); --ink-shade: rgba(0, 0, 0, 0.5); --ink-skirt: #6c6c76;
   --f-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   --f-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --t-meta: 11px; --t-mono: 12px; --t-ui: 13px; --t-code: 13px; --t-read: 14px; --t-title: 16px;
   --s1: 2px; --s2: 4px; --s3: 8px; --s4: 12px; --s5: 16px; --s6: 24px;
+  --off: var(--s3); /* how far a box that appears under the pointer stands off its first and last ink, on each side */
   --h1: 24px; --h2: 28px; --h3: 32px; --h4: 40px; --h5: 52px; /* compact, standard, dialog footer, large field, home row */
   --r0: 2px; --r1: 4px; --r2: 6px; --r3: 8px;
   --bar: 40px; --measure: 880px;
@@ -61,7 +59,7 @@
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #18181c; --chrome: #111114; --raise: #1f1f24; --hover: rgba(255, 255, 255, 0.05); --press: rgba(255, 255, 255, 0.085); --press-in: rgba(0, 0, 0, 0.45); --press-in-act: rgba(0, 0, 0, 0.22);
+  --bg: #18181c; --chrome: #111114; --raise: #1f1f24; --hover: rgba(255, 255, 255, 0.05); --press: rgba(255, 255, 255, 0.085);
   --rule: #26262c; --rule-strong: #35353d; --ink: #ececf1; --ink-2: #a5a5b0; --ink-3: #8a8a96;
   --pencil: #739dff; --pencil-ink: #8fb0ff;
   --claude: #e3946f; --ok: #4fc27f; --warn: #e2b24a; --warn-tint: rgba(226, 178, 74, 0.12); --danger: #ff7b72; --act: #e9e9ee; --on-act: #121216;
@@ -69,19 +67,16 @@
   --del-bg: rgba(248, 81, 73, 0.10); --del-gutter: rgba(248, 81, 73, 0.20); --del-word: rgba(248, 81, 73, 0.38); --del-ink: #ff8a80;
   --hunk-bg: rgba(120, 140, 200, 0.08); --hunk-ink: #8a90a0;
   --sel-bg: rgba(214, 167, 32, 0.15); --sel-gutter: rgba(214, 167, 32, 0.32); --flash: rgba(214, 167, 32, 0.45);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.55);
-  --shadow-lg: 0 1px 2px rgba(0, 0, 0, 0.4), 0 24px 56px rgba(0, 0, 0, 0.6);
-  --scrim: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
-  --tone-ink: #000000;
-  --lit: rgba(255, 255, 255, 0.1); --shade: rgba(0, 0, 0, 0.8); --shade-2: rgba(0, 0, 0, 0.5); --shade-3: rgba(0, 0, 0, 0.45);
-  --face: color-mix(in srgb, var(--ink) 5%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 8%, var(--bg)); --floor: var(--bg); --face-down: color-mix(in srgb, var(--ink) 3%, var(--bg));
-  --sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.05);
-  --ink-lit: rgba(255, 255, 255, 0.8); --ink-shade: rgba(0, 0, 0, 0.3); --ink-sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.5);
+  --scrim: rgba(0, 0, 0, 0.18); --scrim-flat: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
+  --lit: rgba(255, 255, 255, 0.13); --shade: #000000; --shade-2: rgba(0, 0, 0, 0.5); --edge-in: #000000; --float: var(--ink-3);
+  --face: color-mix(in srgb, var(--ink) 7%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 10%, var(--bg)); --floor: color-mix(in srgb, var(--chrome) 60%, #000000); --face-down: color-mix(in srgb, var(--ink) 3%, var(--bg));
+  --face-paper: var(--face); --face-paper-hi: var(--face-hi); --face-paper-down: var(--face-down); --floor-paper: var(--floor);
+  --ink-lit: rgba(255, 255, 255, 0.8); --ink-shade: rgba(0, 0, 0, 0.3); --ink-skirt: #8e8e9a;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --bg: #18181c; --chrome: #111114; --raise: #1f1f24; --hover: rgba(255, 255, 255, 0.05); --press: rgba(255, 255, 255, 0.085); --press-in: rgba(0, 0, 0, 0.45); --press-in-act: rgba(0, 0, 0, 0.22);
+    --bg: #18181c; --chrome: #111114; --raise: #1f1f24; --hover: rgba(255, 255, 255, 0.05); --press: rgba(255, 255, 255, 0.085);
     --rule: #26262c; --rule-strong: #35353d; --ink: #ececf1; --ink-2: #a5a5b0; --ink-3: #8a8a96;
     --pencil: #739dff; --pencil-ink: #8fb0ff;
     --claude: #e3946f; --ok: #4fc27f; --warn: #e2b24a; --warn-tint: rgba(226, 178, 74, 0.12); --danger: #ff7b72; --act: #e9e9ee; --on-act: #121216;
@@ -89,14 +84,11 @@
     --del-bg: rgba(248, 81, 73, 0.10); --del-gutter: rgba(248, 81, 73, 0.20); --del-word: rgba(248, 81, 73, 0.38); --del-ink: #ff8a80;
     --hunk-bg: rgba(120, 140, 200, 0.08); --hunk-ink: #8a90a0;
     --sel-bg: rgba(214, 167, 32, 0.15); --sel-gutter: rgba(214, 167, 32, 0.32); --flash: rgba(214, 167, 32, 0.45);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.55);
-    --shadow-lg: 0 1px 2px rgba(0, 0, 0, 0.4), 0 24px 56px rgba(0, 0, 0, 0.6);
-    --scrim: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
-    --tone-ink: #000000;
-    --lit: rgba(255, 255, 255, 0.1); --shade: rgba(0, 0, 0, 0.8); --shade-2: rgba(0, 0, 0, 0.5); --shade-3: rgba(0, 0, 0, 0.45);
-    --face: color-mix(in srgb, var(--ink) 5%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 8%, var(--bg)); --floor: var(--bg); --face-down: color-mix(in srgb, var(--ink) 3%, var(--bg));
-    --sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.05);
-    --ink-lit: rgba(255, 255, 255, 0.8); --ink-shade: rgba(0, 0, 0, 0.3); --ink-sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.5);
+    --scrim: rgba(0, 0, 0, 0.18); --scrim-flat: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
+    --lit: rgba(255, 255, 255, 0.13); --shade: #000000; --shade-2: rgba(0, 0, 0, 0.5); --edge-in: #000000; --float: var(--ink-3);
+    --face: color-mix(in srgb, var(--ink) 7%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 10%, var(--bg)); --floor: color-mix(in srgb, var(--chrome) 60%, #000000); --face-down: color-mix(in srgb, var(--ink) 3%, var(--bg));
+    --face-paper: var(--face); --face-paper-hi: var(--face-hi); --face-paper-down: var(--face-down); --floor-paper: var(--floor);
+    --ink-lit: rgba(255, 255, 255, 0.8); --ink-shade: rgba(0, 0, 0, 0.3); --ink-skirt: #8e8e9a;
   }
 }
 
@@ -127,33 +119,35 @@ b, strong { font-weight: 600; } /* weights are 400, 500 and 600: the browser's b
 .sh :is(.link, button, kbd) { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .sh .n { font: var(--t-meta)/1 var(--f-mono); letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .bar { display: flex; align-items: center; gap: var(--s3); }
-/* a key: a small plateau, its skirt the shade below it; struck, it bottoms out into a well */
-kbd { font: 500 var(--t-mono)/16px var(--f-mono); min-width: 18px; text-align: center; display: inline-block; padding: 0 var(--s2); border: 1px solid transparent; border-bottom: 2px solid var(--shade); border-radius: var(--r1); background: var(--face); color: var(--ink-2); box-shadow: inset 0 1px 0 var(--lit), inset 0 0 0 1px var(--shade-2); }
+/* a key: a small face, its skirt the shade below it; struck, it bottoms out */
+kbd { font: 500 var(--t-mono)/16px var(--f-mono); min-width: 18px; text-align: center; display: inline-block; padding: 0 var(--s2); border: 1px solid transparent; border-bottom: 2px solid var(--shade); border-radius: var(--r1); background: var(--face); color: var(--ink-2); box-shadow: inset 0 1px 0 var(--lit); }
 kbd { transition: transform 110ms var(--ease), background 110ms var(--ease), color 110ms var(--ease), box-shadow 110ms var(--ease); }
-kbd.struck { transform: translateY(1px); background: var(--face-down); color: var(--ink); box-shadow: inset 0 1px 1px var(--shade-3), inset 0 0 0 1px var(--shade-2); }
+kbd.struck { transform: translateY(1px); background: var(--face-down); color: var(--ink); box-shadow: inset 0 1px 0 var(--edge-in); }
 .btn kbd.struck { transform: none; border-bottom-width: 1px; background: color-mix(in srgb, currentColor 18%, transparent); opacity: 1; }
 .seg button.struck { background: var(--press); color: var(--ink); }
 .tab.struck { color: var(--ink); }
 
 /* ---------------------------------------------------------------- controls */
-/* Relief. Every control is pressed into the sheet by a die, blind (no ink), so its shape is only light and shade: what
-   you press stands up out of the sheet (buttons, chips, a select, a key, the chosen segment), what you write in or only
-   read is pressed into it (fields, composers, a dialog's message box, pills, the segmented control's channel). No
-   outlines. Pressing a raised thing pushes it through to a well. Every relief below is one list of five inset shadows
-   and three outer ones, in the same order, so a press blends from one to the other instead of jumping:
-   the top slope, the sides, the foot (a well's inner fall), the sheen, a crease; then the cast below, softened twice. */
+/* Relief. What you press stands up out of the sheet as a key (buttons, chips, a select, a key, the chosen segment);
+   what you write in or only read is sunk into it (fields, composers, a dialog's message box, the segmented control's
+   channel). No outlines, no blur: a key is its face and the skirt below it, a well its floor and one line of shade under
+   its lip. Pressing a key sends it down by its skirt. Every relief below is one list of five inset shadows and three
+   outer ones, in the same order, so a press moves from one to the other instead of jumping: the top edge, the sides (a
+   field's focus mark), three spares, then the skirt and two spares. */
 :root {
   --t0: inset 0 0 0 0 transparent; --o0: 0 0 0 0 transparent;
-  --raised: inset 0 1px 0 var(--lit), inset 0 0 0 1px var(--shade-2), inset 0 -1px 0 var(--shade-2), var(--sheen), var(--t0), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3);
-  --raised-soft: inset 0 1px 0 var(--lit), inset 0 0 0 1px var(--shade-2), var(--t0), var(--sheen), var(--t0), 0 1px 0 var(--shade-2), 0 1px 2px var(--shade-3), var(--o0);
+  --raised: inset 0 1px 0 var(--lit), var(--t0), var(--t0), var(--t0), var(--t0), 0 2px 0 var(--shade), var(--o0), var(--o0);
+  --raised-soft: inset 0 1px 0 var(--lit), var(--t0), var(--t0), var(--t0), var(--t0), 0 1px 0 var(--shade), var(--o0), var(--o0);
   --flat: var(--t0), var(--t0), var(--t0), var(--t0), var(--t0), var(--o0), var(--o0), var(--o0);
-  --well: inset 0 1px 0 var(--shade), inset 0 0 0 1px var(--shade-2), inset 0 2px 3px var(--shade-3), var(--t0), var(--t0), 0 1px 0 var(--lit), var(--o0), var(--o0);
-  --well-in: inset 0 1px 0 var(--shade), inset 0 0 0 1px var(--ink-3), inset 0 2px 3px var(--shade-3), var(--t0), var(--t0), 0 1px 0 var(--lit), var(--o0), var(--o0);
-  --pressed: inset 0 1px 1px var(--shade-3), inset 0 0 0 1px var(--shade-2), var(--t0), var(--t0), var(--t0), 0 0 0 0 var(--shade), 0 0 1px var(--shade-3), var(--o0);
-  --ink-raised: inset 0 1px 0 var(--ink-lit), var(--t0), inset 0 -1px 0 var(--ink-shade), var(--ink-sheen), var(--t0), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3);
-  --ink-pressed: inset 0 1px 1px var(--ink-shade), var(--t0), var(--t0), var(--t0), var(--t0), 0 0 0 0 var(--shade), 0 0 1px var(--shade-3), var(--o0);
+  --well: inset 0 1px 0 var(--edge-in), var(--t0), var(--t0), var(--t0), var(--t0), var(--o0), var(--o0), var(--o0);
+  --well-in: inset 0 1px 0 var(--edge-in), inset 0 0 0 1px var(--ink-3), var(--t0), var(--t0), var(--t0), var(--o0), var(--o0), var(--o0);
+  --pressed: inset 0 1px 0 var(--edge-in), var(--t0), var(--t0), var(--t0), var(--t0), 0 0 0 0 var(--shade), var(--o0), var(--o0);
+  --ink-raised: inset 0 1px 0 var(--ink-lit), var(--t0), var(--t0), var(--t0), var(--t0), 0 2px 0 var(--ink-skirt), var(--o0), var(--o0);
+  --ink-pressed: inset 0 1px 0 var(--ink-shade), var(--t0), var(--t0), var(--t0), var(--t0), 0 0 0 0 var(--ink-skirt), var(--o0), var(--o0);
 }
-/* Four kinds: primary (the act: ink printed on the plateau, a registered emboss), default, ghost (lies flat until the
+/* white paper under a key: the diff column, the whole-file viewer, and what floats (menus, tips, the palette, dialogs) */
+:is(.viewer-col, .viewer, .menu, .seltools, .tip, .palette, .sheet, .mw) { --face: var(--face-paper); --face-hi: var(--face-paper-hi); --face-down: var(--face-paper-down); --floor: var(--floor-paper); --seg-on: var(--bg); --seg-floor: color-mix(in srgb, var(--ink) 9%, var(--bg)); }
+/* Four kinds: primary (the act: a key of ink, the one standing two pixels at rest), default, ghost (lies flat until the
    pointer lifts it) and danger (default with red text; together with primary, the red fill of a destructive confirm). 28
    high; .sm is 24 for actions inside a row; .lg is 32 in a dialog's footer. The viewed box, the title, the tally and the
    pickers are these buttons too, with their own contents. */
@@ -163,14 +157,15 @@ kbd.struck { transform: translateY(1px); background: var(--face-down); color: va
    light and shade swap), darkens a step and gives 3%, the way a pushed thing goes away from the eye. Nothing moves
    sideways; the press lands at once and the release eases back. Halves of a split button, segments, tabs and the meter
    only shade, so no seam opens between neighbours. */
-.btn:active, .btn.struck { background: var(--face-down); transform: scale(0.97); box-shadow: var(--pressed); transition-duration: 50ms; }
+.btn:active, .btn.struck { background: var(--face-down); transform: translateY(1px); box-shadow: var(--pressed); transition-duration: 50ms; }
 .btn.l:active, .btn.r:active, .btn.l.struck, .btn.r.struck, .btn.tally:active, .btn.tally.struck { transform: none; }
 .btn[disabled] { opacity: 0.45; cursor: default; pointer-events: none; }
 .btn.sm { height: var(--h1); padding: 0 var(--s3); border-radius: var(--r1); }
 .btn.lg { height: var(--h3); }
 .btn.primary { background: var(--act); color: var(--on-act); box-shadow: var(--ink-raised); }
 .btn.primary:hover { background: color-mix(in srgb, var(--act) 86%, var(--bg)); }
-.btn.primary:active, .btn.primary.struck { background: color-mix(in srgb, var(--act) 90%, var(--bg)); box-shadow: var(--ink-pressed); }
+.btn.primary:active, .btn.primary.struck { background: color-mix(in srgb, var(--act) 90%, var(--bg)); box-shadow: var(--ink-pressed); transform: translateY(2px); }
+.btn.primary:is(.l, .r):is(:active, .struck) { transform: none; } /* a split half never travels, the act's included */
 .btn.ghost { background: none; box-shadow: var(--flat); color: var(--ink-2); }
 .btn.ghost:hover { background: var(--face); box-shadow: var(--raised-soft); color: var(--ink); }
 .btn.ghost:active, .btn.ghost.struck { background: var(--face-down); box-shadow: var(--pressed); }
@@ -198,19 +193,25 @@ kbd.struck { transform: translateY(1px); background: var(--face-down); color: va
 .icon svg { width: 16px; height: 16px; flex: none; }
 /* a link button is a ghost set in its line: flat until the pointer lifts a plate round its words (the plate stands out
    by its padding, the words keep their place), pressed into a well */
-.link { all: unset; cursor: pointer; color: var(--ink-2); font-size: var(--t-mono); padding: 1px var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
+.link { all: unset; cursor: pointer; color: var(--ink-2); font-size: var(--t-mono); padding: 1px var(--off); margin: 0 calc(-1 * var(--off)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .link svg { width: 12px; height: 12px; vertical-align: -2px; }
 .link:hover { color: var(--ink); background: var(--face); box-shadow: var(--raised-soft); }
 .link:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .link.danger:hover { color: var(--danger); }
 .link.danger:active { color: color-mix(in srgb, var(--danger) 80%, var(--ink)); } /* on the press fill, still 4.5:1 */
+/* A link inside a sentence has no box: a word space is all the room there is. Its words carry a rule, and take the ink under the pointer. */
+:is(.tempty, .homefoot p, .scnerr) > .link { padding-inline: 0; margin-inline: 0; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 3px; }
+:is(.tempty, .homefoot p, .scnerr) > .link:is(:hover, :active) { background: none; box-shadow: var(--flat); text-decoration-color: currentColor; }
+/* A link that is one icon is boxed as an icon is: square, 4 px round the glyph. */
+.mmeta a.link { display: inline-flex; align-self: center; padding: var(--s2); margin: calc(-1 * var(--s2)); }
+.mmeta a.link svg { display: block; }
 /* Segmented control: 24 high buttons in a 28 high channel pressed into the sheet; the chosen one stands in it. */
-.seg { display: inline-flex; align-items: center; padding: var(--s1); gap: var(--s1); height: var(--h2); background: var(--hover); border-radius: var(--r2); box-shadow: var(--well); }
+.seg { display: inline-flex; align-items: center; padding: var(--s1); gap: var(--s1); height: var(--h2); background: var(--seg-floor, var(--floor)); border-radius: var(--r2); box-shadow: var(--well); }
 .seg.verdict { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .seg button { height: var(--h1); padding: 0 var(--s3); border: 0; border-radius: var(--r1); background: none; color: var(--ink-2); font-size: var(--t-ui); font-weight: 500; white-space: nowrap; cursor: pointer; box-shadow: var(--flat); transition: background 120ms var(--ease), color 120ms var(--ease), box-shadow 120ms var(--ease); }
 .seg button:hover { color: var(--ink); }
 .seg button[disabled] { opacity: 0.4; cursor: default; }
-.seg button[aria-pressed="true"] { background: var(--face); color: var(--ink); box-shadow: var(--raised-soft); }
+.seg button[aria-pressed="true"] { background: var(--seg-on, var(--face)); color: var(--ink); box-shadow: var(--raised-soft); }
 .seg button:is(:active, .struck) { background: var(--face-down); color: var(--ink); box-shadow: var(--pressed); } /* after the chosen one: a key can strike the segment already chosen */
 /* Pill: a state you only read. Neutral, or tinted ok (passing), warn (changed, risk) or danger (failing, closed). */
 .pill { display: inline-flex; align-items: center; gap: var(--s2); height: 18px; padding: 0 var(--s3); border-radius: var(--r1); font-size: var(--t-meta); font-weight: 500; color: var(--ink-2); background: var(--hover); box-shadow: inset 0 1px 0 var(--shade-2); white-space: nowrap; border: 0; font-family: inherit; }
@@ -238,7 +239,7 @@ button.pill:active { box-shadow: var(--pressed); transition-duration: 50ms; }
 .field.lg { height: var(--h4); padding: 0 var(--s4); font-size: var(--t-read); }
 .field.mono { font-family: var(--f-mono); }
 input[type="checkbox"] { accent-color: var(--act); margin: 0; }
-.menu { animation: rise 130ms var(--ease) 1; position: fixed; z-index: 80; min-width: 220px; max-width: 520px; max-height: 70vh; overflow: auto; padding: var(--s2); background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: var(--shadow); }
+.menu { animation: rise 130ms var(--ease) 1; position: fixed; z-index: 80; min-width: 220px; max-width: 520px; max-height: 70vh; overflow: auto; padding: var(--s2); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); }
 .menu .mi, .palette .mi { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: var(--s3); width: 100%; min-height: var(--h2); padding: 0 var(--s3); border-radius: var(--r1); cursor: pointer; }
 .menu .mi:has(.two), .palette .mi:has(.two) { padding-block: var(--s2); }
 .menu .mi .sub, .palette .mi .sub { color: var(--ink-3); font-size: var(--t-meta); margin-left: auto; white-space: nowrap; }
@@ -253,17 +254,18 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .menu hr { border: 0; border-top: 1px solid var(--rule); margin: var(--s2) 0; }
 .menu .sh, .palette .sh { padding: var(--s5) var(--s3) var(--s3); }
 .menu .sh:first-child, .palette .sh:first-child { padding-top: var(--s3); }
-.toast { position: fixed; z-index: 90; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: min(560px, 90vw); padding: var(--s3) var(--s4); background: var(--act); color: var(--on-act); border-radius: var(--r2); box-shadow: var(--shadow); font-size: var(--t-ui); display: flex; align-items: center; gap: var(--s4); }
+.toast { position: fixed; z-index: 90; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: min(560px, 90vw); padding: var(--s3) var(--s4); background: var(--act); color: var(--on-act); border-radius: var(--r2); font-size: var(--t-ui); display: flex; align-items: center; gap: var(--s4); }
 .toast { cursor: default; animation: toast-in 160ms var(--ease) 1; }
 @keyframes toast-in { from { translate: 0 5px; opacity: 0; } }
 .toast canvas.tx { flex: none; margin-right: calc(var(--s2) - var(--s4)); } /* a failure's cross, 8 px from its words */
-.toast .tb { border: 0; background: none; color: inherit; font: inherit; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0 var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
+.toast .tb { border: 0; background: none; color: inherit; font: inherit; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0 var(--off); margin: 0 calc(-1 * var(--off)); border-radius: var(--r1); box-shadow: var(--flat); transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .toast .tb:hover { background: color-mix(in srgb, var(--on-act) 10%, transparent); box-shadow: var(--ink-raised); }
 .toast .tb:active { box-shadow: var(--ink-pressed); transition-duration: 50ms; }
+.toast:has(.tb) { padding-right: var(--s5); } /* the button's box stands 8 px off the words; the toast's edge 8 px off the box, as above and below it */
 
 /* ---------------------------------------------------------------- the frame: top bar / bin | diff | inspector */
 .app { position: relative; display: grid; grid-template-rows: var(--bar) minmax(0, 1fr); height: 100vh; isolation: isolate; }
-.top { position: relative; z-index: 2; display: flex; align-items: center; gap: var(--s3); padding: 0 var(--s3) 0 var(--s4); border-bottom: 1px solid var(--rule); background: var(--glass); min-width: 0; }
+.top { position: relative; z-index: 2; display: flex; align-items: center; gap: var(--s3); padding: 0 var(--s3) 0 var(--s4); border-bottom: 1px solid var(--rule); background: var(--chrome); min-width: 0; }
 .mark { flex: none; margin-left: calc(-1 * var(--s3)); color: var(--ink); }
 .crumb-sep { color: var(--rule-strong); }
 .wsbtn { min-width: 0; flex: 0 1 auto; }
@@ -281,7 +283,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .resizer:hover, .resizer.drag { background: linear-gradient(to right, transparent 2px, var(--ink-3) 2px, var(--ink-3) 3px, transparent 3px); }
 
 /* ---------------------------------------------------------------- the bin: the files, with their state */
-.bin { position: relative; grid-row: 1; display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; min-width: 0; border-right: 1px solid var(--rule); background: var(--glass); }
+.bin { position: relative; grid-row: 1; display: grid; grid-template-rows: auto auto minmax(0, 1fr); min-height: 0; min-width: 0; border-right: 1px solid var(--rule); background: var(--chrome); }
 .bin .resizer { right: -3px; }
 .tree-head { display: flex; gap: var(--s2); align-items: center; padding: var(--s3) var(--s3) var(--s2); }
 /* what to compare, on top of the files it chooses: the scope button, then (with a commit chosen) its two step buttons, then the stats */
@@ -362,7 +364,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .file { --code-x: 118px; min-width: 0; border-top: 1px solid var(--rule); }
 .file.split { --code-x: 70px; }
 .file:first-child { border-top: 0; }
-.fh { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: var(--s3); height: 36px; padding: 0 var(--s4) 0 var(--s2); background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--rule); font-size: var(--t-mono); }
+.fh { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: var(--s3); height: 36px; padding: 0 var(--s4) 0 var(--s2); background: var(--bg); border-bottom: 1px solid var(--rule); font-size: var(--t-mono); }
 .file.shut .fh { border-bottom: 0; }
 .file.shut .fb, .file.shut .relp { display: none; }
 .file.shut .fb.chunked { display: block; height: 0; overflow: hidden; content-visibility: hidden; }
@@ -373,7 +375,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .file-note { margin: 0; padding: var(--s3) var(--s4); color: var(--ink-3); font: var(--t-ui)/20px var(--f-ui); overflow-wrap: anywhere; }
 .file-note code { font: var(--t-mono)/1 var(--f-mono); color: var(--ink-2); background: none; padding: 0; }
 .file-note-stale { color: var(--warn); font-size: var(--t-meta); }
-.file.shut.viewed .fh { height: 28px; position: static; background: none; backdrop-filter: none; }
+.file.shut.viewed .fh { height: 28px; position: static; background: none; }
 .file.shut.viewed .fh .path .base { color: var(--ink-3); font-weight: 400; }
 .fh .chev { transition: transform 120ms var(--ease); }
 .file.shut .fh .chev { transform: rotate(-90deg); }
@@ -407,7 +409,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .relp .use + .use { margin-top: var(--s2); }
 .relp .up { font: var(--t-mono)/20px var(--f-mono); justify-self: start; }
 .relp .up .dir { color: var(--ink-3); } .relp .up .base { color: var(--ink); font-weight: 500; }
-.relp .chg { font-size: var(--t-meta); color: var(--warn); margin-left: var(--s3); }
+.relp .chg { font-size: var(--t-meta); color: var(--warn); margin-left: var(--s5); } /* clear of the path's box, which stands 8 px off the path */
 .relp .use:has(.chg) { grid-template-columns: auto minmax(0, 1fr); } .relp .use:has(.chg) .hit { grid-column: 1 / -1; }
 .relp .hit { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: var(--s3); font: var(--t-mono)/20px var(--f-mono); color: var(--ink-2); text-decoration: none; }
 .relp .hit .no { color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
@@ -415,7 +417,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .relp :is(.hit, .up):active :is(.no, .dir) { color: var(--ink-2); } /* on the press fill, 4.5:1 */
 .relp .hit span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .relp .none { color: var(--ink-3); }
-.relp .sibs { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); }
+.relp .sibs { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s5); }
 .relp .sibs .link { font: var(--t-mono)/20px var(--f-mono); display: inline-flex; align-items: center; gap: var(--s2); }
 .relp .dotm { width: 6px; height: 6px; border-radius: 1px; background: var(--warn); }
 
@@ -464,7 +466,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .hk .hx { display: flex; justify-content: center; align-items: center; }
 .hk .ht { padding: var(--s2) var(--s4); white-space: pre-wrap; overflow-wrap: anywhere; align-self: center; }
 body.cmd .golang .tx[data-r="new"] span[data-c]:hover { text-decoration: underline; cursor: pointer; color: var(--pencil-ink) !important; }
-.seltools { position: absolute; z-index: 31; /* above Mote (30), who floats over the diff's corner */ display: flex; gap: var(--s1); padding: var(--s2); background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: var(--shadow); }
+.seltools { position: absolute; z-index: 31; /* above Mote (30), who floats over the diff's corner */ display: flex; gap: var(--s1); padding: var(--s2); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); }
 .seltools .n { font: var(--t-meta)/1 var(--f-mono); color: var(--ink-3); padding: 0 var(--s3); display: inline-flex; align-items: center; border-right: 1px solid var(--rule); margin-right: var(--s1); }
 
 .msg { padding: var(--s2) 0; display: grid; gap: var(--s2); }
@@ -565,17 +567,18 @@ a.loc:focus-visible { outline: 2px solid var(--pencil); }
 
 
 /* ---------------------------------------------------------------- one mark, opened in the inspector */
-.markview .mhead { display: flex; align-items: center; gap: var(--s4); height: 36px; padding: 0 var(--s4); border-bottom: 1px solid var(--rule); }
-.markview .mtitle { display: flex; align-items: baseline; gap: var(--s3); padding: var(--s2) 0 var(--s3); min-width: 0; }
+.markview .mhead { display: flex; align-items: center; gap: var(--s5); height: 36px; padding: 0 var(--s4); border-bottom: 1px solid var(--rule); }
+.markview .mhead .link > svg:first-child { margin-left: -4px; } /* the back chevron is 3 of its 12 px */
+.markview .mtitle { display: flex; align-items: baseline; gap: var(--s5); padding: var(--s2) 0 var(--s3); min-width: 0; }
 .markview .mtitle .kind { font-weight: 600; font-size: var(--t-ui); color: var(--ink-2); flex: none; }
 /* a long path is cut at its left, so the file and the line it points at stay in view (a bdi isolates the text, so it stays in reading order) */
-.markview .mtitle .loc { all: unset; cursor: pointer; font: var(--t-mono) var(--f-mono); color: var(--ink-2); direction: rtl; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; padding: 1px var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
+.markview .mtitle .loc { all: unset; cursor: pointer; font: var(--t-mono) var(--f-mono); color: var(--ink-2); direction: rtl; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; padding: 1px var(--off); margin: 0 calc(-1 * var(--off)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .markview .mtitle .loc:hover { color: var(--ink); background: var(--face); box-shadow: var(--raised-soft); }
 .markview .mtitle .loc:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .quote { display: grid; margin: 0 0 var(--s4); background: var(--bg); font: var(--t-mono)/18px var(--f-mono); cursor: pointer; }
-.quote { transition: box-shadow 140ms var(--ease), border-color 120ms var(--ease); }
-.quote:hover { border-color: transparent; box-shadow: 0 0 0 1px var(--shade-2), 0 1px 0 var(--shade), 0 2px 4px var(--shade-3); }
-.quote:active { border-color: transparent; box-shadow: 0 0 0 1px var(--shade-2), 0 0 0 0 transparent, 0 0 0 0 transparent; transition-duration: 50ms; }
+.quote { transition: border-color 120ms var(--ease), background 120ms var(--ease); }
+.quote:hover { border-color: var(--ink-3); }
+.quote:active { border-color: var(--ink-2); background: var(--face-down); transition-duration: 50ms; }
 .quote .ql { display: grid; grid-template-columns: 40px minmax(0, 1fr); }
 .quote .ql .no { text-align: right; padding-right: var(--s3); color: var(--ink-3); user-select: none; }
 .quote .ql .tx { white-space: pre; tab-size: 2; overflow: hidden; text-overflow: ellipsis; padding-right: var(--s3); }
@@ -590,7 +593,7 @@ a.loc:focus-visible { outline: 2px solid var(--pencil); }
 .frow .num { font: var(--t-meta) var(--f-mono); white-space: nowrap; }
 
 /* ---------------------------------------------------------------- inspector: hairlines, not boxes */
-.panel { position: relative; grid-row: 1; display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; border-left: 1px solid var(--rule); background: var(--glass); }
+.panel { position: relative; grid-row: 1; display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; border-left: 1px solid var(--rule); background: var(--chrome); }
 .panel .resizer { left: -3px; }
 /* the inspector's content edge is 12: a tab or a picker button has 8 of its own padding, so its strip gives 4 */
 .ptabs { display: flex; align-items: center; gap: var(--s2); height: var(--bar); padding: 0 var(--s3) 0 var(--s2); border-bottom: 1px solid var(--rule); }
@@ -598,8 +601,9 @@ a.loc:focus-visible { outline: 2px solid var(--pencil); }
 .tab:hover, .tab[aria-selected="true"] { color: var(--ink); }
 .tab { isolation: isolate; }
 .tab::before, :is(.mapcard, #mapbig) .dgtabs button::before { content: ""; position: absolute; inset: 6px 2px; z-index: -1; border-radius: var(--r1); box-shadow: var(--flat); pointer-events: none; transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
-:is(.mapcard, #mapbig) .dgtabs button::before { inset: 5px calc(-1 * var(--s3)); }
-#mapbig .dgtabs.big button::before { inset: 12px calc(-1 * var(--s3)); } /* inside the dialog's 56 px head, clear of its clipped edge */
+.tab::before { inset-inline: 0; } /* the tab's own width: its label 8 px in */
+:is(.mapcard, #mapbig) .dgtabs button::before { inset: 5px calc(-1 * var(--off)); }
+#mapbig .dgtabs.big button::before { inset: 12px calc(-1 * var(--off)); } /* inside the dialog's 56 px head, clear of its clipped edge */
 .tab:hover::before, :is(.mapcard, #mapbig) .dgtabs button:where(:not([aria-selected="true"])):hover::before { background: var(--face); box-shadow: var(--raised-soft); }
 .tab:is(:active, .struck), :is(.mapcard, #mapbig) .dgtabs button:is(:active, .struck) { color: var(--ink); } /* on the press plate, 4.5:1 */
 .tab:is(:active, .struck)::before, :is(.mapcard, #mapbig) .dgtabs button:is(:active, .struck)::before { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; } /* after the hover, at its specificity: a press shows while hovered */
@@ -637,7 +641,7 @@ details.sect[open] > summary.sh::after { transform: none; }
 .prhead .facts .mono { font: var(--t-mono)/20px var(--f-mono); }
 .prhead .facts .pair { white-space: nowrap; }
 .prhead .facts .pair .ar { padding: 0 var(--s2); color: var(--ink-3); font-family: var(--f-ui); }
-.prhead .facts .figs { all: unset; cursor: pointer; padding: 1px var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
+.prhead .facts .figs { all: unset; cursor: pointer; padding: 1px var(--off); margin: 0 calc(-1 * var(--off)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .prhead .facts .figs:hover { background: var(--face); box-shadow: var(--raised-soft); }
 .prhead .facts .figs:active { background: var(--face); box-shadow: var(--pressed); transition-duration: 50ms; } /* pressed by its well alone: the coloured counts keep their contrast */
 .prhead .facts .figs:focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
@@ -676,26 +680,27 @@ details.sect[open] > summary.sh::after { transform: none; }
 .md.dmd details > summary { cursor: pointer; color: var(--ink-2); }
 .md.dmd .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--clamp); overflow: hidden; }
 .md.dmd .cutrow { margin-top: 0; } /* the block above keeps its own 8 px */
-.md.dmd .cut { all: unset; cursor: pointer; color: var(--ink-2); font-variant-numeric: tabular-nums; padding: 1px var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
+.md.dmd .cut { all: unset; cursor: pointer; color: var(--ink-2); font-variant-numeric: tabular-nums; padding: 1px var(--off); margin: 0 calc(-1 * var(--off)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .md.dmd .cut:hover { color: var(--ink); background: var(--face); box-shadow: var(--raised-soft); }
 .md.dmd .cut:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .md.dmd .cut:focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
-.md.dmd .cut.inlist { margin-left: calc(20px - var(--s2)); } /* its plate's padding taken back, as every link's is */
+.md.dmd .cut.inlist { margin-left: calc(20px - var(--off)); } /* its plate's padding taken back, as every link's is */
 @media (prefers-reduced-motion: reduce) { .md.dmd .fold .chev { transition: none; } }
 .tldr .md { font-size: var(--t-read); }
 .risk { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); align-items: baseline; font-size: var(--t-ui); color: var(--ink-2); min-width: 0; }
 .risk .chip { min-width: 0; max-width: 100%; }
 .clist { display: grid; }
-.citem { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; min-height: var(--h3); padding: 0 var(--s2); border-radius: var(--r1); cursor: pointer; font-size: var(--t-ui); }
+.citem { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; min-height: var(--h3); padding: 0 var(--off); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); cursor: pointer; font-size: var(--t-ui); } /* the wash stands 8 px off the glyph and the state, which keep their place */
 .citem .s { font: var(--t-meta) var(--f-mono); color: var(--ink-3); }
 .citem .x { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty { display: grid; gap: var(--s3); padding: var(--s3) 0; }
 .empty p { margin: 0; }
 .empty .big, .state .big { color: var(--ink); font-size: var(--t-ui); font-weight: 500; }
 .chathead { display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s3) var(--s2) var(--s2); border-bottom: 1px solid var(--rule); min-width: 0; }
-.chatpick { flex: 1; min-width: 0; justify-content: flex-start; text-align: left; color: var(--ink); }
+.chatpick { flex: 0 1 auto; min-width: 0; margin-right: auto; justify-content: flex-start; text-align: left; color: var(--ink); } /* its box is as wide as its title, never the row */
 .chatpick .l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .chatpick svg { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
+.chatpick > svg:last-child { margin-right: -3px; }
 .chatlog { overflow: auto; padding: var(--s3) var(--s4); min-height: 0; }
 .chatlog .pane { padding: 0; }
 .chatlog .msg { padding: var(--s3) 0; }
@@ -705,7 +710,7 @@ details.sect[open] > summary.sh::after { transform: none; }
 /* the icon sits on the first line of the text, not in the middle of however many lines it runs to */
 .linkbar { display: flex; gap: var(--s3); align-items: flex-start; padding: var(--s2) 0 var(--s3); color: var(--ink-2); font-size: var(--t-ui); line-height: 1.5; }
 .linkbar svg { width: 14px; height: 14px; flex: none; margin-top: calc((1.5 * var(--t-ui) - 14px) / 2); }
-.nrow { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 2px var(--s3); padding: var(--s3) var(--s2); border-radius: var(--r1); cursor: pointer; }
+.nrow { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 2px var(--s3); width: calc(100% + 2 * var(--s2)); padding: var(--s3) var(--off); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); cursor: pointer; }
 /* the mark's own glyph, as at its lines, on the first line's centre */
 .nrow .k { grid-row: span 3; align-self: start; display: grid; place-items: center; width: 16px; height: 16px; margin-top: -1px; color: var(--ink-3); }
 .nrow .k svg { width: 14px; height: 14px; }
@@ -725,14 +730,14 @@ details.sect[open] > summary.sh::after { transform: none; }
 .vbody { overflow: auto; font: var(--t-code)/20px var(--f-mono); padding-bottom: 30vh; }
 .vbody .ln { grid-template-columns: 56px minmax(0, 1fr); }
 .vbody .ln .cd { padding-left: var(--s4); }
-.tip { position: fixed; z-index: 70; max-width: min(640px, 70vw); max-height: 50vh; overflow: auto; padding: var(--s3) var(--s4); background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: var(--shadow); }
+.tip { position: fixed; z-index: 70; max-width: min(640px, 70vw); max-height: 50vh; overflow: auto; padding: var(--s3) var(--s4); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); }
 .tip .md { font-size: var(--t-ui); }
 .tip .foot { margin-top: var(--s3); padding-top: var(--s2); border-top: 1px solid var(--rule); font-size: var(--t-meta); color: var(--ink-3); }
 .scrim { position: fixed; inset: 0; z-index: 85; background: var(--scrim-soft); display: grid; place-items: start center; padding-top: 12vh; }
 /* The palette's field, rows and heads keep the file list's columns: a 14 px glyph column 12 in from the box's edge, the
    text edge 34 in. The field is a row of the same kind, so what you type starts where every label starts. */
-.palette { animation: rise 150ms var(--ease) 1; --pal-g: calc(var(--s2) + var(--s3)); --pal-t: calc(var(--pal-g) + 14px + var(--s3)); width: min(640px, 92vw); background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: var(--shadow); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: 70vh; }
-.palette .pfield { display: flex; align-items: center; gap: var(--s3); height: var(--h4); padding: 0 var(--s5) 0 var(--pal-g); border-bottom: 1px solid var(--rule); background: var(--floor); box-shadow: inset 0 1px 0 var(--shade-2), inset 0 3px 4px -1px var(--shade-3); } /* the row you write in is pressed into the panel */
+.palette { animation: rise 150ms var(--ease) 1; --pal-g: calc(var(--s2) + var(--s3)); --pal-t: calc(var(--pal-g) + 14px + var(--s3)); width: min(640px, 92vw); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: 70vh; }
+.palette .pfield { display: flex; align-items: center; gap: var(--s3); height: var(--h4); padding: 0 var(--s5) 0 var(--pal-g); border-bottom: 1px solid var(--rule); background: var(--floor); } /* the row you write in is pressed into the panel */
 .palette .pfield > svg { width: 14px; height: 14px; flex: none; color: var(--ink-3); }
 .palette .pfield input { all: unset; box-sizing: border-box; flex: 1; min-width: 0; height: 100%; font-size: var(--t-read); color: var(--ink); }
 .palette .pfield input::placeholder { color: var(--ink-3); }
@@ -780,13 +785,12 @@ details.sect[open] > summary.sh::after { transform: none; }
 .impressrow canvas { flex: none; width: 128px; height: 22px; image-rendering: pixelated; }
 .impressrow .moved { color: var(--warn); font-family: var(--f-mono); }
 .prcard .impressrow { margin-top: var(--s3); }
-.lens { position: fixed; z-index: 60; width: 300px; height: 150px; border-radius: 75px; overflow: hidden; pointer-events: none; background: var(--bg); box-shadow: 0 0 0 1px var(--rule-strong), 0 0 0 7px color-mix(in srgb, var(--chrome) 85%, transparent), 0 0 0 8px var(--rule-strong), var(--shadow); }
+.lens { position: fixed; z-index: 60; width: 300px; height: 150px; border-radius: 75px; overflow: hidden; pointer-events: none; background: var(--bg); box-shadow: 0 0 0 1px var(--float), 0 0 0 7px color-mix(in srgb, var(--chrome) 85%, transparent), 0 0 0 8px var(--float); }
 .lens .in { position: absolute; left: 0; transform-origin: 0 0; transform: scale(2); font: var(--t-code)/20px var(--f-mono); width: 1600px; }
 .lens .in .ln { grid-template-columns: 48px 48px minmax(0, 1fr); }
 .lens .in.of-mote { width: auto; } /* Mote under the glass: his sprite at 2×, its pixels kept whole */
 .lens .in.of-mote .mote { display: block; }
 .lens .in.split .ln { grid-template-columns: 48px minmax(0, 1fr) 48px minmax(0, 1fr); }
-.lens::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--hi) 35%, transparent), transparent 40%); }
 
 /* ---------------------------------------------------------------- home: whose move it is */
 .home { height: 100vh; overflow: auto; background: var(--chrome); }
@@ -825,19 +829,19 @@ details.sect[open] > summary.sh::after { transform: none; }
 .tally { position: relative; }
 .tally .meter { position: relative; display: block; width: 168px; height: 12px; }
 .tally .meter canvas { position: absolute; left: 0; bottom: 0; width: 100%; height: 28px; pointer-events: none; }
-.mlabel { position: fixed; transform: translateX(-50%); z-index: 90; white-space: nowrap; padding: 1px var(--s2); font: 500 var(--t-meta)/16px var(--f-mono); color: var(--ink-2); background: var(--bg); border: 1px solid var(--rule-strong); border-radius: var(--r1); box-shadow: var(--shadow); pointer-events: none; }
+.mlabel { position: fixed; transform: translateX(-50%); z-index: 90; white-space: nowrap; padding: 1px var(--s2); font: 500 var(--t-meta)/16px var(--f-mono); color: var(--ink-2); background: var(--bg); border: 1px solid var(--float); border-radius: var(--r1); pointer-events: none; }
 .mlabel b { color: var(--ink); font-weight: 500; }
 .mlabel .add { color: var(--add-ink); } .mlabel .del { color: var(--del-ink); }
 .top .go { display: inline-flex; flex: none; }
 .top .go:empty { display: none; }
 /* the split button: one plateau, scored between its halves (a groove in shade); each half lists its relief without the
    side that touches the other */
-.top .go .btn.l { border-radius: var(--r2) 0 0 var(--r2); box-shadow: inset 0 1px 0 var(--lit), inset 1px 0 0 var(--shade-2), inset 0 -1px 0 var(--shade-2), var(--sheen), var(--t0), 0 1px 0 var(--shade-2), 0 1px 2px var(--shade-3), var(--o0); }
-.top .go .btn.r { border-radius: 0 var(--r2) var(--r2) 0; width: 28px; padding: 0; box-shadow: inset 0 1px 0 var(--lit), inset -1px 0 0 var(--shade-2), inset 0 -1px 0 var(--shade-2), var(--sheen), inset 1px 0 0 var(--shade), 0 1px 0 var(--shade-2), 0 1px 2px var(--shade-3), var(--o0); }
-.top .go:hover .btn.l:not(.primary) { box-shadow: inset 0 1px 0 var(--lit), inset 1px 0 0 var(--shade-2), inset 0 -1px 0 var(--shade-2), var(--sheen), var(--t0), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3); }
-.top .go:hover .btn.r:not(.primary) { box-shadow: inset 0 1px 0 var(--lit), inset -1px 0 0 var(--shade-2), inset 0 -1px 0 var(--shade-2), var(--sheen), inset 1px 0 0 var(--shade), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3); }
-.top .go .btn.primary.l { box-shadow: inset 0 1px 0 var(--ink-lit), var(--t0), inset 0 -1px 0 var(--ink-shade), var(--ink-sheen), var(--t0), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3); }
-.top .go .btn.primary.r { box-shadow: inset 0 1px 0 var(--ink-lit), var(--t0), inset 0 -1px 0 var(--ink-shade), var(--ink-sheen), inset 1px 0 0 var(--ink-shade), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3); }
+.top .go .btn.l { border-radius: var(--r2) 0 0 var(--r2); box-shadow: inset 0 1px 0 var(--lit), var(--t0), var(--t0), var(--t0), var(--t0), 0 1px 0 var(--shade), var(--o0), var(--o0); }
+.top .go .btn.r { border-radius: 0 var(--r2) var(--r2) 0; width: 28px; padding: 0; box-shadow: inset 0 1px 0 var(--lit), var(--t0), var(--t0), var(--t0), inset 1px 0 0 var(--shade), 0 1px 0 var(--shade), var(--o0), var(--o0); }
+.top .go:hover .btn.l:not(.primary) { box-shadow: inset 0 1px 0 var(--lit), var(--t0), var(--t0), var(--t0), var(--t0), 0 2px 0 var(--shade), var(--o0), var(--o0); }
+.top .go:hover .btn.r:not(.primary) { box-shadow: inset 0 1px 0 var(--lit), var(--t0), var(--t0), var(--t0), inset 1px 0 0 var(--shade), 0 2px 0 var(--shade), var(--o0), var(--o0); }
+.top .go .btn.primary.l { box-shadow: inset 0 1px 0 var(--ink-lit), var(--t0), var(--t0), var(--t0), var(--t0), 0 2px 0 var(--ink-skirt), var(--o0), var(--o0); }
+.top .go .btn.primary.r { box-shadow: inset 0 1px 0 var(--ink-lit), var(--t0), var(--t0), var(--t0), inset 1px 0 0 var(--ink-shade), 0 2px 0 var(--ink-skirt), var(--o0), var(--o0); }
 .top .go .btn:is(.l, .r):is(:active, .struck), .top .go:hover .btn:is(.l, .r):not(.primary):is(:active, .struck) { box-shadow: var(--pressed); }
 .top .go .btn.primary:is(.l, .r):is(:active, .struck) { box-shadow: var(--ink-pressed); }
 /* floors: the title keeps its first characters when there is room for them */
@@ -857,6 +861,7 @@ canvas.pxi { image-rendering: pixelated; display: inline-block; vertical-align: 
 
 .mark canvas.pxi { margin-right: 2px; }
 .seltools button canvas { flex: none; }
+.seltools .btn > svg:first-child { margin-left: -2px; } /* an icon's ink, not its square, stands off the edge */
 
 /* ---------------------------------------------------------------- layouts */
 /* Guide: the left column is the guide; the inspector opens when a mark or a chat needs it */
@@ -884,27 +889,11 @@ canvas.pxi { image-rendering: pixelated; display: inline-block; vertical-align: 
 /* the parts that reset themselves (all: unset) still show where the keyboard is */
 :is(.link, .chip .x, .mtitle .loc):focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
 
-/* ---------------------------------------------------------------- the lights behind the glass, and the glass
-   Two soft lights sit behind the chrome: pencil blue behind the files and the top bar, Claude's orange behind the
-   inspector. The chrome over them is frosted glass with a lit edge where light catches it (the top, and the side that
-   faces the code). They are the only blur in the app, they never sit behind code (the code column is solid paper),
-   and they drift so slowly you never see them move. */
-:root { --glass: color-mix(in srgb, var(--chrome) 62%, transparent); --field-a: color-mix(in srgb, var(--ink-3) 16%, transparent); --field-b: color-mix(in srgb, var(--ink-3) 10%, transparent); --spec: rgba(255, 255, 255, 0.7); --spec-soft: rgba(255, 255, 255, 0.25); }
-:root[data-theme="dark"] { --glass: color-mix(in srgb, var(--chrome) 64%, transparent); --field-a: color-mix(in srgb, var(--ink-3) 14%, transparent); --field-b: color-mix(in srgb, var(--ink-3) 9%, transparent); --spec: rgba(255, 255, 255, 0.14); --spec-soft: rgba(255, 255, 255, 0.05); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --glass: color-mix(in srgb, var(--chrome) 64%, transparent); --field-a: color-mix(in srgb, var(--ink-3) 14%, transparent); --field-b: color-mix(in srgb, var(--ink-3) 9%, transparent); --spec: rgba(255, 255, 255, 0.14); --spec-soft: rgba(255, 255, 255, 0.05); } }
-.app::before, .app::after, .home::before, .home::after { content: ""; position: fixed; z-index: -1; border-radius: 50%; filter: blur(70px); pointer-events: none; animation: drift 40s ease-in-out infinite alternate; }
-.app::before, .home::before { width: 34vw; height: 70vh; left: -8vw; top: -12vh; background: radial-gradient(closest-side, var(--field-a), transparent); }
-.app::after, .home::after { width: 30vw; height: 72vh; right: -8vw; top: 18vh; background: radial-gradient(closest-side, var(--field-b), transparent); animation-delay: -20s; }
-/* home is drawn again often (its list updates live): its glows start where the page's clock has them, not at the start */
-.home::before { animation-delay: var(--drift-at, 0s); } .home::after { animation-delay: calc(var(--drift-at, 0s) - 20s); }
-@keyframes drift { from { transform: translate(0, 0) scale(1); } to { transform: translate(3vw, 8vh) scale(1.12); } }
-@media (prefers-reduced-motion: reduce) { .app::before, .app::after, .home::before, .home::after { animation: none; } }
-.top, .bin, .panel { backdrop-filter: blur(24px) saturate(1.35); -webkit-backdrop-filter: blur(24px) saturate(1.35); }
-.top { box-shadow: inset 0 1px 0 var(--spec), inset 0 -1px 0 var(--spec-soft); background-image: linear-gradient(to bottom, var(--spec-soft), transparent 70%); }
-.bin { box-shadow: inset -1px 0 0 var(--spec), inset 1px 1px 0 var(--spec-soft); }
-.panel { box-shadow: inset 1px 0 0 var(--spec), inset -1px 1px 0 var(--spec-soft); }
+/* ---------------------------------------------------------------- the frame
+   The chrome (top bar, bin, inspector) is the sheet itself: flat and opaque, a thin rule where it meets the code.
+   Nothing blurs and nothing glows behind it. */
 .home { position: relative; isolation: isolate; background: transparent; }
-.homein .hlist, .homein .openbox input { background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+.homein .hlist, .homein .openbox input { background: var(--bg); }
 
 /* ---------------------------------------------------------------- small earned moments (Fable's picks)
    A sprite moves only while something is in progress and sits still as a mark; per-file moments are a few pixels and
@@ -999,9 +988,9 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
    in, so the file rows, the commit message and the Write it button share a second edge. Sizes come from the scale
    (title 16, text 13 and 14, labels 11) and the spacing from it too (8 between a label and its control, 16 between
    parts, 24 at the edges). */
-.sheetscrim { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: var(--s6); background: var(--scrim); backdrop-filter: blur(2px); animation: fadein 120ms var(--ease) 1; }
+.sheetscrim { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: var(--s6); }
 @keyframes fadein { from { opacity: 0; } }
-.sheet { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; width: min(640px, 100%); max-height: min(88vh, 900px); background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r3); box-shadow: inset 0 1px 0 var(--spec), var(--shadow-lg); overflow: hidden; animation: rise 160ms var(--ease) 1; }
+.sheet { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; width: min(640px, 100%); max-height: min(88vh, 900px); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); overflow: hidden; animation: rise 160ms var(--ease) 1; }
 .sheet.k-openpr { width: min(720px, 100%); }
 .sheet.small { width: min(520px, 100%); }
 @keyframes rise { from { transform: translateY(6px); opacity: 0; } }
@@ -1038,8 +1027,8 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .pxcb:focus-visible + .pxbox { outline: 2px solid var(--pencil); outline-offset: 2px; }
 /* a part: a labelled list (the files, the commits) in a box whose rows keep the 12 px text edge */
 .sheet .part { display: grid; gap: var(--s3); }
-.sh .link + .link { margin-left: 0; } /* its plate's padding is the 4 px between them */
-.homefoot .link.unhide + .link.unhide { margin-left: var(--s2); } /* links side by side in a line: their plates never meet */
+.sh .link + .link { margin-left: 0; } /* their boxes meet edge to edge: each stands its 8 px off the other's word */
+.homefoot .link.unhide + .link.unhide { margin-left: var(--s2); } /* links side by side in a line: a little more than a word space between them */
 .sheet .flist, .sheet .clist { max-height: min(30vh, 300px); overflow: auto; }
 .sheet .frow { position: relative; grid-template-columns: 14px 14px minmax(0, 1fr) auto; gap: var(--s3); height: 32px; padding: 0 var(--s4); border-radius: 0; font-size: var(--t-mono); }
 .sheet .frow .p .d { color: var(--ink-3); }
@@ -1076,8 +1065,8 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .sheet .box.drafting .cnt, .sheet .box.drafting .mdtabs .hint { display: none; }
 .sheet .box.drafting :is(.subjrow, .mdtabs)::after { content: "Claude is writing…"; align-self: center; font-size: var(--t-meta); color: var(--ink-3); white-space: nowrap; }
 .sheet .box.drafted { animation: drafted 700ms var(--ease) 1; }
-@keyframes drafted { 12% { box-shadow: inset 0 1px 0 var(--shade), inset 0 0 0 1px var(--ink-2), inset 0 2px 3px var(--shade-3), var(--t0), var(--t0), 0 0 0 3px var(--press), var(--o0), var(--o0); } }
-@media (prefers-reduced-motion: reduce) { .sheetscrim, .sheetscrim[data-weight]::before, .sheet, .sheet .box.drafted { animation: none; } }
+@keyframes drafted { 12% { box-shadow: inset 0 1px 0 var(--edge-in), inset 0 0 0 1px var(--ink-2), var(--t0), var(--t0), var(--t0), 0 0 0 3px var(--press), var(--o0), var(--o0); } }
+@media (prefers-reduced-motion: reduce) { .sheet, .sheet .box.drafted { animation: none; } }
 
 /* ---------------------------------------------------------------- home: whose move it is
    Three lists on one grid, so every column lines up down the page: who, what (title over repo and branch), where it
@@ -1195,7 +1184,7 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 .menu .mi.danger[data-sure="1"] { background: color-mix(in srgb, var(--danger) 10%, transparent); font-weight: 500; }
 
 /* the stack in Overview: one row per change, this one in ink */
-.srow { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; width: 100%; min-height: var(--h3); padding: 0 var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); cursor: pointer; font-size: var(--t-ui); }
+.srow { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; width: calc(100% + 2 * var(--off)); min-height: var(--h3); padding: 0 var(--off); margin: 0 calc(-1 * var(--off)); border-radius: var(--r1); cursor: pointer; font-size: var(--t-ui); }
 .srow.here { cursor: default; font-weight: 500; }
 .srow .no { font: var(--t-mono) var(--f-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .srow .b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
@@ -1221,7 +1210,7 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 .mapcard > .mh { display: flex; align-items: center; gap: var(--s5); height: 40px; padding: 0 var(--s4); border-bottom: 1px solid var(--rule); font-size: var(--t-ui); }
 .mapcard.shut > .mh { border-bottom: 0; }
 .mapcard.shut .mapbody { display: none; }
-.mapcard .mtoggle { all: unset; display: inline-flex; align-items: center; gap: var(--s3); cursor: pointer; font-weight: 600; color: var(--ink); padding: 2px var(--s3); margin: -2px calc(-1 * var(--s3)); border-radius: var(--r1); box-shadow: var(--flat); transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
+.mapcard .mtoggle { all: unset; display: inline-flex; align-items: center; gap: var(--s3); cursor: pointer; font-weight: 600; color: var(--ink); padding: 2px var(--off); margin: -2px calc(-1 * var(--off)); border-radius: var(--r1); box-shadow: var(--flat); transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .mapcard .mtoggle:hover { background: var(--face); box-shadow: var(--raised-soft); }
 .mapcard .mtoggle:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .mapcard .mtoggle::before { content: ""; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--ink-3); transition: transform 120ms var(--ease); }
@@ -1237,7 +1226,7 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 /* many drawings, or long names: the tabs keep one line and the longest give way (an ellipsis; the whole name on hover),
    so Open large and the scene's state stay on the line */
 .mapcard .dgbar:has(.dgtabs[role="tablist"]) { flex-wrap: nowrap; }
-.mapcard .dgtabs[role="tablist"] { flex-shrink: 0.001; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; padding-bottom: 1px; margin-bottom: -1px; } /* past their least widths the tabs scroll, their underline still on the bar's rule */
+.mapcard .dgtabs[role="tablist"] { flex-shrink: 0.001; min-width: 0; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; padding: 0 var(--off) 1px; margin: 0 calc(-1 * var(--off)) -1px; } /* past their least widths the tabs scroll, their underline still on the bar's rule; the 8 px each side is where the first and last tab's box stands off its name, so the scroller never cuts it */
 :is(.mapcard, #mapbig) .dgtabs[role="tablist"] button { flex: 0 1 auto; min-width: 7ch; } /* at the reset's weight, so it holds */
 .mapcard .dgtabs .tn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mapcard .dgbar .mstate { flex: 0 1 auto; min-width: 8ch; align-self: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } /* the scene's state gives way before the tabs do, on their line */
@@ -1285,21 +1274,21 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 
 .dgsvg, .dglegend { --line-soft: color-mix(in srgb, var(--ink-3) 45%, var(--bg)); }
 .dgsvg text { font-family: var(--f-ui); }
-.dgsvg .nd rect { fill: var(--bg); stroke: transparent; stroke-width: 1; filter: drop-shadow(0 0 0.5px var(--shade)) drop-shadow(0 1px 0 var(--shade)) drop-shadow(0 1px 2px var(--shade-3)); transition: stroke 120ms var(--ease), filter 140ms var(--ease); }
+.dgsvg .nd rect { fill: var(--bg); stroke: var(--rule-strong); stroke-width: 1; transition: stroke 120ms var(--ease); }
 
 .dgsvg .nd .lb { font-size: 13px; font-weight: 500; fill: var(--ink-2); }
 .dgsvg .nd .rf { font: 11px var(--f-mono); fill: var(--ink-3); }
 .dgsvg .nd .rf.kw { font-family: var(--f-ui); }
 .dgsvg .nd .lt { font: 600 11px var(--f-mono); }
 .dgsvg .nd .lt.A { fill: var(--ok); } .dgsvg .nd .lt.M { fill: var(--warn); } .dgsvg .nd .lt.D { fill: var(--danger); }
-.dgsvg .nd:is(.new, .changed, .removed) rect { stroke: transparent; filter: drop-shadow(0 0 0.5px var(--ink-3)) drop-shadow(0 1px 0 var(--shade)) drop-shadow(0 2px 3px var(--shade-3)); } /* the change's parts stand higher */
+.dgsvg .nd:is(.new, .changed, .removed) rect { stroke: var(--ink-2); } /* the change's parts: an ink rule */
 .dgsvg .nd:is(.new, .changed) .lb { fill: var(--ink); }
 .dgsvg .nd.removed .lb { fill: var(--ink-3); text-decoration: line-through; }
 .dgsvg .nd[data-ref] { cursor: pointer; }
-.dgsvg .nd.out rect, .dgsvg .nd.out:is(.new, .changed, .removed) rect { fill: var(--chrome); filter: drop-shadow(0 -1px 0 var(--shade)) drop-shadow(0 1px 0 var(--lit)); } /* outside this repository: struck into the page, not standing on it */
-.dgsvg .nd.out:is(.new, .changed, .removed) rect { filter: drop-shadow(0 -1px 0 var(--ink-3)) drop-shadow(0 1px 0 var(--lit)); } /* and changed: struck deeper */
-.dgsvg .nd.out[data-ref]:hover rect { filter: drop-shadow(0 -1px 0 var(--ink-2)) drop-shadow(0 1px 0 var(--lit)); } /* outside: its pressed-in edge darkens */
-.dgsvg .nd[data-ref]:not(.out):hover rect { filter: drop-shadow(0 0 0.5px var(--ink-2)) drop-shadow(0 1px 0 var(--shade)) drop-shadow(0 3px 5px var(--shade-3)); }
+.dgsvg .nd.out rect, .dgsvg .nd.out:is(.new, .changed, .removed) rect { fill: var(--floor); stroke: transparent; } /* outside this repository: a floor in the page, not paper on it */
+.dgsvg .nd.out:is(.new, .changed, .removed) rect { stroke: var(--ink-3); } /* and changed: ruled */
+.dgsvg .nd.out[data-ref]:hover rect { stroke: var(--ink-2); } /* outside: its edge darkens */
+.dgsvg .nd[data-ref]:not(.out):hover rect { stroke: var(--ink); }
 .dgsvg .nd[data-ref]:focus-visible rect { stroke: var(--pencil); stroke-width: 2; }
 .dgsvg .nd.citation-check rect { stroke: var(--warn); }
 .dgsvg .nd:focus-visible { outline: none; }
@@ -1352,6 +1341,7 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 .gedits { display: grid; gap: var(--s1); margin-top: var(--s4); }
 .gedits .sh { font-size: var(--t-meta); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-3); margin-bottom: var(--s2); }
 .gedit { display: flex; gap: var(--s3); align-items: baseline; font-size: var(--t-ui); }
+.gedit > .link { margin-left: 0; } /* its box stands 8 px off its word, and the time before it 8 px off the box */
 .gedit .w { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gedit.undone .w { color: var(--ink-3); text-decoration: line-through; }
 .link.confirm { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); font-weight: 500; }
@@ -1407,7 +1397,7 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 .motefloat.flying .mote { visibility: hidden; }
 body:has(#motedock.flying) .lens:has(.of-mote) { display: none; }
 .moteflight { position: absolute; top: -8px; left: -24px; width: 96px; height: 64px; image-rendering: pixelated; pointer-events: none; }
-.motefloat .mw { position: absolute; left: 52px; bottom: 16px; max-width: 280px; padding: var(--s1) var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r2); box-shadow: 0 1px 2px rgba(20, 20, 30, 0.08); font-size: var(--t-meta); color: var(--ink-2); pointer-events: none; }
+.motefloat .mw { position: absolute; left: 52px; bottom: 16px; max-width: 280px; padding: var(--s1) var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--raise); border: 1px solid var(--float); border-radius: var(--r2); font-size: var(--t-meta); color: var(--ink-2); pointer-events: none; }
 .motefloat .mw:empty { display: none; }
 .motefloat.flip .mw { left: auto; right: 52px; }
 .scopebar .what .ord { font-size: inherit; }
@@ -1435,10 +1425,11 @@ body:has(#motedock.flying) .lens:has(.of-mote) { display: none; }
    type; then the two ways to narrow it, drawn alike (filled, no border, the switch's height) with the find field's
    glyph inside it and its key a faint hint rather than a box. The head's edges are the rows' edges. */
 .scopebar, .scopebar.steps { display: flex; align-items: center; gap: var(--s1); padding: var(--s3) var(--s2) 0; }
-.scopebar .scopebtn { flex: 0 1 auto; width: auto; height: var(--h1); padding: 0 var(--s2); gap: var(--s1); border: 0; border-radius: var(--r1); background: none; box-shadow: var(--flat); color: var(--ink); font-weight: 500; }
+.scopebar .scopebtn { flex: 0 1 auto; width: auto; height: var(--h1); padding: 0 var(--off); gap: var(--s1); border: 0; border-radius: var(--r1); background: none; box-shadow: var(--flat); color: var(--ink); font-weight: 500; }
 .scopebar .scopebtn:hover { background: var(--face); box-shadow: var(--raised-soft); }
 .scopebar .scopebtn:active { background: var(--face-down); box-shadow: var(--pressed); }
 .scopebar .scopebtn:focus-visible { outline: 2px solid var(--pencil); outline-offset: -2px; } /* inset: the relief keeps its shadows */
+.scopebar .scopebtn svg { margin-right: -3px; } /* the chevron is 8 of its 14 px: its last ink stands the box's 8 px off */
 .scopebar .what { grid-column: auto; flex: none; margin-left: auto; padding: 0 var(--s2) 0 var(--s3); display: inline-flex; align-items: baseline; gap: var(--s2); font: var(--t-meta)/16px var(--f-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .scopebar .what .dot { color: var(--ink-3); }
 .tree-head { padding: var(--s2) var(--s2) var(--s2); gap: var(--s1); }
@@ -1449,14 +1440,14 @@ body:has(#motedock.flying) .lens:has(.of-mote) { display: none; }
 .tree-head .fkey { min-width: 0; padding: 0; border: 0; background: none; box-shadow: none; font: var(--t-meta)/1 var(--f-mono); color: var(--ink-3); }
 #ordseg { display: contents; }
 /* the model picker: words and a chevron, no box, so it sits among links and beside a send button alike */
-.runpick { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: var(--s1); height: var(--h1); padding: 0 var(--s2); border-radius: var(--r1); font: 500 var(--t-ui) var(--f-ui); color: var(--ink-2); white-space: nowrap; cursor: pointer; transition: box-shadow 140ms var(--ease), background 120ms var(--ease), color 120ms var(--ease); }
+.runpick { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: var(--s1); height: var(--h1); padding: 0 var(--off); border-radius: var(--r1); font: 500 var(--t-ui) var(--f-ui); color: var(--ink-2); white-space: nowrap; cursor: pointer; transition: box-shadow 140ms var(--ease), background 120ms var(--ease), color 120ms var(--ease); }
 .runpick { box-shadow: var(--flat); }
 .runpick:hover { background: var(--face); box-shadow: var(--raised-soft); color: var(--ink); }
 .runpick:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .runpick:focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
 .runpick svg { width: 12px; height: 12px; flex: none; }
-.runpick canvas.spark { margin: 0 -1px 0 -3px; } /* the sprite's star is 13 of its 16 px: it sits on the label's edge as a 14 px icon would */
-.runpick svg:last-child { color: var(--ink-3); }
+.runpick canvas.spark { margin: 0 -1px; } /* the sprite's star is 13 of its 16 px: its first ink stands the box's 8 px off the edge, and its label a 14 px icon's gap from it */
+.runpick svg:last-child { color: var(--ink-3); margin-right: -2px; } /* the chevron is 7 of its 12 px: its last ink stands the same 8 px off */
 .runpick.mono { font: var(--t-mono) var(--f-mono); } /* a picker of a ref (the base): the ref's own face, the same drawing */
 /* a PR's branches: head, arrow and base wrap as one unit, the names shortening first */
 .brs { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; max-width: 100%; }
@@ -1488,18 +1479,15 @@ button.pill::after { content: ""; position: absolute; inset: -3px 0; }
 .state.failed .why { color: var(--ink-2); max-width: 52ch; overflow-wrap: anywhere; }
 .state.failed .btn { margin-top: var(--s2); }
 .bin:not(.ready) .tree-head { visibility: hidden; }
-.empty p > button.link { gap: var(--s2); } .empty p > button.link svg { width: 14px; height: 14px; flex: none; }
+.empty p > button.link { gap: var(--s2); } .empty p > button.link svg { width: 14px; height: 14px; flex: none; margin-left: -2px; } /* the icon's first ink, not its square, stands the 8 px off */
 .state.failed { position: relative; min-height: calc(100vh - var(--bar) - var(--s6)); isolation: isolate; }
 .state.failed > canvas.moire { position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
-/* a write's dialog: the dim is a fine tone screen as heavy as the act is hard to undo (dither.js toneScreen; sheets.js
-   sets the weight), fading in with the dialog */
-.sheetscrim[data-weight] { background: none; backdrop-filter: none; -webkit-backdrop-filter: none; animation: none; }
-:is(.scrim, .sheetscrim) > canvas.tone { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; image-rendering: pixelated; animation: fadein 140ms var(--ease) 1; }
-@media (prefers-reduced-motion: reduce) { :is(.scrim, .sheetscrim) > canvas.tone { animation: none; } }
-/* the palette's dim, and its screen, start under the top bar it opens from */
-.scrim[data-weight] { background: none; }
-.scrim { isolation: isolate; }
-.scrim.anchored > canvas.tone { top: var(--bar-h); height: calc(100% - var(--bar-h)); }
+/* a dialog: the page behind it is pulled as a plate (plate.js), as heavily as the write is hard to undo. The filter
+   sits on the page; the scrim adds only a faint wash, which is all that sets the page back if a browser drops the filter. */
+.sheetscrim, .scrim:has(> .keysheet) { background: var(--scrim); }
+[data-plate] { pointer-events: none; }
+@media not (forced-colors: active) { :root[data-plates="off"] :is(.sheetscrim, .scrim:has(> .keysheet)) { background: var(--scrim-flat); } } /* a browser the plate is not checked in: a flat wash */
+@media (forced-colors: active) { .sheetscrim, .scrim:has(> .keysheet) { background: rgba(0, 0, 0, 0.72); } } /* no plate there: forced colours keep this alpha and make it the system's canvas */
 /* Forced colours drop every shadow, so the relief's states need marks of their own there. Last in the file, so they win:
    a pressable quote keeps its rule, and every ghost whose hover was only a plate is underlined under the pointer. */
 @media (forced-colors: active) {

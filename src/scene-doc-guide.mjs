@@ -5,9 +5,10 @@ export const DOC_FRAME = `The frame your document runs in:
 - It is the body of a page, in a sandboxed frame in loupe: your HTML, <style> and <script> go in as they are. It is
   640 to 1000 CSS px wide (the map card is about 680; Open large shows it at about 1000) and as tall as you ask.
 - No network: everything inline (no external scripts, fonts or images; data: URIs are fine). No storage, no popups.
-- loupe's look, as material: on :root, its colours (--bg the face of a part, --chrome the ground parts are pressed
-  into, --ink, --ink-2, --ink-3, --rule, --rule-strong, --on-act for type on solid ink, --ok, --warn, --danger, --pencil
-  for links), its light and shadow (--shade, --shade-3, --lit) and type (--f-ui, --f-mono);
+- loupe's look, as material: on :root, its colours (--bg the face of a part, --chrome the floor of what lies outside
+  the repository, --ink, --ink-2, --ink-3, --rule, --rule-strong, --on-act for type on solid ink, --ok, --warn,
+  --danger, --pencil for links), the solid line under a raised key (--shade; in dark, --lit is the line of light on its
+  top) and type (--f-ui, --f-mono);
   html[data-theme] is light or dark. The background is transparent: the page shows through. LoupeSceneKit (already loaded) is the engine loupe draws its
   prints with on a canvas: LoupeSceneKit.makeKit(canvas, { colors: loupe.colors(), dark: loupe.dark, fonts:
   loupe.fonts(), dpr: devicePixelRatio, beats: [] }) returns L, and after L.size(w, h): L.plate(w, h, field) diffuses a
@@ -20,11 +21,10 @@ export const DOC_FRAME = `The frame your document runs in:
 
 // loupe's look, as it is: a description to draw toward, not a rule book
 export const DOC_LOOK = `Make it look like loupe's own map drew it. The ground is the page showing through: never paint it. A part
-(a process, a goroutine, a record, a queue) is a small plate of --bg with a 4 px radius, lifted off the ground by soft
-shadows (filter: drop-shadow(0 0 0.5px var(--shade)) drop-shadow(0 1px 0 var(--shade)) drop-shadow(0 1px 2px
-var(--shade-3))), its name in --f-ui 13 px, weight 500, --ink-2; the part the moment is about stands a little higher
-(its first shadow in --ink-3) with its name in --ink. Something outside the repository is pressed in instead: --chrome,
-with drop-shadow(0 -1px 0 var(--shade)) drop-shadow(0 1px 0 var(--lit)). Names from the code and numbers are --f-mono
+(a process, a goroutine, a record, a queue) is a small plate of --bg with a 4 px radius and a one-pixel rule in
+--rule-strong, its name in --f-ui 13 px, weight 500, --ink-2; the part the moment is about takes an ink rule (--ink-2)
+with its name in --ink. Something outside the repository is a floor instead: --chrome, with no rule. Nothing casts a
+shadow, blurs or glows: no filter, no shadow with a blur. Names from the code and numbers are --f-mono
 11 to 12 px in --ink-3; rules are one pixel in --rule or --rule-strong. Ink is for type and thin marks (a line 1.5 px
 wide, a dot, a tick, a short bar no taller than a line of text), never for large filled areas: a span of time or a
 quantity is a hairline or a light --rule-strong fill, with ink only for what is happening now. Colours keep their jobs:
