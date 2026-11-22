@@ -90,6 +90,7 @@ async function route(req, res, url) {
     return serveFile(res, file);
   }
   if (method === 'GET' && p === '/vendor/marked.js') return serveFile(res, path.join(ROOT, 'node_modules/marked/lib/marked.esm.js'));
+  if (method === 'GET' && p.startsWith('/avatar/')) { let login = ''; try { login = decodeURIComponent(p.slice(8)); } catch { /* not a login */ } return serveAvatar(res, login); }
   if (p === '/favicon.ico' || p === '/favicon.svg') return serveFile(res, path.join(WEB, 'icon.svg'));
 
   if (!p.startsWith('/api/')) {
@@ -488,6 +489,57 @@ export async function briefOut(ws) {
   const key = W.contentKey(await ws.files('all').catch(() => []));
   return { ...b, stale: key !== b.key };
 }
+// ------------------------------------------------------------------ avatars
+// A GitHub avatar, fetched once and kept in the state folder. github.com/<login>.png is a redirect to GitHub's image host:
+// two trips to GitHub on every page held each portrait back until they came. From here it is a local read the browser
+// keeps for a day. A picture is fetched again after a week; a login with none (404) is asked again after an hour, and a
+// GitHub that cannot be reached serves what is kept, or nothing (the page then leaves the portrait out), and is not asked
+// again for five minutes. Logins are kept in lower case, as GitHub matches them.
+const AVATARS = path.join(STATE_DIR, 'avatars'), avatarRuns = new Map(), HOUR = 3600 * 1000, MAX_AVATAR = 512 * 1024;
+const fresh = (f, ms) => { try { return Date.now() - fs.statSync(f).mtimeMs < ms; } catch { return false; } };
+const mark = (f) => { fs.mkdirSync(AVATARS, { recursive: true }); fs.writeFileSync(f, ''); };
+async function picture(url) { // one GET, no redirects followed by fetch itself
+  const r = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(8000) });
+  if (Number(r.headers.get('content-length')) > MAX_AVATAR) throw new Error('too big');
+  return r;
+}
+function avatarFile(name) {
+  const login = name.toLowerCase(), file = path.join(AVATARS, login), none = file + '.none', fail = file + '.fail';
+  if (fresh(file, 7 * 24 * HOUR)) return Promise.resolve(file);
+  if (fresh(none, HOUR)) return Promise.resolve(null);
+  if (fresh(fail, HOUR / 12)) return Promise.resolve(fs.existsSync(file) ? file : null);
+  if (!avatarRuns.has(login)) avatarRuns.set(login, (async () => {
+    try {
+      let r = await picture(`https://github.com/${encodeURIComponent(login)}.png?size=40`);
+      if (r.status === 404) { mark(none); fs.rmSync(file, { force: true }); return null; }
+      // github.com sends the picture from its image host: that redirect, and only to there, is followed
+      const to = r.status >= 300 && r.status < 400 ? new URL(r.headers.get('location') || '', 'https://github.com') : null;
+      if (to) {
+        if (to.protocol !== 'https:' || !/(^|\.)githubusercontent\.com$/.test(to.hostname)) throw new Error('not GitHub');
+        r = await picture(to.href);
+      }
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (!r.ok || !/^image\/(png|jpeg|gif|webp)/.test(r.headers.get('content-type') || '') || buf.length > MAX_AVATAR) throw new Error('not a picture');
+      fs.mkdirSync(AVATARS, { recursive: true });
+      fs.writeFileSync(file + '.tmp', buf); fs.renameSync(file + '.tmp', file);
+      fs.rmSync(fail, { force: true });
+      return file;
+    } catch { mark(fail); return fs.existsSync(file) ? file : null; } finally { avatarRuns.delete(login); }
+  })());
+  return avatarRuns.get(login);
+}
+const IMAGE = [[[0x89, 0x50], 'image/png'], [[0xff, 0xd8], 'image/jpeg'], [[0x47, 0x49], 'image/gif'], [[0x52, 0x49], 'image/webp']];
+async function serveAvatar(res, login) {
+  // a GitHub login (letters, digits, single hyphens, at most 39), or an app's "name[bot]"
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/.test(login)) return send(res, 404, { error: 'not found' });
+  const file = await avatarFile(login);
+  if (!file) { res.writeHead(404, { 'Cache-Control': 'private, max-age=3600' }); return res.end(); }
+  const buf = fs.readFileSync(file);
+  const type = IMAGE.find(([m]) => buf[0] === m[0] && buf[1] === m[1])?.[1] || 'application/octet-stream';
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff' });
+  res.end(buf);
+}
+
 function linkChat(ws, link) {
   const live = !!link.live;
   const existing = Object.values(ws.review.data.convs).find((c) => c.linked?.sessionId === link.sessionId && !!c.linked.live === live);

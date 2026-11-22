@@ -839,7 +839,7 @@ canvas.pxi { image-rendering: pixelated; display: inline-block; vertical-align: 
 
 /* ---------------------------------------------------------------- the PR author
    A GitHub avatar as a pixel portrait: drawn to 10×10, shown at 20 px pixelated, a 1 px frame; bots a little faded. */
-canvas.avatar { image-rendering: pixelated; display: inline-block; vertical-align: middle; flex: none; border-radius: 2px; box-shadow: 0 0 0 1px var(--rule-strong); background: var(--hover); opacity: 0; transition: opacity 120ms steps(2); }
+canvas.avatar { image-rendering: pixelated; display: inline-block; vertical-align: middle; flex: none; border-radius: 2px; box-shadow: 0 0 0 1px var(--rule-strong); background: var(--hover); opacity: 0; transition: opacity 120ms var(--ease); }
 canvas.avatar.in { opacity: 1; }
 canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .wsbtn .au { display: inline-flex; align-items: center; gap: var(--s3); flex: none; color: var(--ink-2); font-size: var(--t-meta); white-space: nowrap; }
@@ -1141,7 +1141,7 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 .mapcard .mtext { max-width: 72ch; font-size: var(--t-read); line-height: 1.6; color: var(--ink); }
 .mapcard .mtext .md p { margin: 0 0 var(--s3); }
 .mapcard .mtext .md p:last-child { margin-bottom: 0; }
-.mapcard .ba { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: var(--s4) var(--s3); margin: var(--s5) 0 0; }
+.mapcard .ba { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: var(--s3); margin: var(--s3) 0 0; } /* the paragraphs' own 8 px: one rhythm */
 .mapcard .ba dt { padding-top: 3px; font-size: var(--t-meta); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-3); }
 .mapcard .ba dd { margin: 0; }
 .mapcard .gl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s3) var(--s4); margin: 0; font-size: var(--t-ui); line-height: 1.5; }

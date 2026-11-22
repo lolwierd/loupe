@@ -160,14 +160,15 @@ export function sparkStrip(scale = 8) { frames ||= sparkFrames(); const c = docu
 
 // ------------------------------------------------------------------ people: GitHub avatars as pixel portraits
 // The avatar is drawn down to 10×10 (smoothly, so it keeps its likeness) and shown at 20 px with image-rendering:
-// pixelated: a portrait in the same pixels as the rest. Loaded once per login per page.
+// pixelated: a portrait in the same pixels as the rest. Loaded once per login per page, from loupe's own copy (the
+// daemon keeps each one: src/server.mjs, serveAvatar), so it is there as the page is, not two trips to GitHub later.
 const faces = new Map();
 function paintAvatar(cv) {
   const login = cv.dataset.login;
   if (!login || cv.dataset.done) return;
   cv.dataset.done = '1';
   let img = faces.get(login);
-  if (!img) { img = new Image(); img.referrerPolicy = 'no-referrer'; img.src = `https://github.com/${encodeURIComponent(login)}.png?size=40`; faces.set(login, img); }
+  if (!img) { img = new Image(); img.src = `/avatar/${encodeURIComponent(login)}`; faces.set(login, img); }
   const draw = () => { const x = cv.getContext('2d'); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(img, 0, 0, cv.width, cv.height); cv.classList.add('in'); };
   // a login with no picture (a bot, a deleted account) draws nothing: the portrait steps out of the row instead of leaving a hole
   const gone = () => { cv.hidden = true; };
