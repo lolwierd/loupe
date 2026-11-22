@@ -2,7 +2,7 @@
 
 A local review desk for pull requests, branches and uncommitted work, with Claude or Codex beside the diff.
 
-![Reviewing a branch in loupe](docs/img/review.png)
+![The guide: the change as a few sections, with what to check](docs/img/guide.png)
 
 - **Read the change.** A split or unified diff of a PR, a branch, or your uncommitted work, one file after another.
   The top bar shows what is left as a small board of lamps, one block per file as long as its changed lines: a file
@@ -54,7 +54,7 @@ answer lands while the tab is in the background.
 
 ![The map of a change](docs/img/map.png)
 
-<p><img src="docs/img/guide.png" width="49%" alt="The guide: the change as a few sections, with what to check"> <img src="docs/img/palette.png" width="49%" alt="The command palette"></p>
+<p><img src="docs/img/review.png" width="49%" alt="Reviewing a branch in loupe"> <img src="docs/img/palette.png" width="49%" alt="The command palette"></p>
 
 ## Setup
 
