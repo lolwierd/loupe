@@ -14,7 +14,7 @@
 import { S, esc, pref, $, I } from './core.js';
 import { md } from './md.js';
 import { hooks } from './hooks.js';
-import { briefRunBtn, modelKind, shimmerSync } from './ui.js';
+import { modelKind, shimmerSync } from './ui.js';
 
 const NODE_H = 44, PADX = 12, LETTER = 14, MIN_W = 96, MAX_W = 232, ROW_GAP = 44, ROW_GAP_TB = 56, GUTTER = 48, GUTTER_TB = 40, MAX_GUTTER = 200, PAD = 2;
 const CLEAR = 10;                                     // room kept free around a box for line work
@@ -238,10 +238,13 @@ function routeAll(d, at) {
   });
 }
 
-// ------------------------------------------------------------------ labels: on the arrow's longest free run, never on a box or another label
+// ------------------------------------------------------------------ labels: on the arrow's longest free run, never on a box, another label or another arrow
 const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
 function placeLabels(routes, at, f, { colX, colW, rowY }) {
   const blocks = [...at.values()].map((n) => [n.x - 4, n.y - 4, n.x + n.w + 4, n.y + n.h + 4]);
+  // every arrow's runs as thin boxes: a label's plate hides what runs under it, so it may sit only on its own arrow
+  const runs = routes.flatMap((r) => r.pts.slice(1).map((q, i) => { const p = r.pts[i]; return { i: r.i, b: [Math.min(p[0], q[0]) - 2, Math.min(p[1], q[1]) - 2, Math.max(p[0], q[0]) + 2, Math.max(p[1], q[1]) + 2] }; }));
+  const onOther = (bx, r) => runs.some((x) => x.i !== r.i && hit(bx, x.b));
   const placed = [], grow = {}, growRow = {};
   const out = routes.map((r) => {
     const lines = r.e.label ? wrap(r.e.label, f.edge, LINE_MAX) : [];
@@ -258,11 +261,12 @@ function placeLabels(routes, at, f, { colX, colW, rowY }) {
     }
     cands.sort((p, q) => p.pref - q.pref);
     const box = (c) => [c[0] - bw / 2, c[1] - bh / 2, c[0] + bw / 2, c[1] + bh / 2];
-    let pick = cands.find((c) => c.fits && !blocks.some((b) => hit(box(c.c), b)) && !placed.some((b) => hit(box(c.c), b)));
+    const free = (c) => !blocks.some((b) => hit(box(c), b)) && !placed.some((b) => hit(box(c), b));
+    let pick = cands.find((c) => c.fits && free(c.c) && !onOther(box(c.c), r));
     if (!pick) {
       // a spot clear of every box and label: anywhere along the arrow in 6 px steps, then just beside it; the old
       // fallback (clear of boxes only, else the first) is the last resort
-      const clear = (c) => !blocks.some((b) => hit(box(c), b)) && !placed.some((b) => hit(box(c), b));
+      const clear = (c) => free(c) && !onOther(box(c), r);
       let spot = null;
       for (let i = 1; i < r.pts.length && !spot; i++) {
         const [x1, y1] = r.pts[i - 1], [x2, y2] = r.pts[i], len = Math.abs(x2 - x1) + Math.abs(y2 - y1), horiz = y1 === y2;
@@ -272,7 +276,8 @@ function placeLabels(routes, at, f, { colX, colW, rowY }) {
           spot = [c, ...beside].find(clear) || null;
         }
       }
-      pick = spot ? { c: spot } : cands.find((c) => !blocks.some((b) => hit(box(c.c), b))) || cands[0];
+      // nothing clear of the other arrows: clear of boxes and labels at least (crossing a line beats covering a name)
+      pick = spot ? { c: spot } : cands.find((c) => c.fits && free(c.c)) || cands.find((c) => !blocks.some((b) => hit(box(c.c), b))) || cands[0];
       // ask for a wider gap where the label wanted to sit
       const best = cands.reduce((p, q) => (q.len > p.len ? q : p));
       const mx = (best.seg[0] + best.seg[2]) / 2, my = (best.seg[1] + best.seg[3]) / 2;
@@ -478,7 +483,7 @@ export function mapCardHTML(b) {
     (plan.steps?.length ? `<h3>How to review it</h3>${plan.why ? `<p class="why">${inline(plan.why, o)}</p>` : ''}<ol>${plan.steps.map((x) => `<li>${inline(x, o)}</li>`).join('')}</ol>` : '') +
     (b.questions?.length ? `<h3>Worth asking</h3><ul>${b.questions.map((x) => `<li>${inline(x, o)}</li>`).join('')}</ul>` : '') + `</div>`;
   const tools = (plan.start ? `<button class="link" data-act="mapstart" data-p="${esc(plan.start)}">Start with ${esc(plan.start.split('/').pop())}</button>` : '') +
-    (b.pending ? `<span class="mstate shimmer" style="${shimmerSync()}">${esc(stepLine(b))}</span>` : `<span class="mre">${briefRunBtn()}<button class="link" data-act="maprebrief" title="Write the guide and this map again with this model">Regenerate</button></span>`);
+    (b.pending ? `<span class="mstate shimmer" style="${shimmerSync()}">${esc(stepLine(b))}</span>` : '');
   return `<section class="mapcard${open ? '' : ' shut'}" id="mapcard"><header class="mh"><button class="mtoggle" data-act="maptoggle" aria-expanded="${open}"><span class="lbl">Map of this change</span></button><span class="sp"></span>${tools}</header>` +
     `<div class="mapbody">${fig}<div class="mcols">${text}${how}</div></div></section>`;
 }
@@ -495,26 +500,41 @@ hooks.mapStep = () => { const t = $('#mapcard .mstate'); if (t && S.review.brief
 hooks.briefPending = () => hooks.mapChanged();
 
 // the drawing across the whole window, as Claude laid it out, in the same dialog frame as the rest of loupe
-function openLarge(focusNode, diagram) {
+// at: the drawing's place in the brief (a Back to it after the brief was written again finds the drawing now there)
+function openLarge(focusNode, at) {
   const b = S.review.brief, ds = b?.diagrams || [];
-  const active = diagram || ds[Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0))];
+  let active = ds[at] || ds[Math.max(0, Math.min(ds.length - 1, Number(pref.get('mapTab', 0)) || 0))];
   if (!active) return;
   const opener = document.activeElement;
   const scrim = document.createElement('div');
   scrim.className = 'sheetscrim';
-  scrim.innerHTML = `<div class="sheet k-map" role="dialog" aria-modal="true" aria-labelledby="mapbigt" id="mapbig"><header class="shh"><h2 class="t" id="mapbigt">${esc(active.title || 'Map')}</h2>${legend(active)}<button class="icon" data-mb="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
-    `<div class="mbview">${diagramSVG(active, 'lr')}</div>${active.caption ? `<p class="mbcap">${inline(active.caption, { images: modelKind(b?.model) !== 'codex', citations: b?.citations })}</p>` : ''}</div>`;
-  const close = () => { scrim.remove(); document.removeEventListener('keydown', key, true); if (opener?.isConnected) opener.focus(); };
+  const name = (x) => x.title || (x.kind === 'flow' ? 'Flow' : 'Map');
+  const fill = () => {
+    const i = ds.indexOf(active);
+    const head = ds.length > 1
+      ? `<div class="dgtabs big" role="tablist" aria-label="Drawings">${ds.map((x, j) => `<button role="tab" data-mb="tab" data-i="${j}" aria-selected="${j === i}"${j === i ? ' id="mapbigt"' : ''}>${esc(name(x))}</button>`).join('')}</div>`
+      : `<h2 class="t" id="mapbigt">${esc(name(active))}</h2>`;
+    scrim.innerHTML = `<div class="sheet k-map" role="dialog" aria-modal="true" aria-labelledby="mapbigt" id="mapbig"><header class="shh">${head}${legend(active)}<button class="icon" data-mb="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
+      `<div class="mbview">${diagramSVG(active, 'lr')}</div>${active.caption ? `<p class="mbcap">${inline(active.caption, { images: modelKind(b?.model) !== 'codex', citations: b?.citations })}</p>` : ''}</div>`;
+  };
+  fill();
+  const close = () => { scrim.remove(); document.removeEventListener('keydown', key, true); (opener?.isConnected ? opener : $('#mapcard [data-act="mapbig"]'))?.focus(); };
   const key = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
   scrim.addEventListener('mousedown', (e) => { if (e.target === scrim) close(); });
   scrim.addEventListener('click', (e) => {
     if (e.target.closest('[data-mb="close"]')) return close();
+    const tab = e.target.closest('[data-mb="tab"]');
+    if (tab) { // the card behind follows, so closing it shows the drawing you were on
+      active = ds[Number(tab.dataset.i)] || active; pref.set('mapTab', ds.indexOf(active)); fill(); hooks.mapChanged?.();
+      scrim.querySelector(`[data-mb="tab"][data-i="${ds.indexOf(active)}"]`)?.focus();
+      return;
+    }
     const nd = e.target.closest('.nd[data-ref]'), link = e.target.closest('a.loc');
     if (nd || link) {
       const view = scrim.querySelector('.mbview'), { scrollTop, scrollLeft } = view;
       close();
       const restore = () => {
-        openLarge(nd?.dataset.id, active);
+        openLarge(nd?.dataset.id, ds.indexOf(active));
         const restored = $('#mapbig .mbview');
         if (restored) { restored.scrollTop = scrollTop; restored.scrollLeft = scrollLeft; }
       };
@@ -573,7 +593,6 @@ document.addEventListener('click', (e) => {
   if (b?.dataset.act === 'maptoggle') { const open = card.classList.toggle('shut') === false; pref.set('mapOpen', open); b.setAttribute('aria-expanded', String(open)); return; }
   if (b?.dataset.act === 'maptab') { pref.set('mapTab', Number(b.dataset.i)); card.outerHTML = mapCardHTML(S.review.brief); return; }
   if (b?.dataset.act === 'mapstart') return hooks.goLoc?.({ path: b.dataset.p, line: 0 }, b);
-  if (b?.dataset.act === 'maprebrief') return hooks.rebrief?.();
   if (b?.dataset.act === 'mapbig') return openLarge();
   const nd = e.target.closest('.nd[data-ref]');
   if (nd) return goRef(nd);

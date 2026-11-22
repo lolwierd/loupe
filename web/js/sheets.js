@@ -39,7 +39,8 @@ const countText = (subj) => `${subj.length}/72`;
 const pxbox = (attrs, on) => `<input type="checkbox" class="pxcb" ${attrs}${on ? ' checked' : ''}><span class="pxbox" aria-hidden="true">${icon('check', '--on-act')}</span>`;
 const pxcheck = (id, on, label) => `<label class="pxl">${pxbox(`id="${id}"`, on)}<span>${esc(label)}</span></label>`;
 const draftRun = () => ({ model: pref.get('draftModel', S.app.defaults.briefModel), effort: pref.get('draftEffort', 'low') });
-const writeBtn = (what) => `<button class="btn ghost wbtn" data-sh="draft" data-what="${what}" title="Draft from the change, in this repository's style"><span>Write it</span></button>${runBtn(draftRun(), { purpose: 'draft' })}`;
+// the model first, then what it does, as beside every send button and Regenerate
+const writeBtn = (what) => `<span class="wpair">${runBtn(draftRun(), { purpose: 'draft' })}<button class="btn ghost sm wbtn" data-sh="draft" data-what="${what}" title="Draft from the change, in this repository's style"><span>Write it</span></button></span>`;
 // the isolate keeps a leading dot or slash where it is when the list cuts a long path at its left (a .github path would otherwise
 // show its dot at the end), and unlike an invisible mark in the text it leaves a copied path clean
 const splitPath = (p) => { const k = p.lastIndexOf('/'); return `<bdi dir="ltr"><span class="d">${esc(p.slice(0, k + 1))}</span>${esc(p.slice(k + 1))}</bdi>`; };
@@ -65,7 +66,7 @@ const overwrites = (c) => c.kind === 'push' && (c.pv?.needsForce || c.pv?.tone =
 const weightOf = (c) => (overwrites(c) ? 'destructive' : WEIGHT[c.kind] || 'public');
 const SHEETS = {
   review: {
-    title: 'Submit your review', focus: 'textarea',
+    title: (c) => { const n = S.github?.number || S.ws?.pr?.number, repo = S.github?.repoFull || S.ws?.repoFull, f = n && repo ? `${repo}#${n}` : 'the pull request'; return c.opts.event === 'APPROVE' ? `Approve ${f}` : `${EVENTS.find(([e]) => e === c.opts.event)?.[1] || 'Comment'} on ${f}`; }, focus: 'textarea',
     idle: (c) => EVENTS.find(([e]) => e === c.opts.event)?.[1] || 'Submit',
     form(c) {
       const p = S.github?.pr, own = !!p?.viewerIsAuthor;
@@ -79,6 +80,7 @@ const SHEETS = {
         const b = e.target.closest('[data-ev]'); if (!b || b.disabled) return;
         c.opts.event = b.dataset.ev;
         for (const x of $$('#shev button', el)) x.setAttribute('aria-pressed', String(x === b));
+        $('#sht', el).textContent = titleOf(c);
         refreshSoon();
       });
     },
@@ -86,7 +88,7 @@ const SHEETS = {
     after(r, c, payload) { S.reviewDraft = ''; if (payload.event === 'APPROVE') hooks.stamp?.({ head: r.head, at: Date.now() }); },
   },
   commit: {
-    title: 'Commit', focus: '[data-m="subj"]',
+    title: () => `${S.shipAmend ? 'Amend the last commit' : `Commit ${plural(picked().length, 'file')}`} on ${(S.shipBranch || '').trim() || S.ship?.branch || 'this branch'}`, focus: '[data-m="subj"]',
     idle: () => (S.shipAmend ? 'Amend' : `Commit ${plural(picked().length, 'file')}`),
     form() {
       const st = S.ship, [subj, body] = splitMsg(S.shipMsg || '');
@@ -107,12 +109,20 @@ const SHEETS = {
     async after() { S.shipMsg = ''; S.shipAmend = false; S.shipBranch = ''; S.shipKnown = new Set(); await loadShip(true); },
   },
   push: {
-    title: 'Push', idle: () => 'Push',
+    title: () => `Push ${S.ship?.branch || 'this branch'}`, idle: () => 'Push',
+    // what a push is: this branch to that one, and the commits that go, as a route and a list rather than a sentence
+    body(pv) {
+      const r = pv.route; if (!r) return null;
+      const list = pv.commits || [], total = Math.max(r.sending || 0, list.length), more = total - Math.min(list.length, 12);
+      return `<div class="route"><code class="chip" title="This branch">${esc(r.from)}</code><span class="arr" aria-hidden="true">→</span><code class="chip" title="On the remote">${esc(r.to)}</code>${r.fresh ? '<span class="pill">new</span>' : ''}</div>` +
+        (list.length ? `<section class="part"><div class="sh"><span>Commits</span><span class="n">${total}</span></div><div class="clist">${list.slice(0, 12).map((c) => `<div class="crow"><span class="sha">${esc(c.sha)}</span><span class="s" title="${esc(c.subject)}">${esc(c.subject)}</span></div>`).join('')}${more > 0 ? `<div class="crow more"><span></span><span>and ${more} more</span></div>` : ''}</div></section>` : '') +
+        (pv.items || []).slice(1).map((x) => `<p class="note">${esc(x)}</p>`).join('');
+    },
     payload: (c) => ({ force: !!c.opts.force }),
     async after() { await loadShip(true); },
   },
   openpr: {
-    title: 'Open a pull request', focus: '[data-f="prTitle"]',
+    title: () => `Open a ${pref.get('prDraft', true) ? 'draft ' : ''}pull request${S.ship?.repo ? ` on ${S.ship.repo}` : ''}`, focus: '[data-f="prTitle"]',
     idle: () => (pref.get('prDraft', true) ? 'Open draft' : 'Open'),
     form() {
       const st = S.ship, base = S.prBase || st.base || '';
@@ -141,7 +151,7 @@ const SHEETS = {
   // takes the change off home; what you wrote here stays on disk and comes back when it is opened again, and a pull
   // request's checkout is loupe's own copy, fetched again then. Undone by opening it, so it weighs what a commit does.
   close: {
-    title: 'Close this change', local: true, idle: () => 'Close',
+    title: () => (S.ws?.pr ? `Close #${S.ws.pr.number} here` : `Close ${S.ws?.branch || 'this change'} here`), local: true, idle: () => 'Close',
     payload: () => ({ id: S.id }),
     preview() {
       const r = S.review, pr = S.ws?.pr;
@@ -159,7 +169,7 @@ const SHEETS = {
     async send() { await api(`/api/w/${S.id}`, { method: 'DELETE' }); location.href = '/home'; },
   },
   stacklink: {
-    title: 'Add to the stack', idle: () => 'Add to stack',
+    title: (c) => `Add #${c.opts.pr} to GitHub stack #${c.opts.stackNumber}`, idle: () => 'Add to stack',
     payload: (c) => ({ stackNumber: c.opts.stackNumber, pr: c.opts.pr }),
     after() { S.lastPr = null; hooks.loadStack?.(); },
   },
@@ -167,6 +177,8 @@ const SHEETS = {
 
 // ------------------------------------------------------------------ open, read, send
 let cur = null, rt = null, opener = null;
+// a dialog's title is what it will do (a verb and its object), before any preview has said it more exactly
+const titleOf = (c) => (typeof c.def.title === 'function' ? c.def.title(c) : c.def.title);
 export function openSheet(kind, opts = {}) {
   const def = SHEETS[kind];
   if (!def || !S.ws) return;
@@ -176,7 +188,7 @@ export function openSheet(kind, opts = {}) {
   opener = document.activeElement;
   const c = cur = { id: S.id, kind, opts: { ...opts }, def, pv: null, key: null, seq: 0 };
   const el = c.el = h(`<div class="sheet k-${esc(kind)}${def.form ? '' : ' small'}" role="dialog" aria-modal="true" aria-labelledby="sht">` +
-    `<header class="shh"><h2 class="t" id="sht">${esc(def.title)}</h2><button class="icon" data-sh="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
+    `<header class="shh"><h2 class="t" id="sht">${esc(titleOf(c))}</h2><button class="icon" data-sh="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
     `<div class="shb">${def.form ? def.form(c) : ''}<ul class="items" id="shitems"${def.form ? ' hidden' : ''}></ul></div>` +
     `<div class="shwarn" id="shwarn" hidden></div>` +
     `<footer class="shf"><span class="what" id="shpv"></span><button class="btn ghost lg" data-sh="close">Cancel</button><button class="btn primary lg go" data-sh="go" disabled><span class="gl">${esc(def.idle?.(c) || 'Go')}</span><kbd>⌘↵</kbd></button></footer></div>`);
@@ -228,7 +240,10 @@ async function refresh() {
     $('#sht', c.el).textContent = pv.title;
     const what = $('#shpv', c.el); what.textContent = shortWhere(pv.where); what.title = pv.where || ''; what.classList.remove('hint');
     const items = $('#shitems', c.el);
-    if (!c.def.form) items.innerHTML = (pv.items || []).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>Nothing else.</li>';
+    const own = !c.def.form && c.def.body?.(pv);
+    let ob = $('.ownbody', c.el);
+    if (own) { if (!ob) { ob = h('<div class="ownbody"></div>'); items.before(ob); } ob.innerHTML = own; items.hidden = true; }
+    else { ob?.remove(); if (!c.def.form) { items.hidden = false; items.innerHTML = (pv.items || []).map((x) => `<li>${esc(x)}</li>`).join('') || '<li>Nothing else.</li>'; } }
     const warn = $('#shwarn', c.el); warn.hidden = !pv.warnings?.length; warn.innerHTML = (pv.warnings || []).map((x) => `<p>${esc(x)}</p>`).join('');
     c.scrim.dataset.weight = weightOf(c);
     if (pv.needsForce) goBtn('Overwrite…', 'danger');
@@ -238,7 +253,9 @@ async function refresh() {
     c.pv = null; c.key = null; c.scrim.dataset.weight = weightOf(c);
     // not ready yet (no message, no title): said once, quietly, where the destination would be; the button keeps
     // its name, so you know what it will do
-    $('#sht', c.el).textContent = c.def.title;
+    $('#sht', c.el).textContent = titleOf(c);
+    $('.ownbody', c.el)?.remove();
+    if (!c.def.form) { const items = $('#shitems', c.el); items.hidden = true; items.innerHTML = ''; }
     const what = $('#shpv', c.el); what.textContent = sentence(e.message); what.title = ''; what.classList.add('hint');
     $('#shwarn', c.el).hidden = true;
     goBtn(c.def.idle?.(c) || 'Go', '', true);
@@ -254,7 +271,7 @@ async function go() {
   gb.disabled = true; gb.classList.add('sending');
   gb.querySelector('.gl').innerHTML = `<span class="launch">${icon('arrow', '--on-act')}</span>Sending…`;
   c.sending = true;
-  if (c.def.local) { try { await c.def.send(c); } catch (e) { toast(e.message); c.sending = false; gb.classList.remove('sending'); refresh(); } return; }
+  if (c.def.local) { try { await c.def.send(c); } catch (e) { toast(e.message, { fail: true }); c.sending = false; gb.classList.remove('sending'); refresh(); } return; }
   const parent = S.ship?.head || ''; // a commit's toast turns its new id over from this one
   const arm = armRoll(); // and the next step, as it is now, will turn over to the one after it
   try {
@@ -269,7 +286,7 @@ async function go() {
     hooks.sound?.wrote(c.kind);
     hooks.mote?.acted(true, () => (c.kind === 'review' ? $('canvas.impress') || $('canvas.impress-sm') : $('#go'))); // then a look at what came of it: the stamp, or the next step
   } catch (e) {
-    toast(e.message); c.sending = false;
+    toast(e.message, { fail: true }); c.sending = false;
     hooks.mote?.acted(false);
     hooks.sound?.play('knock');
     if (cur === c) { gb.classList.remove('sending'); gb.classList.add('failed'); setTimeout(() => gb.classList.remove('failed'), 400); refresh(); }
@@ -299,7 +316,7 @@ async function draft(b) {
       if (same(S.prBody, before.body)) put('[data-f="prBody"]', d.body); else toast('You edited the description while the draft was running: kept yours.');
     }
     box?.classList.add('drafted'); setTimeout(() => box?.classList.remove('drafted'), 700);
-  } catch (err) { toast(err.message); }
+  } catch (err) { toast(err.message, { fail: true }); }
   finally {
     box?.classList.remove('drafting'); c.el.querySelector('.field.lg')?.classList.remove('drafting');
     if (b.isConnected) { b.disabled = false; b.innerHTML = label; }

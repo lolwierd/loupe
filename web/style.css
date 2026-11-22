@@ -195,6 +195,8 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .menu .sh, .palette .sh { padding: var(--s5) var(--s3) var(--s3); }
 .menu .sh:first-child, .palette .sh:first-child { padding-top: var(--s3); }
 .toast { position: fixed; z-index: 90; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: min(560px, 90vw); padding: var(--s3) var(--s4); background: var(--act); color: var(--on-act); border-radius: var(--r2); box-shadow: var(--shadow); font-size: var(--t-ui); display: flex; align-items: center; gap: var(--s4); }
+.toast { cursor: default; }
+.toast canvas.tx { flex: none; margin-right: calc(var(--s2) - var(--s4)); } /* a failure's cross, 8 px from its words */
 .toast .tb { border: 0; background: none; color: inherit; font: inherit; font-weight: 500; text-decoration: underline; cursor: pointer; padding: 0; }
 .toast .tb:hover { opacity: 0.8; }
 
@@ -504,7 +506,6 @@ a.loc:focus-visible { outline: 2px solid var(--pencil); }
 .panel .resizer { left: -3px; }
 /* the inspector's content edge is 12: a tab or a picker button has 8 of its own padding, so its strip gives 4 */
 .ptabs { display: flex; align-items: center; gap: var(--s2); height: var(--bar); padding: 0 var(--s3) 0 var(--s2); border-bottom: 1px solid var(--rule); }
-.ptabs .icon kbd { border: 0; background: none; min-width: 0; padding: 0; font: 500 var(--t-mono)/1 var(--f-mono); color: inherit; }
 .tab { position: relative; display: inline-flex; align-items: center; gap: var(--s3); height: var(--bar); padding: 0 var(--s3); border: 0; background: none; color: var(--ink-3); font-size: var(--t-ui); font-weight: 500; cursor: pointer; transition: color 120ms var(--ease); }
 .tab:hover, .tab[aria-selected="true"] { color: var(--ink); }
 .tab[aria-selected="true"]::after { content: ""; position: absolute; left: var(--s3); right: var(--s3); bottom: -1px; height: 2px; background: var(--act); border-radius: var(--r0); }
@@ -607,9 +608,11 @@ details.sect[open] > summary.sh::after { transform: none; }
 /* the icon sits on the first line of the text, not in the middle of however many lines it runs to */
 .linkbar { display: flex; gap: var(--s3); align-items: flex-start; padding: var(--s2) 0 var(--s3); color: var(--ink-2); font-size: var(--t-ui); line-height: 1.5; }
 .linkbar svg { width: 14px; height: 14px; flex: none; margin-top: calc((1.5 * var(--t-ui) - 14px) / 2); }
-.nrow { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 2px var(--s3); padding: var(--s3) var(--s2); border-radius: var(--r1); cursor: pointer; }
-.nrow .k { width: 2px; height: 100%; justify-self: center; border-radius: var(--r0); background: var(--ink-3); grid-row: span 3; }
-.nrow.resolved .k { background: var(--rule-strong); }
+.nrow { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 2px var(--s3); padding: var(--s3) var(--s2); border-radius: var(--r1); cursor: pointer; }
+/* the mark's own glyph, as at its lines, on the first line's centre */
+.nrow .k { grid-row: span 3; align-self: start; display: grid; place-items: center; width: 16px; height: 16px; margin-top: -1px; color: var(--ink-3); }
+.nrow .k svg { width: 14px; height: 14px; }
+.nrow.resolved .k { opacity: 0.45; }
 .nrow .w { font: var(--t-meta) var(--f-mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nrow .q { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .nrow.resolved .q { color: var(--ink-3); }
@@ -683,6 +686,8 @@ details.sect[open] > summary.sh::after { transform: none; }
 .lens { position: fixed; z-index: 60; width: 300px; height: 150px; border-radius: 75px; overflow: hidden; pointer-events: none; background: var(--bg); box-shadow: 0 0 0 1px var(--rule-strong), 0 0 0 7px color-mix(in srgb, var(--chrome) 85%, transparent), 0 0 0 8px var(--rule-strong), var(--shadow); }
 .lens .in { position: absolute; left: 0; transform-origin: 0 0; transform: scale(2); font: var(--t-code)/20px var(--f-mono); width: 1600px; }
 .lens .in .ln { grid-template-columns: 48px 48px minmax(0, 1fr); }
+.lens .in.of-mote { width: auto; } /* Mote under the glass: his sprite at 2×, its pixels kept whole */
+.lens .in.of-mote .mote { display: block; }
 .lens .in.split .ln { grid-template-columns: 48px minmax(0, 1fr) 48px minmax(0, 1fr); }
 .lens::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: radial-gradient(circle at 30% 25%, color-mix(in srgb, var(--hi) 35%, transparent), transparent 40%); }
 
@@ -897,6 +902,9 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 /* under the box: Write it on the box's text edge, the one option on the right */
 .sheet .tools { display: flex; align-items: center; gap: var(--s4); margin-top: calc(-1 * var(--s3)); }
 .sheet .wbtn canvas.spark { display: block; }
+.sheet .wpair { display: inline-flex; align-items: center; gap: var(--s1); } /* the model, then what it does: one control */
+.sheet .ownbody { display: grid; gap: var(--s5); } /* a dialog that draws its preview its own way (a push's route and commits) */
+.sheet .ownbody .note { margin: 0; }
 .sheet .wbtn[disabled] { opacity: 1; }
 .pxl { display: inline-flex; align-items: center; gap: var(--s3); font-size: var(--t-ui); color: var(--ink-2); cursor: pointer; user-select: none; }
 .pxl:hover { color: var(--ink); }
@@ -1036,7 +1044,7 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
    and checks line up on every row whether or not that row has one. A menu with any icon gives every row the icon column. */
 :is(.menu, .palette) .mi .ml { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :is(.menu, .palette) .mi .fp .d { color: var(--ink-3); }
-.menu .mi .mi-ic { width: 14px; height: 14px; flex: none; }
+.menu .mi .mi-ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; } /* 16: the spark is a 16 px sprite, drawn only at whole pixels */
 .menu .mi .mk { margin-left: auto; min-width: 18px; flex: none; }
 .menu .mi .sub ~ .mk { margin-left: var(--s3); }
 /* a key in a row is a quiet figure in the trailing column, like a count, not a keycap */
@@ -1101,11 +1109,14 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 .mapcard .dg { margin: 0; padding: 0 var(--s5) var(--s5); border-bottom: 1px solid var(--rule); }
 .mapcard .dgbar { display: flex; align-items: stretch; gap: var(--s5); flex-wrap: wrap; margin-bottom: var(--s5); border-bottom: 1px solid var(--rule); }
 .mapcard .dgtabs { display: flex; gap: var(--s5); height: 36px; }
-.mapcard .dgtabs button, .mapcard .dgtabs .one { all: unset; display: flex; align-items: center; margin-bottom: -1px; border-bottom: 2px solid transparent; font-size: var(--t-ui); font-weight: 500; color: var(--ink-3); cursor: pointer; transition: color 120ms var(--ease); }
-.mapcard .dgtabs button:hover { color: var(--ink-2); }
-.mapcard .dgtabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); cursor: default; }
+/* in the large view the tabs are its title: the title's size, on the header's line */
+#mapbig .dgtabs.big { display: flex; gap: var(--s6); align-self: stretch; }
+#mapbig .dgtabs.big button { font-size: var(--t-title); font-weight: 600; }
+:is(.mapcard, #mapbig) .dgtabs button, :is(.mapcard, #mapbig) .dgtabs .one { all: unset; display: flex; align-items: center; margin-bottom: -1px; border-bottom: 2px solid transparent; font-size: var(--t-ui); font-weight: 500; color: var(--ink-3); cursor: pointer; transition: color 120ms var(--ease); }
+:is(.mapcard, #mapbig) .dgtabs button:hover { color: var(--ink-2); }
+:is(.mapcard, #mapbig) .dgtabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); cursor: default; }
 .mapcard .dgtabs .one { color: var(--ink); cursor: default; }
-.mapcard .dgtabs button:focus-visible { outline: 2px solid var(--pencil); outline-offset: -2px; border-radius: var(--r1); }
+:is(.mapcard, #mapbig) .dgtabs button:focus-visible { outline: 2px solid var(--pencil); outline-offset: -2px; border-radius: var(--r1); }
 .dglegend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); margin-top: var(--s3); font-size: var(--t-meta); color: var(--ink-3); }
 .dglegend span { display: inline-flex; align-items: center; gap: var(--s2); white-space: nowrap; }
 .dglegend .st { width: auto; }
@@ -1215,6 +1226,18 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 @keyframes mote-shuffle { 0% { transform: none; } 12% { transform: translateX(-2px); } 25% { transform: translateX(-4px); } 40% { transform: translateX(-5px); } 55% { transform: translateX(-3px); } 70% { transform: translateX(-1px); } 85%, 100% { transform: none; } }
 @media (prefers-reduced-motion: reduce) { .moteprop, .motefloat.shuffle .mote { animation: none; display: none; } }
 .motefloat.drag .mote { cursor: grabbing; }
+/* away: flown off (mote.js); flying, his wings out from under his shell, behind him at the shell's top, one art pixel
+   to a CSS pixel, as he is drawn */
+.motefloat.away { display: none; }
+/* thrown (mote.js): on his back, legs at the air, and a rock before he heaves himself over; whole pixels, two steps */
+.motefloat.onback .mote { transform: rotate(180deg) translateY(-2px); }
+.motefloat.onback.rock .mote { animation: mote-rock 520ms steps(1) 1; }
+@keyframes mote-rock { 0% { transform: rotate(180deg) translateY(-2px); } 25% { transform: rotate(168deg) translate(2px, -2px); } 50% { transform: rotate(180deg) translateY(-2px); } 75% { transform: rotate(192deg) translate(-2px, -2px); } 100% { transform: rotate(180deg) translateY(-2px); } }
+.motefloat.onback .motelight { visibility: hidden; }
+.motefloat.flying .mw, .motefloat.flying .motelight, .motefloat.flying .motecheck, .motefloat.flying .moteprop { visibility: hidden; }
+.motewing { position: absolute; z-index: -1; top: 13px; width: 18px; height: 9px; background: 0 0 / 18px 9px no-repeat; image-rendering: pixelated; pointer-events: none; }
+.motewing.l { left: -8px; transform: scaleX(-1); }
+.motewing.r { right: -8px; }
 .motefloat .mw { position: absolute; left: 52px; bottom: 16px; max-width: 280px; padding: var(--s1) var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--raise); border: 1px solid var(--rule-strong); border-radius: var(--r2); box-shadow: 0 1px 2px rgba(20, 20, 30, 0.08); font-size: var(--t-meta); color: var(--ink-2); pointer-events: none; }
 .motefloat .mw:empty { display: none; }
 .motefloat.flip .mw { left: auto; right: 52px; }
@@ -1261,6 +1284,7 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 .runpick:hover { background: var(--hover); color: var(--ink); }
 .runpick:focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
 .runpick svg { width: 12px; height: 12px; flex: none; }
+.runpick canvas.spark { margin: 0 -1px 0 -3px; } /* the sprite's star is 13 of its 16 px: it sits on the label's edge as a 14 px icon would */
 .runpick svg:last-child { color: var(--ink-3); }
 .runpick.mono { font: var(--t-mono) var(--f-mono); } /* a picker of a ref (the base): the ref's own face, the same drawing */
 /* a PR's branches: head, arrow and base wrap as one unit, the names shortening first */

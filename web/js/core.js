@@ -96,11 +96,19 @@ let toastT = null;
 // A one-line notice at the bottom; with { action, run } it carries one button (Undo) for as long as it shows.
 export function toast(msg, opt = {}) {
   let t = $('#toast');
-  if (!t) { t = h('<div class="toast" id="toast" role="status"></div>'); document.body.append(t); }
-  t.innerHTML = `<span>${esc(msg)}</span>${opt.action ? `<button class="tb">${esc(opt.action)}</button>` : ''}`;
+  if (!t) {
+    t = h('<div class="toast" id="toast" role="status"></div>'); document.body.append(t);
+    t.addEventListener('click', (e) => { if (!e.target.closest('.tb')) { clearTimeout(toastT); t.hidden = true; } });
+    t.addEventListener('mouseenter', () => { t.dataset.hover = '1'; clearTimeout(toastT); });
+    t.addEventListener('mouseleave', () => { delete t.dataset.hover; if (!t.hidden) { clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 1600); } });
+  }
+  t.setAttribute('role', opt.fail ? 'alert' : 'status');
+  t.classList.toggle('fail', !!opt.fail);
+  t.innerHTML = `${opt.fail ? '<canvas class="pxi tx" data-i="cross" data-c="--danger" width="5" height="5" style="width:10px;height:10px" aria-hidden="true"></canvas>' : ''}<span>${esc(msg)}</span>${opt.action ? `<button class="tb">${esc(opt.action)}</button>` : ''}`;
   if (opt.action) t.querySelector('.tb').onclick = () => { t.hidden = true; opt.run(); };
   t.hidden = false;
-  clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, opt.action ? 5000 : 3600);
+  clearTimeout(toastT);
+  if (!t.dataset.hover) toastT = setTimeout(() => { t.hidden = true; }, opt.action ? 5000 : opt.fail ? 6000 : 3600);
 }
 export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -116,6 +124,7 @@ export const I = {
   updown: P('<path d="m5 6 3-3 3 3M5 10l3 3 3-3"/>'),
   check: P('<path d="m3.5 8.5 3 3 6-7"/>'),
   plus: P('<path d="M8 3v10M3 8h10"/>'),
+  keys: P('<rect x="1.75" y="3.75" width="12.5" height="8.5" rx="1.5"/><path d="M4.5 6.5h.5M7.75 6.5h.5M11 6.5h.5M5 9.5h6"/>'),
   search: P('<circle cx="7" cy="7" r="4.25"/><path d="m10.25 10.25 3.5 3.5"/>'),
   x: P('<path d="m4 4 8 8M12 4l-8 8"/>'),
   dir: P('<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>'),
@@ -138,7 +147,6 @@ export const I = {
   moon: P('<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z"/>'),
   stop: '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>',
   send: P('<path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/>'),
-  spark: P('<path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l1.8 1.8M10.2 10.2 12 12M4 12l1.8-1.8M10.2 5.8 12 4"/>'),
   ext: P('<path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M12 9.5v4H2.5V4h4"/>'),
   guide: P('<path d="M2.5 3.5h4l1.5 1 1.5-1h4v9h-4l-1.5 1-1.5-1h-4z"/><path d="M8 4.5v9"/>'),
   github: '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>',

@@ -22,7 +22,7 @@ export async function act(kind, payload = {}) {
     toast(r.message);
     if (S.id === id) hooks.afterAct?.(kind, r);
     return r;
-  } catch (e) { toast(e.message); hooks.sound?.play('knock'); return false; }
+  } catch (e) { toast(e.message, { fail: true }); hooks.sound?.play('knock'); return false; }
   finally { busy = false; }
 }
 hooks.act = act;

@@ -347,7 +347,7 @@ async function chatSend() {
     const attachments = S.attach;
     S.attach = []; S.chatDraft = ''; ta.value = '';
     await api(`/api/w/${S.id}/convs/${conv.id}/messages`, { method: 'POST', body: { text, attachments, ...run } });
-  } catch (e) { toast(e.message); ta.value = text; }
+  } catch (e) { toast(e.message, { fail: true }); ta.value = text; }
   finally { chatSending = false; }
 }
 
@@ -355,8 +355,8 @@ function chatPicker(btn) {
   const items = [
     ...chats().slice().reverse().map((c) => ({ two: [c.title || (c.linked ? c.linked.title : 'New chat'), `${c.linked ? 'linked session · ' : ''}${plural(c.messages.filter((m) => m.role === 'user').length, 'question')} · ${ago(c.messages.at(-1)?.at || c.created)}`], value: { open: c.id }, current: c.id === S.chat, icon: c.linked ? I.link : I.chat })),
     { sep: true },
-    { label: 'New chat', value: { new: true }, icon: I.plus },
-    { label: 'Link a Claude Code session…', value: { link: true }, icon: I.link },
+    { label: 'New chat', value: { new: true } },
+    { label: 'Link a Claude Code session…', value: { link: true } },
     ...(S.chat ? [{ sep: true }, { label: 'Delete this chat', value: { del: S.chat }, danger: true, confirm: 'Delete it? Its session stays on disk' }] : []),
   ];
   menu(btn, items, (it) => {
@@ -374,7 +374,7 @@ async function newChat() {
   renderPanel();
 }
 async function deleteChat(id) {
-  await api(`/api/w/${S.id}/convs/${id}`, { method: 'DELETE' }).catch((e) => toast(e.message));
+  await api(`/api/w/${S.id}/convs/${id}`, { method: 'DELETE' }).catch((e) => toast(e.message, { fail: true }));
   delete S.review.convs[id];
   S.review.chats = S.review.chats.filter((x) => x !== id);
   S.chat = null;
@@ -382,7 +382,7 @@ async function deleteChat(id) {
 }
 async function linkPicker(btn) {
   let list, live;
-  try { ({ sessions: list, live } = await api(wsApi('/sessions'))); } catch (e) { return toast(e.message); }
+  try { ({ sessions: list, live } = await api(wsApi('/sessions'))); } catch (e) { return toast(e.message, { fail: true }); }
   if (!list.length && !live.length) return toast('No Claude Code sessions found for this repository.');
   const items = [
     ...(live.length ? [{ header: 'LIVE SESSIONS' }, ...live.map((s) => ({ two: [s.title || s.sessionId.slice(0, 8), `talk to the running session · ${s.cwd}`], value: { ...s, live: true }, icon: I.chat }))] : []),
@@ -396,7 +396,7 @@ async function linkPicker(btn) {
       if (!S.review.chats.includes(r.conv.id)) S.review.chats.push(r.conv.id);
       S.chat = r.conv.id; S.focusChat = true;
       setTab('chat');
-    } catch (e) { toast(e.message); }
+    } catch (e) { toast(e.message, { fail: true }); }
   }, { width: 460 });
 }
 
@@ -405,8 +405,10 @@ function markRow(th) {
   const conv = convOf(th.conv) || { messages: [] };
   const first = conv.messages.find((m) => m.role === 'user')?.text || '';
   const answers = conv.messages.filter((m) => m.role !== 'user');
-  const status = conv.messages.some((m) => m.pending) ? 'answering…' : answers.length ? plural(answers.length, 'answer') : 'no answer';
-  return `<button class="nrow ${th.kind}${th.resolved || th.posted ? ' resolved' : ''}" data-act="gothread" data-t="${th.id}" title="${esc(oneLine(first, 600))}"><span class="k"></span><span class="w" title="${esc(th.path)}">${esc(th.path.split('/').pop())} · ${esc(th.label)}</span><span class="q">${esc(oneLine(first, 300))}</span><span class="s">${esc(status)} · ${ago(th.created)}</span></button>`;
+  const busy = conv.messages.some((m) => m.pending);
+  const status = busy ? 'answering…' : answers.length ? plural(answers.length, 'answer') : 'no answer';
+  const glyph = answers.at(-1)?.role === 'codex' || conv.modelKind === 'codex' ? I.codex : spark(16, !busy, 'Claude');
+  return `<button class="nrow ${th.kind}${th.resolved || th.posted ? ' resolved' : ''}" data-act="gothread" data-t="${th.id}" title="${esc(oneLine(first, 600))}"><span class="k">${glyph}</span><span class="w" title="${esc(th.path)}">${esc(th.path.split('/').pop())} · ${esc(th.label)}</span><span class="q">${esc(oneLine(first, 300))}</span><span class="s">${esc(status)} · ${ago(th.created)}</span></button>`;
 }
 // GitHub's threads follow the same Open / Resolved filter as your questions, so the counts agree with the tab's badge.
 const ghIn = (show) => (S.github?.threads || []).filter((x) => (show === 'resolved' ? x.resolved : !x.resolved));
@@ -414,7 +416,7 @@ function githubThreadsHTML(show, head) {
   const t = ghIn(show);
   if (!t.length) return '';
   return `<div class="sect"><div class="sh">ON GITHUB<span class="n">${t.length}</span></div>` +
-    t.map((x) => `<button class="nrow gh${x.resolved ? ' resolved' : ''}" data-act="ghopen" data-g="${esc(x.id)}" data-p="${esc(x.path)}" data-l="${x.outdated ? 0 : x.line || 0}"><span class="k"></span><span class="w" title="${esc(x.path)}">${esc(x.path.split('/').pop())} · ${x.outdated ? 'outdated' : `line ${x.line}`}</span><span class="q">${esc(x.comments[0]?.author || '')}: ${esc(oneLine(x.comments[0]?.body, 300))}</span><span class="s">${plural(x.comments.length, 'comment')} · ${ago(Date.parse(x.comments.at(-1)?.at || 0))}</span></button>`).join('') + `</div>`;
+    t.map((x) => `<button class="nrow gh${x.resolved ? ' resolved' : ''}" data-act="ghopen" data-g="${esc(x.id)}" data-p="${esc(x.path)}" data-l="${x.outdated ? 0 : x.line || 0}"><span class="k">${I.github}</span><span class="w" title="${esc(x.path)}">${esc(x.path.split('/').pop())} · ${x.outdated ? 'outdated' : `line ${x.line}`}</span><span class="q">${esc(x.comments[0]?.author || '')}: ${esc(oneLine(x.comments[0]?.body, 300))}</span><span class="s">${plural(x.comments.length, 'comment')} · ${ago(Date.parse(x.comments.at(-1)?.at || 0))}</span></button>`).join('') + `</div>`;
 }
 // ------------------------------------------------------------------ one mark, opened: the conversation where it reads well
 // The quoted lines on top (so you never need to look back at the code to know what it is about), the conversation,
@@ -481,7 +483,7 @@ async function markReply(ask) {
   ta.value = ''; grow(ta); delete S.replyDrafts[th.id];
   follow($('#marklog'));
   try { await api(`/api/w/${S.id}/convs/${th.conv}/messages`, { method: 'POST', body: { text, ask, ...run, scope: S.scope } }); }
-  catch (e) { toast(e.message); ta.value = text; }
+  catch (e) { toast(e.message, { fail: true }); ta.value = text; }
 }
 Object.assign(hooks, { openMark, closeMark, markChanged: () => { if (S.mark && S.tab === 'review') renderPanel(); } });
 
@@ -518,7 +520,7 @@ export function rebrief() {
     if (S.id !== id || S.review.brief !== pending) return;
     S.review.brief = { ...pending, pending: false, error: err.message };
     refresh();
-    toast(err.message);
+    toast(err.message, { fail: true });
   });
 }
 hooks.rebrief = rebrief;
@@ -531,7 +533,7 @@ $('#root').addEventListener('click', async (e) => {
   const act = b.dataset.act;
   if (act === 'stop') {
     const id = b.closest('[data-conv]')?.dataset.conv;
-    if (id) return api(wsApi(`/convs/${encodeURIComponent(id)}/stop`), { method: 'POST' }).catch((err) => toast(err.message));
+    if (id) return api(wsApi(`/convs/${encodeURIComponent(id)}/stop`), { method: 'POST' }).catch((err) => toast(err.message, { fail: true }));
     return;
   }
   if (act === 'brief') return rebrief();
@@ -557,8 +559,8 @@ $('#root').addEventListener('click', async (e) => {
     return;
   }
   if (act === 'desccut') { descState().lead = !descState().lead; return renderPanel(); }
-  if (act === 'ghrefresh') { b.disabled = true; S.github = await api(`/api/w/${S.id}/github?fresh=1`).catch((err) => { toast(err.message); return S.github; }); hooks.githubChanged?.(); return; }
-  if (act === 'openprws') { const p = gh(); if (!p) return; try { const r = await api('/api/workspaces', { method: 'POST', body: { target: p.url } }); location.href = r.url; } catch (err) { toast(err.message); } return; }
+  if (act === 'ghrefresh') { b.disabled = true; S.github = await api(`/api/w/${S.id}/github?fresh=1`).catch((err) => { toast(err.message, { fail: true }); return S.github; }); hooks.githubChanged?.(); return; }
+  if (act === 'openprws') { const p = gh(); if (!p) return; try { const r = await api('/api/workspaces', { method: 'POST', body: { target: p.url } }); location.href = r.url; } catch (err) { toast(err.message, { fail: true }); } return; }
   if (act === 'ghcomment') {
     const ta = $('#commentbox textarea'), text = ta.value.trim();
     if (!text) return ta.focus();

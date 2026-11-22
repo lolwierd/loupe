@@ -87,7 +87,7 @@ export async function goLoc(loc, origin, restore, { remembered = false } = {}) {
   if (!card) return openViewer({ path: p, line: loc.line, side: loc.side });
   if (card.hidden) hooks.clearFilter?.();
   if (card.classList.contains('shut')) toggleFold(p, false);
-  try { await loadFile(p); } catch (e) { if (current()) toast(e.message); return; }
+  try { await loadFile(p); } catch (e) { if (current()) toast(e.message, { fail: true }); return; }
   if (!current() || cardEl(p) !== card) return;
   hooks.setCurrent?.(p);
   if (!loc.line) { card.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); return; }
@@ -223,5 +223,5 @@ document.addEventListener('click', async (e) => {
     const r = await lspQ('def', t);
     if (!r.locations.length) return toast('gopls found no definition there.');
     goLoc(r.locations[0], t.span);
-  } catch (err) { toast(/loading|took too long/.test(err.message) ? 'gopls is still loading the module.' : `gopls: ${err.message}`); }
+  } catch (err) { toast(/loading|took too long/.test(err.message) ? 'gopls is still loading the module.' : `gopls: ${err.message}`, { fail: !/loading|took too long/.test(err.message) }); }
 }, true);

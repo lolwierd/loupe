@@ -91,7 +91,7 @@ function confirmOpen(target) {
   });
 }
 async function openTarget(target) {
-  try { const r = await api('/api/workspaces', { method: 'POST', body: { target } }); location.href = r.url; } catch (e) { toast(e.message); }
+  try { const r = await api('/api/workspaces', { method: 'POST', body: { target } }); location.href = r.url; } catch (e) { toast(e.message, { fail: true }); }
 }
 
 function frame() {
@@ -112,7 +112,7 @@ function frame() {
   <div class="main" id="main">
     <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><span class="fwrap">${I.search}<input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd class="fkey" aria-hidden="true">/</kbd></span><span id="ordseg"></span></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="resizer" data-resize="bin"></div></aside>
     <main class="viewer-col"><div class="scroller" id="center"><div class="cards" id="cards"><div class="loadd">Loading…</div></div></div></main>
-    <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon sm" data-act="keys" title="Keys (?)"><kbd>?</kbd></button></div><div class="pbody" id="pbody"></div></aside><div class="motefloat" id="motedock"></div>
+    <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon" data-act="keys" title="Keys (?)" aria-label="Keys">${I.keys}</button></div><div class="pbody" id="pbody"></div></aside><div class="motefloat" id="motedock"></div>
   </div></div>`;
   applyMode(S.mode, true);
   $('#review-back').onclick = goBack;
@@ -283,7 +283,7 @@ function maybeAutoNotes() {
 
 function writeNotes(options) {
   return api(`/api/w/${S.id}/notes`, { method: 'POST', body: { ...notesRun(), ...options } })
-    .catch((e) => { if (!options.auto) toast(e.message); });
+    .catch((e) => { if (!options.auto) toast(e.message, { fail: true }); });
 }
 
 // ------------------------------------------------------------------ the top bar: what you are looking at
@@ -619,7 +619,7 @@ function commands() {
   const pr = S.github?.pr, isPr = m.kind === 'pr', local = m.kind === 'local';
   const cur = S.current && fileOf(S.current), name = S.current?.split('/').pop();
   const panel = (tab) => () => { setPane('panel', true); setTab(tab); };
-  const setting = (k, on, label) => ({ group: 'VIEW', label, on, run: async () => { try { S.app.settings = await api('/api/settings', { method: 'POST', body: { [k]: !on } }); } catch (e) { return toast(e.message); } for (const f of S.files) updateCard(f.path); progress(); toast(`${label}: ${on ? 'off' : 'on'}.`); } });
+  const setting = (k, on, label) => ({ group: 'VIEW', label, on, run: async () => { try { S.app.settings = await api('/api/settings', { method: 'POST', body: { [k]: !on } }); } catch (e) { return toast(e.message, { fail: true }); } for (const f of S.files) updateCard(f.path); progress(); toast(`${label}: ${on ? 'off' : 'on'}.`); } });
   const scopes = [
     ['all', isPr ? 'Whole pull request' : m.dirty ? 'Branch + uncommitted' : 'Whole branch'],
     ...(local ? [['branch', 'Committed only'], ...(m.dirty ? [['wip', `Uncommitted only (${plural(m.dirty, 'file')})`]] : [])] : []),
@@ -661,6 +661,7 @@ function commands() {
     ...(S.stack?.items || []).filter((i) => !i.here).map((i) => ({ group: 'STACK', label: `${i.pr ? `#${i.pr} ` : ''}${i.branch}`, sub: i.checkout ? 'checkout' : 'PR', run: () => openStackItem(S.stack.items.indexOf(i)) })),
     ...[['panes', 'Layout: three panes'], ['guide', 'Layout: guide']].filter(([x]) => x !== S.mode).map(([x, label]) => ({ group: 'VIEW', label, run: () => applyMode(x) })),
     { group: 'VIEW', label: S.marksHidden ? 'Show the marks in the code' : 'Hide the marks in the code', key: 'm', run: () => setMarksHidden(!S.marksHidden) },
+    hooks.mote?.isAway && { group: 'VIEW', label: hooks.mote.isAway() ? 'Show Mote' : 'Hide Mote', sub: hooks.mote.isAway() ? 'he flies back in' : 'the beetle in the corner flies off', also: 'pet sprite beetle bug mascot helper', run: () => hooks.mote.away(!hooks.mote.isAway()) },
     { group: 'VIEW', label: hooks.sound?.on() ? 'Turn desk sounds off' : 'Turn desk sounds on', sub: 'a tick per file viewed, a stamp, a typebar', run: () => hooks.sound?.set(!hooks.sound.on()) },
     { group: 'VIEW', label: paneOpen('bin') ? 'Hide the files' : 'Show the files', key: 't', run: () => setPane('bin', !paneOpen('bin')) },
     { group: 'VIEW', label: paneOpen('panel') ? 'Hide the inspector' : 'Show the inspector', key: 'p', run: () => setPane('panel', !paneOpen('panel')) },
@@ -668,7 +669,7 @@ function commands() {
     setting('autoView', !!S.app.settings?.autoView, 'Count tests and generated files as viewed'),
     setting('autoBrief', !!S.app.settings?.autoBrief, 'Write the brief when a PR opens'),
     ghUrl && { group: 'GO', label: 'Open on GitHub', run: () => open(ghUrl, '_blank', 'noopener') },
-    { group: 'GO', label: "Copy this page's link", run: () => navigator.clipboard.writeText(location.href).then(() => toast('Link copied.'), () => toast('Could not copy.')) },
+    { group: 'GO', label: "Copy this page's link", run: () => navigator.clipboard.writeText(location.href).then(() => toast('Link copied.'), () => toast('Could not copy.', { fail: true })) },
     { group: 'GO', label: 'Read the change again', key: 'r', run: () => $('[data-act="refresh"]')?.click() },
     { group: 'GO', label: 'Home', run: () => { location.href = '/home'; } },
     { group: 'GO', label: 'Keys', key: '?', run: keySheet },
@@ -794,11 +795,12 @@ function openPalette() {
   const { scrim, input, list, done } = palOpen('Open or do', here, 'Find a file, a change or something to do', 'Paste a PR link, owner/repo#123 or a path to open it.');
   let cur = 0, shown = [];
   // Lower-cased once per open, not per keystroke; a file also keeps its own name apart from its folders.
-  const cmds = commands().map((c) => { const lab = c.label.toLowerCase(); return { ...c, lab, hay: `${lab} ${c.group.toLowerCase()}`, base: c.file ? lab.slice(lab.lastIndexOf('/') + 1) : '' }; });
+  // a command can answer to other words for what it is (`also`: Mote is a pet, a sprite, a beetle)
+  const cmds = commands().map((c) => { const lab = c.label.toLowerCase(); return { ...c, lab, hay: `${lab} ${c.group.toLowerCase()} ${c.also || ''}`, base: c.file ? lab.slice(lab.lastIndexOf('/') + 1) : '' }; });
   // How well something matches what was typed. A file's own name outranks a command that only mentions it ("Fold
   // cards.js" for "cards"); a command that begins with what you typed still beats a file that merely contains it.
   const score = (c, q) => {
-    if (!c.file) return c.lab.startsWith(q) ? 75 : c.lab.includes(q) ? 45 : 40;
+    if (!c.file) return c.lab.startsWith(q) ? 75 : c.lab.includes(q) ? 45 : c.also?.split(' ').some((w) => w.startsWith(q)) ? 60 : 40;
     if (c.base === q || c.base.replace(/\.[^.]*$/, '') === q) return 100; // the name, with or without its extension
     if (c.lab.endsWith('/' + q)) return 95; // the end of its path
     return c.base.startsWith(q) ? 80 : c.base.includes(q) ? 70 : 50;
@@ -971,7 +973,7 @@ async function renderHome(error) {
     });
   };
   const setHidden = async (list) => {
-    try { S.app.settings = await api('/api/settings', { method: 'POST', body: { hiddenOrgs: list } }); } catch (e) { return toast(e.message); }
+    try { S.app.settings = await api('/api/settings', { method: 'POST', body: { hiddenOrgs: list } }); } catch (e) { return toast(e.message, { fail: true }); }
     renderHome();
   };
   paint(null);
@@ -989,7 +991,7 @@ async function renderHome(error) {
     ], async (it) => {
       if (it.value === 'gh') open(gh, '_blank', 'noopener');
       if (it.value === 'hide') setHidden([...hidden, owner.toLowerCase()]);
-      if (it.value === 'close') { await api(`/api/w/${ws}`, { method: 'DELETE' }).catch((err) => toast(err.message)); renderHome(); }
+      if (it.value === 'close') { await api(`/api/w/${ws}`, { method: 'DELETE' }).catch((err) => toast(err.message, { fail: true })); renderHome(); }
     }, { align: 'right', width: 280 });
   };
   const ib = await api('/api/inbox').catch((e) => ({ error: e.message, prs: [] }));
@@ -1033,11 +1035,11 @@ function keySheet() {
 
 async function baseMenu(btn) {
   let r;
-  try { r = await api(`/api/w/${S.id}/refs`); } catch (e) { return toast(e.message); }
+  try { r = await api(`/api/w/${S.id}/refs`); } catch (e) { return toast(e.message, { fail: true }); }
   const items = [{ header: 'COMPARE WITH' }, { label: 'The remote\'s default branch', sub: 'origin/HEAD', value: '' },
     { sep: true }, ...r.refs.map((x) => ({ label: x.name, sub: ago(x.at), value: x.name, current: x.name === r.base }))];
   menu(btn, items, async (it) => {
-    try { await api(`/api/w/${S.id}/base`, { method: 'POST', body: { base: it.value } }); } catch (e) { toast(e.message); }
+    try { await api(`/api/w/${S.id}/base`, { method: 'POST', body: { base: it.value } }); } catch (e) { toast(e.message, { fail: true }); }
   }, { width: 380 });
 }
 hooks.baseMenu = baseMenu;
@@ -1062,7 +1064,7 @@ document.addEventListener('click', async (e) => {
     const act = b.dataset.act;
     if (act === 'palette') openPalette();
     if (act === 'layout') setLayout(b.dataset.l);
-    if (act === 'refresh') { b.disabled = true; try { await api(`/api/w/${S.id}/refresh`, { method: 'POST' }); await loadWorkspace('Read again'); } catch (err) { toast(err.message); } b.disabled = false; }
+    if (act === 'refresh') { b.disabled = true; try { await api(`/api/w/${S.id}/refresh`, { method: 'POST' }); await loadWorkspace('Read again'); } catch (err) { toast(err.message, { fail: true }); } b.disabled = false; }
     if (act === 'theme') {
       const cur = pref.get('theme', 'system'), st = S.app.settings || {};
       // choices (layout, theme, diff) and settings (on or off) each show their state as one check in one column;
@@ -1071,6 +1073,7 @@ document.addEventListener('click', async (e) => {
         { sep: true }, { header: 'THEME' }, { label: 'System', value: { theme: 'system' }, current: cur === 'system' }, { label: 'Light', value: { theme: 'light' }, current: cur === 'light' }, { label: 'Dark', value: { theme: 'dark' }, current: cur === 'dark' },
         { sep: true }, { header: 'DIFF', key: 's' }, { label: 'Split', value: { layout: 'split' }, current: S.layout === 'split' }, { label: 'Unified', value: { layout: 'unified' }, current: S.layout === 'unified' },
         { sep: true }, { header: 'SHOW' }, { label: 'Marks in the code', key: 'm', value: { marks: true }, on: !S.marksHidden },
+        ...(hooks.mote?.isAway ? [{ label: 'Mote', sub: 'the beetle in the corner', value: { mote: true }, on: !hooks.mote.isAway() }] : []),
         { sep: true }, { header: 'REVIEW' },
         { label: 'Count tests and generated files as viewed', value: { autoView: !st.autoView }, on: !!st.autoView },
         { label: 'Write the brief when a PR opens', value: { autoBrief: !st.autoBrief }, on: !!st.autoBrief },
@@ -1079,7 +1082,8 @@ document.addEventListener('click', async (e) => {
         if (it.value.layout) return setLayout(it.value.layout);
         if (it.value.mode) return applyMode(it.value.mode);
         if (it.value.marks) return setMarksHidden(!S.marksHidden);
-        try { S.app.settings = await api('/api/settings', { method: 'POST', body: it.value }); } catch (err) { return toast(err.message); }
+        if (it.value.mote) return hooks.mote.away(!hooks.mote.isAway());
+        try { S.app.settings = await api('/api/settings', { method: 'POST', body: it.value }); } catch (err) { return toast(err.message, { fail: true }); }
         for (const f of S.files) updateCard(f.path);
         progress();
         maybeAutoNotes();

@@ -10,7 +10,7 @@
 // drawn at one sheet pixel per CSS pixel and kept crisp with image-rendering: pixelated. Frame times are the sheet's.
 import { S, $, pref, reducedMotion } from './core.js';
 import { hooks } from './hooks.js';
-import { fit, tok, isDark, watch, ordered, paint, lerp, smooth } from './dither.js';
+import { fit, tok, isDark, watch, ordered, paint, lerp, smooth, rgba } from './dither.js';
 
 const W = 48, H = 52;
 const ROW = { idle: 0, 'running-right': 1, 'running-left': 2, waving: 3, jumping: 4, failed: 5, waiting: 6, running: 7, review: 8 };
@@ -68,7 +68,7 @@ class Mote {
   // one of the ten faces: his idle frame with the pupils moved (or shut)
   face(i) { this.el.style.backgroundImage = `url(${strip})`; this.el.style.backgroundSize = `${W * 10}px ${H}px`; this.el.style.backgroundPosition = `${-i * W}px 0`; }
   stop() { clearTimeout(this.timer); this.timer = 0; }
-  pause() { this.stop(); this.endLook(false); this.once = null; this.queued = null; } // a paused pose takes its successor with it
+  pause() { this.stop(); clearTimeout(this.aux); clearTimeout(this.lifeT); this.aux = this.lifeT = 0; this.endLook(false); this.once = null; this.queued = null; this.el.parentElement?.classList.remove('onback', 'rock'); } // a paused pose takes its successor with it (and a thrown one is back on his feet)
   // play a state's frames: once, then back to what the desk is doing; or around and around for a working state
   run(state, loop) {
     this.stop(); this.endLook(false);
@@ -185,7 +185,7 @@ class Mote {
 const LENS_W = 76, LENS_H = 18, FOOT = 9, LX = 46, LY = 11; // the patch of desk, the feet's row on it, where the light lands
 let lens = null, share = 1, allNow = false, glintUntil = 0, unwatchLens = null;
 function drawLens() {
-  if (!lens?.isConnected) return;
+  if (!lens?.isConnected || lens.parentElement?.classList.contains('away')) return;
   const g = fit(lens), f = share, dark = isDark();
   const r = 1.2 + 10 * f, core = lerp(0.95, 0.3, f), shadowR = 13;
   const field = (x, y) => {
@@ -256,15 +256,17 @@ hooks.moteMount = (allViewed, left = 1) => {
   words = null;
   if (!dock) { main = null; return; }
   dock.innerHTML = `<canvas class="motelight" aria-hidden="true" style="width:${LENS_W}px;height:${LENS_H}px;top:${H - FOOT - 4}px"></canvas>${moteHTML()}<span class="mw"></span>`;
+  dock.classList.toggle('away', away());
   place(dock);
   panelWatch?.disconnect();
   const panel = $('#panel');
   if (panel) { panelWatch = new ResizeObserver(() => aim(dock)); panelWatch.observe(panel); }
   lens = dock.querySelector('.motelight'); share = left; allNow = !!allViewed; glintUntil = 0;
   unwatchLens?.(); unwatchLens = watch(lens, drawLens);
-  main = new Mote(dock.querySelector('.mote'));
   words = dock.querySelector('.mw');
   lastBusy = new Map(); briefWas = !!S.review?.brief?.pending; allWas = !!allViewed;
+  if (away()) { main = null; return; } // flown off: not mounted until he is called back
+  main = new Mote(dock.querySelector('.mote'));
   hooks.mote.sync();
   if (!document.hidden) helloTimer = setTimeout(() => { if (main.base === 'idle') main.play('waving'); }, 500);
   life.start();
@@ -324,6 +326,11 @@ hooks.mote = {
   },
   // one of his small things now (by its place in LIFE), or a doze, for tests and for the curious
   live: (i) => (i === 'doze' ? main && life.doze(main) : life.tick(i)),
+  // under the loupe (eggs.js): he waves back through the glass, once per look
+  peered() { if (main && !main.once && main.base === 'idle' && !reducedMotion()) main.play('waving'); },
+  // away: flown off (true) or called back (false); isAway for the palette's and the view menu's rows
+  away: (on) => setAway(on),
+  isAway: () => away(),
   // what it is doing, for tests and for the curious
   state: () => main && { base: main.base, once: main.once, looking: main.looking, eye: main.eye, hidden: document.hidden, reduced: reducedMotion() },
   // a dialog's send went through, or did not; then, if it went, a look at what comes next (at: the element, found then)
@@ -412,7 +419,7 @@ const life = {
     this.last = i = Math.min(i, LIFE.length - 1);
     m.stop(); m.once = 'life';
     const ms = LIFE[i].run(m) || 600;
-    m.timer = setTimeout(() => { m.looking = false; m.eye = 0; if (m.once === 'life') m.done(); this.next(); }, ms);
+    m.lifeT = setTimeout(() => { m.lifeT = 0; m.looking = false; m.eye = 0; if (m.once === 'life') m.done(); this.next(); }, ms); // its own timer: the pose it plays keeps m.timer
   },
   doze(m) {
     this.dozing = true; m.stop(); m.once = 'doze'; m.face(BLINK);
@@ -433,6 +440,85 @@ const life = {
 const touched = () => { lastInput = Date.now(); if (life.dozing) life.wake(); };
 for (const ev of ['keydown', 'pointerdown', 'wheel']) document.addEventListener(ev, touched, { passive: true, capture: true });
 document.addEventListener('pointermove', () => { if (life.dozing || Date.now() - lastInput > 1000) touched(); }, { passive: true });
+
+
+// ------------------------------------------------------------------ away, and back
+// A double click on him (or Hide Mote in ⌘K or the view menu) and he does what a beetle does when it is done: a crouch,
+// his wings out from under the shell, buzzing, and he lifts off, swaying, faster as he climbs, out of the window toward
+// the nearer side. Show Mote brings him back the same way, down to the spot he left from, slowing to land, where his
+// wings fold and he waves. Frame-stepped at 12 fps like the rest of his drawing; with reduced motion he is just gone, or
+// there. Away, he is not mounted (main is null), so every hook and his life do nothing without a guard of their own;
+// the dock stays, hidden, for him to come back to, and a change in another tab is followed here.
+const AWAY = 'moteAway', FLY_STEP = 83;
+const away = () => !!pref.get(AWAY, false);
+// the wings: two frames (spread, and swept down mid-beat), a membrane lifted toward the page with an ink-3 rim, drawn at
+// art size from the theme's colours when he takes off, so they are right in either theme
+const WING = [ // 18 × 9, one art pixel to a CSS pixel, as he is drawn; the right wing (the left is it mirrored)
+  ['..........######..', '......####oooooo#.', '...###oooooooooo#.', '.##oooooooooooo#..', '#ooooooooooooo#...', '#oooooooooooo#....', '.#oooooooooo#.....', '..##oooooo##......', '....######........'],
+  ['..................', '..................', '.........#######..', '.....####ooooooo#.', '..###oooooooooo#..', '.#oooooooooooo#...', '#oooooooooo###....', '.##oooo####.......', '...####...........'],
+];
+let wingArt = null;
+function drawWings() {
+  const css = (c) => `rgb(${c[0]},${c[1]},${c[2]})`, rim = css(rgba('var(--ink-3)')), fill = css(rgba('color-mix(in srgb, var(--ink-2) 28%, var(--bg))'));
+  wingArt = WING.map((rows) => {
+    const c = document.createElement('canvas'); c.width = 18; c.height = 9;
+    const x = c.getContext('2d');
+    rows.forEach((row, yy) => [...row].forEach((ch, xx) => { if (ch === '.') return; x.fillStyle = ch === '#' ? rim : fill; x.globalAlpha = ch === '#' ? 0.9 : 0.6; x.fillRect(xx, yy, 1, 1); }));
+    return c.toDataURL();
+  });
+}
+let flight = 0, leaving = false;
+function fly(dock, out, done) {
+  clearTimeout(flight); flight = 0; landing = null; // a flight under way is superseded, with its end
+  dock.querySelectorAll('.motewing').forEach((w) => w.remove());
+  if (reducedMotion() || document.hidden) { dock.style.transform = ''; done(); return; }
+  drawWings();
+  const wl = document.createElement('i'), wr = document.createElement('i');
+  wl.className = 'motewing l'; wr.className = 'motewing r';
+  for (const w of [wl, wr]) { w.setAttribute('aria-hidden', 'true'); dock.append(w); }
+  const r = dock.getBoundingClientRect(), side = r.left + W / 2 < innerWidth / 2 ? -1 : 1;
+  const rise = r.top + H + 32, drift = 120 + Math.random() * 80, ms = out ? 1150 : 1050, t0 = performance.now();
+  let beat = 0;
+  const step = () => {
+    const t = document.hidden ? 1 : Math.min(1, (performance.now() - t0) / ms), u = out ? t : 1 - t; // coming in is leaving, played backwards
+    let x = 0, y = 0;
+    if (u < 0.14) y = u < 0.07 ? 1 : -2; // the crouch and the hop off (or the bump of landing)
+    else { const k = (u - 0.14) / 0.86, e = k * k; y = -2 - e * rise; x = side * e * drift + Math.round(Math.sin(k * Math.PI * 5) * 3); }
+    dock.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+    const f = wingArt[beat++ % 2];
+    for (const w of [wl, wr]) w.style.backgroundImage = `url(${f})`;
+    if (u >= 0.04) dock.classList.add('flying'); else dock.classList.remove('flying');
+    if (t < 1) { flight = setTimeout(step, FLY_STEP); return; }
+    land();
+  };
+  const land = () => { clearTimeout(flight); flight = 0; landing = null; wl.remove(); wr.remove(); dock.classList.remove('flying'); dock.style.transform = ''; done(); };
+  landing = land;
+  step();
+}
+let landing = null; // the flight under way's end, for a tab hidden mid-flight
+function setAway(on) {
+  pref.set(AWAY, !!on);
+  const dock = $('#motedock');
+  if (!dock) return;
+  drag = null; dock.classList.remove('drag'); // a press held through it carries nothing
+  if (on) {
+    if (!main || leaving) return; // gone already, or going
+    const m = main; main = null; leaving = true; // unmounted at once: nothing reaches him while he flies off
+    m.pause(); life.stop(); clearTimeout(helloTimer); say('');
+    m.draw(ROW.jumping, 2); // in the air
+    fly(dock, true, () => { leaving = false; dock.classList.add('away'); });
+  } else {
+    if (main && !leaving) return; // here already
+    leaving = false;
+    dock.classList.remove('away'); place(dock);
+    main?.pause();
+    const m = main = new Mote(dock.querySelector('.mote'));
+    m.stop(); m.once = 'flying'; m.draw(ROW.jumping, 2); // nothing else draws him while he lands
+    fly(dock, false, () => { if (main !== m) return; m.once = null; m.rest(); m.play('waving'); hooks.mote.sync(); if (!document.hidden) life.start(); });
+  }
+}
+// another tab sent him off or called him back: this one follows
+addEventListener('storage', (e) => { if (e.key === 'loupe.' + AWAY) setAway(away()); });
 
 // ------------------------------------------------------------------ the still ones on home
 // home's quiet states: Mote at rest where nothing waits on you, slumped where a link led nowhere
@@ -466,9 +552,9 @@ document.addEventListener('pointermove', (e) => {
 let drag = null;
 document.addEventListener('pointerdown', (e) => {
   const m = e.target.closest?.('#motedock .mote');
-  if (!m || e.button !== 0) return;
+  if (!m || e.button !== 0 || flight || !main) return; // not one in flight
   const dock = m.parentElement, r = dock.getBoundingClientRect();
-  drag = { dock, dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, moved: false };
+  drag = { dock, dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, moved: false, trail: [] };
   m.setPointerCapture?.(e.pointerId); e.preventDefault();
 });
 document.addEventListener('pointermove', (e) => {
@@ -477,27 +563,74 @@ document.addEventListener('pointermove', (e) => {
   drag.moved = true; drag.dock.classList.add('drag');
   const x = clamp(e.clientX - drag.dx, 4, innerWidth - W - 4), y = clamp(e.clientY - drag.dy, 4, innerHeight - H - 4);
   Object.assign(drag.dock.style, { left: `${x}px`, top: `${y}px`, bottom: 'auto' });
+  drag.trail.push([e.clientX, e.clientY, e.timeStamp]); if (drag.trail.length > 6) drag.trail.shift(); // for a throw
   aim(drag.dock);
 });
+// ------------------------------------------------------------------ thrown
+// Let go of him mid-swing and he flies on a little, skids, and lands on his back, as a beetle does: legs paddling at
+// the air, a rock to one side, and a heave that rights him with a hop. Only for a real throw (faster than 1.4 px/ms
+// over the last moves), and not with reduced motion, where he lands where he was let go.
+const THROW = 1.4;
+function thrown(d, m, e) {
+  const t = d.trail.filter((p) => e.timeStamp - p[2] < 90);
+  if (t.length < 2 || reducedMotion()) return false;
+  const [x0, y0, t0] = t[0], dt = Math.max(8, e.timeStamp - t0);
+  let vx = (e.clientX - x0) / dt, vy = (e.clientY - y0) / dt;
+  if (Math.hypot(vx, vy) < THROW) return false;
+  const dock = d.dock;
+  m.pause(); life.stop(); m.once = 'thrown'; say('');
+  m.draw(ROW.jumping, 2);
+  let last = performance.now();
+  const glide = () => { // on, slowing, kept inside the window
+    if (m.once !== 'thrown' || main !== m) return; // called off meanwhile
+    const now = performance.now(), k = Math.min(48, now - last); last = now;
+    const r = dock.getBoundingClientRect();
+    const x = clamp(r.left + vx * k, 4, innerWidth - W - 4), y = clamp(r.top + vy * k, 4, innerHeight - H - 4);
+    if (x <= 4 || x >= innerWidth - W - 4) vx = 0; if (y <= 4 || y >= innerHeight - H - 4) vy = 0;
+    Object.assign(dock.style, { left: `${Math.round(x)}px`, top: `${Math.round(y)}px`, bottom: 'auto' });
+    vx *= Math.pow(0.86, k / 16); vy *= Math.pow(0.86, k / 16);
+    if (Math.hypot(vx, vy) > 0.08 && m.once === 'thrown') return requestAnimationFrame(glide);
+    pref.set(SPOT, { x: x / innerWidth, y: y / innerHeight }); aim(dock);
+    onBack(dock, m);
+  };
+  requestAnimationFrame(glide);
+  return true;
+}
+function onBack(dock, m) {
+  if (m.once !== 'thrown') return;
+  dock.classList.add('onback');
+  m.run('running-right', true); // his legs, at the air (m.timer is their loop's)
+  m.once = 'thrown';
+  m.aux = setTimeout(() => { // a rock, then the heave over, on a timer of its own
+    dock.classList.add('rock');
+    m.aux = setTimeout(() => {
+      m.aux = 0; m.stop();
+      dock.classList.remove('onback', 'rock');
+      m.once = null; m.play('jumping');
+      m.aux = setTimeout(() => { m.aux = 0; if (main === m && !away()) { say(status()); life.start(); } }, JUMP_MS);
+    }, 520);
+  }, 1300);
+}
 document.addEventListener('pointerup', (e) => {
   if (!drag) return;
   const d = drag; drag = null; d.dock.classList.remove('drag');
   if (!d.moved) { main?.play('waving'); return; }
+  if (main && thrown(d, main, e)) return;
   const r = d.dock.getBoundingClientRect();
   pref.set(SPOT, { x: r.left / innerWidth, y: r.top / innerHeight });
 });
-// a double click sends it back to its corner
-document.addEventListener('dblclick', (e) => { const dock = e.target.closest?.('#motedock'); if (dock) { pref.set(SPOT, null); place(dock); } });
+// a double click: he flies off (⌘K's Show Mote calls him back)
+document.addEventListener('dblclick', (e) => { if (e.target.closest?.('#motedock .mote')) setAway(true); });
 // a hidden tab keeps no timers; it picks up again on the right frame
 document.addEventListener('visibilitychange', () => {
   pruneHomeMotes();
   if (document.hidden) {
+    landing?.(); // a flight under way lands, or leaves, at once
     clearTimeout(wordsTimer); clearTimeout(helloTimer);
     main?.pause(); life.stop(); // nobody is watching: no life either
     for (const m of homeMotes) m.pause();
   } else {
-    if (main) life.start();
-    if (main) { main.pause(); main.rest(); say(status()); }
+    if (main) { life.start(); main.pause(); main.rest(); say(status()); }
     for (const m of homeMotes) { m.pause(); m.rest(); }
   }
 });

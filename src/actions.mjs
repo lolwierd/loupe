@@ -81,7 +81,7 @@ const review = {
     const comments = pend?.comments || [];
     if (event !== 'APPROVE' && !body.trim() && !comments.length) throw fail(`GitHub needs a summary for ${EVENTS[event]}: write one above`, 400);
     return {
-      title: `${EVENTS[event]} ${t.full}`,
+      title: `${event === 'APPROVE' ? 'Approve' : `${EVENTS[event]} on`} ${t.full}`,
       where: `on GitHub, as ${t.pr.viewer || 'you'}`,
       confirm: EVENTS[event],
       tone: event === 'APPROVE' ? 'primary' : event === 'REQUEST_CHANGES' ? 'danger' : '',
@@ -322,8 +322,15 @@ const push = {
     const diverged = st.behind > 0;
     if (diverged && !force) return { title: `Push ${st.branch}`, where: `to ${to}`, confirm: 'Push', needsForce: true, items: [], warnings: [`${st.remoteRef} has ${st.behind} commit${st.behind === 1 ? '' : 's'} your branch does not (a rebase or an amend). Pushing means overwriting them.`], guard };
     if (!diverged && st.ahead === 0 && st.remoteSha) throw fail(`${st.branch} is already up to date on ${st.remoteRef}`);
+    // the commits that go: the ones no ref of that remote has, as this checkout last fetched it (a ref deleted there
+    // and not pruned here still counts); only shown, so a failed read shows the route alone
+    const not = [st.head, '--not', `--remotes=${st.remote}`];
+    const sending = Number((await g(ws, ['rev-list', '--count', ...not]).catch(() => '')).trim()) || 0;
+    const going = (await g(ws, ['log', '--format=%h%x09%s', '-n', '13', ...not]).catch(() => '')).split('\n').filter(Boolean).map((l) => { const [sha, ...rest] = l.split('\t'); return { sha, subject: rest.join('\t') }; });
     return {
-      title: `${diverged ? 'Overwrite' : 'Push'} ${st.branch}`, where: `to ${to}${st.upstream ? '' : ', and track it'}`, confirm: diverged ? 'Overwrite' : 'Push', tone: diverged ? 'danger' : 'primary',
+      // the route above says where; the footer only what else comes of it
+      title: `${diverged ? 'Overwrite' : 'Push'} ${st.branch}`, where: st.upstream ? `to ${st.remote}, as ${st.branch} already tracks` : `to ${st.remote}, and ${st.branch} tracks it from now on`, confirm: diverged ? 'Overwrite' : 'Push', tone: diverged ? 'danger' : 'primary',
+      route: { from: st.branch, to: `${st.remote}/${st.dest.replace(/^refs\/heads\//, '')}`, fresh: !st.remoteSha, sending }, commits: going,
       items: [`${st.ahead} commit${st.ahead === 1 ? '' : 's'} ${st.remoteSha ? `onto ${st.remoteRef}` : 'as a new branch'}`, ...(diverged ? [`Replaces ${st.remoteRef} (${st.remoteSha.slice(0, 7)}) only if it is still exactly that: a lease on that commit`] : [])],
       warnings: diverged ? [`${st.behind} commit${st.behind === 1 ? '' : 's'} on the remote will be gone.`] : [],
       guard,

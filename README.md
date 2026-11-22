@@ -33,11 +33,12 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
 - **Keyboard first.** `⌘K`, or a click on the title, finds any file, open change, commit or action; `f` searches the
   whole repository at the reviewed revision; `?` lists the keys.
 
-Mote, the small beetle floating in the corner (drag him anywhere), shows what the desk is doing: working while an
-answer or the map is being written, and jumping when you have read the last file. He looks with his eyes, at the
-pointer when it is near and at what just happened: the answer that landed, the file you viewed, which earns a little
-hop and a check off his head. Left alone he lives a little, every so often: looks around, blinks, peeks at the code,
-hums, catches a glint on his lens, shuffles, waves, and after a few quiet minutes dozes off until you move.
+Mote, the small beetle floating in the corner (drag him anywhere; double-click him and he flies off, until Show Mote
+in `⌘K` calls him back), shows what the desk is doing: working while an answer or the map is being written, and
+jumping when you have read the last file. He looks with his eyes, at the pointer when it is near and at what just
+happened: the answer that landed, the file you viewed, which earns a little hop and a check off his head. Left alone
+he lives a little, every so often: looks around, blinks, peeks at the code, hums, catches a glint on his lens,
+shuffles, waves, and after a few quiet minutes dozes off until you move.
 
 Small things answer what you do. Every button gives a little when pressed, by the pointer or by its key. Approving
 prints a stamp with the commit you approved and leaves its impression under the review, which slips out of register

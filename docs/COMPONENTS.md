@@ -51,7 +51,9 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
 - **Chip** (a value you can act on: an attachment, a branch, a ref): 24 px, `--r1`, 1 px `--rule`, 12 px. A head and
   its base (`branch → main`) wrap as one unit.
 - **Model picker**: the model and effort as words with a chevron (`Sonnet 5.5 · high ⌄`), 24 px, 13 px 500 `--ink-2`, no
-  box; hover `--hover`. The spark only for Claude models. The same drawing in a line of links and beside a send button.
+  box; hover `--hover`. The spark (the pixel sprite, still: the one spark) only for Claude models. The same drawing in a
+  line of links and beside a send button, and always before the action it sets ("Sonnet 5.5 · low ⌄ Write it",
+  "… Regenerate"). One picker and one Regenerate for the brief: the Overview's, beside the line that says what wrote it.
 - **Pill** (a state you only read: open, draft, test, new, high risk): 18 px, `--r1`, 11 px 500, padding 0 8,
   `--hover` background, `--ink-2` text; semantic variants tint background and text with ok, warn or danger.
 - **Group header in a list** (the file list's guide sections): on the rows' own grid, its number in their glyph column
@@ -62,7 +64,8 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   keyboard focus (2 px blue inset ring), `--r1` corners inside lists with padding, square in full-bleed lists.
   Leading glyph column, label, trailing meta column right-aligned with tabular figures.
   A key in a row is a plain 11 px mono figure in that trailing column, like a count, never a keycap.
-  In a menu, a rule sits only between rows (never first, last or twice), and a row that cannot be undone asks in its own
+  In a menu, a row's icon says what kind of thing the row is (a chat or a linked session, a Claude or a Codex model),
+  never what it does, so actions carry none; a rule sits only between rows (never first, last or twice), and a row that cannot be undone asks in its own
   place: its first pick turns the label to "Delete it?" on a faint red fill for 3 s, the second does it. Never the
   browser's `confirm()`; a step that needs more than a question is a dialog, weighted by how hard it is to undo.
 - **Palette** (⌘K, and `f` for the repository): the top bar's title opened, as an address bar opens. Flush to the top
@@ -72,6 +75,10 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   or branch icon for changes, empty for commands, so every label shares one edge) and a trailing column of keys,
   counts and checks. Section headers sit on the rows' text edge. The change you are on is not listed (it is the
   title). One quiet line at the foot says what else the field takes. Home and windows under 760 px get it centred.
+- **Dialog**: its title is what it will do, a verb and its object ("Commit 2 files on token-bucket", "Push
+  token-bucket", "Approve acme/widgets#12"), from the moment it opens; the preview only makes it exact. The body is what
+  you write, or, for a dialog with nothing to write, what will happen drawn as itself (a push: the branch → its remote
+  ref as chips, and the commits that go), never a list of one bullet. The footer says what else comes of it.
 - **List box** (files in a dialog, commits, home lists): 1 px `--rule`, `--r3`, rows divided by 1 px `--rule`.
 - **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`.
 - **File note**: a caption between an unfolded file's header and diff, aligned to the code's text edge where room permits.
@@ -82,6 +89,8 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   tabular figures.
 - **Empty state**: one line in `--ink-3` 13 px, with the one action that fills it as a link button.
 - **Toast**: bottom centre, `--act` background, on-act text, `--r2`, 13 px; an action in it is underlined text. A
+  failure carries the pixel cross in red before its words, is said as an alert, and stays 6 s; any toast waits while the
+  pointer is on it and goes when clicked. A
   commit's toast flips the new commit's id in from its parent's, split-flap cells one mono character wide (`receipt.js`).
 - **Motion**: background and colour 120 ms `--ease`; nothing slides except dialogs (160 ms rise) and menus (none). A
   press is 50 ms in and 140 ms out. After a write the top bar's next step turns over to the one after it in the
@@ -95,6 +104,18 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   pitched up a pentatonic ladder by the share read (the last file resolves it), a stamp, a typebar for a commit, a
   plucked string for a push, a dull knock for a failed send, one bell for an answer that lands in a hidden tab. Nothing
   for typing, clicks or scrolling. Made in the page (`voices.js`), no files.
+
+- **Mote away**: double-click him, or Hide Mote (⌘K, the view menu): he flies off, wings out from under his shell,
+  out of the window; Show Mote flies him back to his spot. Remembered in the browser, and followed by its other tabs.
+  Away, he is not mounted, so nothing of him runs.
+
+## Easter eggs
+Small things for whoever plays, and only things from loupe's own world: the loupe itself, and Mote being a beetle. Each
+is found by doing something a person might do anyway, never by a code; none fires during work (a dialog, an answer
+being written), none makes a sound, and with reduced motion none happens. They are not in the README.
+- Hold ⌥ over code: a 2× lens follows the pointer (`eggs.js`). Over Mote, he is under the glass too, and waves back.
+- Throw Mote (let go of him mid-swing, faster than 1.4 px/ms): he flies on, skids, lands on his back with his legs at
+  the air, rocks, and heaves himself over with a hop.
 
 ## Print textures
 A few states are drawn as a print shop would show them instead of in flat colour. They are the only textures in the

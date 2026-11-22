@@ -6,8 +6,9 @@ import { spark } from './pixel.js';
 
 // ------------------------------------------------------------------ menu
 // items: { label, sub, key, value, current | on, header, sep, danger, disabled, icon, two: [line1, line2] }
-// A menu that has any icons gives every row the icon column, so labels share one x whether or not their row has an
-// icon; the same goes for the key and check columns on the right.
+// A row's icon says what kind of thing the row is (a chat or a linked session, a Claude or a Codex model), never what
+// it does, so actions carry none. A menu that has any icons gives every row the icon column, so labels share one x
+// whether or not their row has an icon; the same goes for the key and check columns on the right.
 let openMenuEl = null;
 export function closeMenu() { openMenuEl?.remove(); openMenuEl = null; document.removeEventListener('mousedown', outside, true); }
 function outside(e) { if (openMenuEl && !openMenuEl.contains(e.target)) closeMenu(); }
@@ -72,7 +73,8 @@ export function menu(anchor, items, onPick, { align = 'left', width } = {}) {
 export const runLabel = (r) => `${modelName(r.model)} · ${r.effort}`;
 export const briefRunBtn = () => runBtn(briefRun(), { purpose: 'brief' });
 export const modelKind = (model) => S.app?.models.find((m) => m.id === model)?.kind || (/^gpt-/.test(model || '') ? 'codex' : 'claude');
-const runContent = (r) => `${modelKind(r.model) === 'claude' ? I.spark : ''}<span>${esc(runLabel(r))}</span>${I.chev}`;
+// the one spark: the pixel sprite Claude's words and work carry everywhere else, still here (a choice, not work)
+const runContent = (r) => `${modelKind(r.model) === 'claude' ? spark(16, true) : ''}<span>${esc(runLabel(r))}</span>${I.chev}`;
 const convKind = (conv) => (conv?.linked || conv?.sessionId ? 'claude' : conv?.modelKind || conv?.messages.find((m) => m.role !== 'user')?.role);
 function availableModel(model, conv, fallback) {
   const kind = convKind(conv) || modelKind(model);
@@ -97,7 +99,7 @@ export function refreshRunButtons() {
 export function pickRun(btn, choice) {
   const cur = choice ? { ...choice.run } : { model: btn.dataset.model, effort: btn.dataset.effort };
   const kind = convKind(S.review?.convs?.[btn.dataset.runConv]);
-  const items = [{ header: 'MODEL' }, ...S.app.models.filter((m) => !kind || m.kind === kind).map((m) => ({ label: m.label, value: { model: m.id }, current: m.id === cur.model })),
+  const items = [{ header: 'MODEL' }, ...S.app.models.filter((m) => !kind || m.kind === kind).map((m) => ({ label: m.label, value: { model: m.id }, current: m.id === cur.model, icon: `<span class="mi-ic">${m.kind === 'codex' ? I.codex : spark(16, true)}</span>` })),
     { sep: true }, { header: 'EFFORT' }, ...S.app.efforts.map((e) => ({ label: e, value: { effort: e }, current: e === cur.effort, sub: { low: 'fastest', max: 'slowest' }[e] || '' }))];
   menu(btn, items, (it) => {
     Object.assign(cur, it.value);

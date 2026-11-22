@@ -538,7 +538,7 @@ export async function setViewed(p, on) {
   hooks.sound?.viewed(S.id); // a tick up the ladder (with desk sounds on)
   // Mote is pleased (a hop and a check off his head), then looks at the file's row in the list, where its check lands
   if (on) { hooks.mote?.viewed(); hooks.mote?.glance(() => document.querySelector(`.trow[data-p="${CSS.escape(p)}"]`), 420); }
-  api(`/api/w/${S.id}/viewed`, { method: 'POST', body: { path: p, blob: key, viewed: on } }).catch((e) => toast(e.message));
+  api(`/api/w/${S.id}/viewed`, { method: 'POST', body: { path: p, blob: key, viewed: on } }).catch((e) => toast(e.message, { fail: true }));
   if (on) {
     const c = cardEl(p);
     const top = c.getBoundingClientRect().top - $('#center').getBoundingClientRect().top;
@@ -582,7 +582,7 @@ async function sendDraft() {
     // You asked, so you are waiting for the answer: it opens beside the code, streaming.
     hooks.openMark?.(r.thread.id);
     hooks.mote?.glance(() => document.querySelector(`.mrow[data-t="${CSS.escape(r.thread.id)}"]`)); // and Mote at the mark you made
-  } catch (e) { toast(e.message); if (S.id === id && !S.draft) { S.draft = { ...d, value: text }; renderBody(d.path); } }
+  } catch (e) { toast(e.message, { fail: true }); if (S.id === id && !S.draft) { S.draft = { ...d, value: text }; renderBody(d.path); } }
 }
 
 export function attachSelection() {
@@ -642,7 +642,7 @@ $('#root').addEventListener('click', async (e) => {
     S.review.checks ||= {};
     if (on) S.review.checks[b.dataset.key] = Date.now(); else delete S.review.checks[b.dataset.key];
     if (S.mode === 'guide') hooks.renderTree?.(); // the contents count the ticks
-    return api(`/api/w/${S.id}/checks`, { method: 'POST', body: { key: b.dataset.key, on } }).catch((err) => toast(err.message));
+    return api(`/api/w/${S.id}/checks`, { method: 'POST', body: { key: b.dataset.key, on } }).catch((err) => toast(err.message, { fail: true }));
   }
   if (act === 'fold') return toggleFold(p);
   if (act === 'viewed') return setViewed(p, !isViewed(fileOf(p)));
@@ -677,13 +677,13 @@ $('#root').addEventListener('click', async (e) => {
 export function setResolved(th, on) {
   th.resolved = on;
   renderBody(th.path); hooks.threadsChanged?.(th.path);
-  return api(`/api/w/${S.id}/threads/${th.id}`, { method: 'PATCH', body: { resolved: on } }).catch((err) => toast(err.message));
+  return api(`/api/w/${S.id}/threads/${th.id}`, { method: 'PATCH', body: { resolved: on } }).catch((err) => toast(err.message, { fail: true }));
 }
 export function deleteMark(th) {
   S.review.threads = S.review.threads.filter((t) => t !== th);
   if (S.mark === th.id) hooks.closeMark?.();
   renderBody(th.path); hooks.threadsChanged?.(th.path);
-  return api(`/api/w/${S.id}/threads/${th.id}`, { method: 'DELETE' }).catch((err) => toast(err.message));
+  return api(`/api/w/${S.id}/threads/${th.id}`, { method: 'DELETE' }).catch((err) => toast(err.message, { fail: true }));
 }
 // The draft's text survives the redraws a live update causes.
 document.addEventListener('input', (e) => {

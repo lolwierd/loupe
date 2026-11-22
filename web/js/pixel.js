@@ -114,6 +114,8 @@ const ICONS = {
   check: ['........##', '.......###', '......###.', '##...###..', '###.###...', '.#####....', '..###.....', '...#......'],
   // a write on its way: up and to the right
   arrow: ['..#####', '....###', '...#.##', '..#...#', '.#.....', '#......', '.......'],
+  // something failed: a small cross, one pixel wide on exact diagonals
+  cross: ['#...#', '.#.#.', '..#..', '.#.#.', '#...#'],
   // changed since you viewed it
   dot: ['..#..', '.###.', '#####', '.###.', '..#..'],
   // the loupe itself: a two-pixel ring with a glint, and a handle on the diagonal
