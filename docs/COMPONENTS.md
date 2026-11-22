@@ -31,29 +31,48 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
 ## Relief
 The controls are blind-embossed in the sheet: pressed by a die with no ink, so a control's shape is only light and
 shade, never an outline. One light, from above (the glass's lit top edge, the press's shadow inside a pushed top edge).
-- **What stands up, what is pressed in**: what you press stands up out of the sheet (buttons, chips, a select, a key,
-  the chosen segment, the map's parts); what you write in or only read is pressed into it (fields, composers, a dialog's
-  message box, pills, the segmented control's channel, what the map shows outside this repository). Pressing a raised
-  thing pushes it through to a well: its light and shade swap.
-- **Raised** (`--raised`): a plateau of `--face` (the sheet a little paler, as stretched paper is; under the pointer it
-  lifts: `--face-hi`, `--raised-hi`, a longer fall below), a lit line inside its top (`--lit`), faint sides (`--shade-2`), a sheen along its top (`--sheen`), and below
-  it a firm line of shade and a soft fall (`--shade`, `--shade-3`). Chips, the chosen segment and a lifted ghost use the
-  lower `--raised-soft`.
-- **Well** (`--well`): the sheet's white floor (`--bg`), shade inside its top wall and a soft fall under it, faint sides,
-  and a lit lip under its foot. Writing in it, its sides darken to ink-3 (`--well-in`).
+- **What stands up, what is pressed in**: what you press stands up out of the sheet (buttons, chips, a status pill you
+  can press, a select, a key, the chosen segment, the + that starts a mark, the map's parts); what you write in or only
+  read is pressed into it (fields, composers, the draft in the code, a dialog's message box, the palette's field row,
+  pills, read-only chips such as a route's branch names, the segmented control's channel, what the map shows outside
+  this repository). Pressing a raised thing pushes it through to a well: its light and shade swap. A latch stays pushed in
+  while it is on: the top bar's Files and Inspector toggles, and a file's Viewed box once the file is viewed.
+- **Ghosts**: everything else you can press lies flat in the page until the pointer lifts it: ghost and icon buttons,
+  link buttons (a plate round their words, standing out by its padding so the words keep their place), the model
+  picker, the map card's title, an open mark's place (`file · line`), a pull request's figures, "N more lines", a
+  hidden mark's pin, a toast's action (on the ink, keeping its underline), and tabs (a plate lifts behind the
+  word; the selected tab keeps its ink underline).
+- **Two heights**: the act (a primary, ink) stands full height at rest; a default (secondary) button, a chip you can
+  press and the scope button stand low (`--raised-soft`) and rise to full height (`--raised`) only under the pointer, so
+  a page of secondary actions stays quiet and the act is the one thing standing. (The bin's scope picker is a ghost,
+  read-only chips are pressed in, and a latched Viewed box stays in its well.)
+- **Raised** (`--raised`): a plateau of `--face` (the sheet a little paler, as stretched paper is), a lit line inside
+  its top (`--lit`), faint sides (`--shade-2`), a sheen along its top (`--sheen`), and below it a firm line of shade and
+  a soft fall (`--shade`, `--shade-3`). Low (`--raised-soft`): the same with a lighter foot and fall, for things
+  standing at rest that are not the act (see Two heights) and the chosen segment; a lifted ghost stays low.
+- **Well** (`--well`): a floor a hair below the sheet (`--floor`, so it reads pressed in on a white dialog too), shade
+  inside its top wall and a soft fall under it, faint sides, and a lit lip under its foot. Writing in it, its sides go
+  to ink-3 (`--well-in`, 4.7:1): that is a field's focus mark, from the pointer or the keyboard alike, so a field takes
+  no blue ring.
 - **Ink**: the primary is a registered emboss, ink printed on the plateau (`--ink-raised`, pressed `--ink-well`).
-- **One list**: the composite reliefs (`--raised`, `--raised-hi`, `--raised-soft`, `--flat`, `--well`, `--well-in`,
+- **One list**: the composite reliefs (`--raised`, `--raised-soft`, `--flat`, `--well`, `--well-in`,
   `--ink-raised`, `--ink-well`, the split button's halves, the draft's landing flash) are the same eight shadows in the
   same order (five inset: top, sides, foot, sheen, crease; three outer: the cast and its two softenings), unused ones
   transparent (`--t0`, `--o0`), so a press and a hover blend instead of jumping. Smaller marks draw less: a key is two
-  inset lines and its skirt, a pill one inset line, a key hint inside a button keeps its outline (a key keeps its
-  shape), and the map's parts keep a faint stroke under their drop-shadows (SVG has no inset shadow).
+  inset lines and its skirt, a read-only pill one inset line (a pill you can press stands low, as a chip), a key hint inside a button keeps a half-strength outline (a key
+  keeps its shape), and the map's parts have no stroke: a half-pixel soft edge and drop-shadows (SVG has no inset
+  shadow), the change's parts standing higher.
 - **Edges that stay**: menus, dialogs, the palette, list boxes, the map card and checkboxes are surfaces or marks, not
-  reliefs, and keep their rules.
+  reliefs, and keep their rules. A quote you can press (above a mark's thread) is a list box that, under the pointer,
+  trades its rule for a card's lift.
+- **Forced colours** drop every shadow, so there raised controls take a `ButtonText` rule, wells a `CanvasText` one,
+  a focused well the system's `Highlight` ring and the chosen segment an underline.
 
 ## Components
 - **Button**, four kinds only. The frame's top bar carries no primary: its next step is a default button. *Primary*:
-  ink on a raised plateau (`--ink-raised`), on-act text. *Default*: raised (`--face`, `--raised`), ink text, no border.
+  ink on a raised plateau (`--ink-raised`), on-act text: the one thing standing full height at rest. *Default* (every
+  secondary action): a low plateau (`--face`, `--raised-soft`), ink text, no border; the pointer lifts it to full height
+  (`--raised`).
   *Ghost*: lies flat in the sheet, `--ink-2`; the pointer lifts it (`--face`, `--raised-soft`). *Danger*: default with
   red text; a destructive confirm is a red plateau. All 28 px (24 in rows, 32 in dialog footers), padding 0 12 (0 8 at
   24), 13 px 500, `--r2` (`--r1` at 24). A key hint is a `<kbd>` inside the button, after the label, pressed into it.
@@ -66,20 +85,24 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
 - **Key hint** (`kbd`): a keycap, a small plateau whose skirt is two pixels of shade. When its key is pressed it bottoms
   out on one, into a well, and the control that key drives shows its press, if it is in view (`strike.js`). In a menu
   or the palette, and in the find field, a key is a plain figure.
-- **Link button** (`.link`): inline text action, 12 or 13 px to match its line, `--ink-2`, hover ink + underline. Used
-  for actions inside text or section headers ("All", "Rewrite", "Back to this change alone").
+- **Link button** (`.link`): a text action, 12 or 13 px to match its line, `--ink-2`, a ghost: the pointer lifts a
+  plate round its words (`--raised-soft`; 4 px of padding with 4 px taken back by margin, so the words keep their place),
+  a press sinks it. Used for actions inside text or section headers ("All", "Rewrite", "Back to this change alone").
 - **Input / select / scope button**: 28 px, `--r2`, padding 0 8, 13 px, no border. An input (and a composer, and a
-  dialog's message box) is a well on `--bg`; writing in it, its sides darken (`--well-in`, on the composer and the
-  message box while anything in them has focus); an input focused from the keyboard also takes the blue ring. A select is pressed, so the scope button is raised; the bin's own lies flat until the pointer lifts it. Large
+  dialog's message box) is a well on `--floor`; writing in it, its sides darken (`--well-in`, on the composer and the
+  message box while anything in them has focus); that is their focus mark, with no blue ring (with forced colours, which
+  drop shadows, the system's highlight ring). A select is pressed, so the scope button is raised; the bin's own lies flat until the pointer lifts it. Large
   inputs (home Open box, dialog title): 40 px, 14 px.
 - **Segmented control**: 24 px buttons inside a 28 px channel pressed into the sheet (`--hover`, `--well`), `--r2`
   channel, `--r1` buttons; the chosen one stands in it (`--face`, `--raised-soft`) with ink text. Same everywhere (verdict, Write/Preview tabs are tabs, not segments).
-- **Tabs**: text, 13 px 500, `--ink-3`; selected ink with a 2 px ink underline. Panel tabs and Write/Preview alike.
+- **Tabs**: text, 13 px 500, `--ink-3`; selected ink with a 2 px ink underline. Under the pointer a plate lifts behind
+  the word (28 px in a 40 px tab row; on the map's tabs, 26 px reaching 8 px past the word), pressed a well. Panel tabs,
+  Write/Preview and the map's tabs alike; a map tab already chosen does not lift.
 - **Chip** (a value you can act on: an attachment, a branch, a ref): 24 px, `--r1`, a low plateau (`--face`,
   `--raised-soft`), 12 px; pressed, a well. A head and
   its base (`branch → main`) wrap as one unit.
-- **Model picker**: the model and effort as words with a chevron (`Sonnet 5.5 · high ⌄`), 24 px, 13 px 500 `--ink-2`, no
-  box; hover `--hover`. The spark (the pixel sprite, still: the one spark) only for Claude models. The same drawing in a
+- **Model picker**: the model and effort as words with a chevron (`Sonnet 5.5 · high ⌄`), 24 px, 13 px 500 `--ink-2`, a
+  ghost: it lies flat and the pointer lifts it (`--raised-soft`). The spark (the pixel sprite, still: the one spark) only for Claude models. The same drawing in a
   line of links and beside a send button, and always before the action it sets ("Sonnet 5.5 · low ⌄ Write it",
   "… Regenerate"). One picker and one Regenerate for the brief: the Overview's, beside the line that says what wrote it.
 - **Pill** (a state you only read: open, draft, test, new, high risk): 18 px, `--r1`, 11 px 500, padding 0 8,
@@ -109,9 +132,10 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
   you write, or, for a dialog with nothing to write, what will happen drawn as itself (a push: the branch → its remote
   ref as chips, and the commits that go), never a list of one bullet. The footer says what else comes of it.
 - **List box** (files in a dialog, commits, home lists): 1 px `--rule`, `--r3`, rows divided by 1 px `--rule`.
-- **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`.
+- **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`. A draft's words sit in a well that
+  starts after its glyph, on the 20 px grid; its send is the primary.
 - **The + that starts a mark**: in the margin, on the empty left edge of its side's line-number gutter (where a hidden
-  mark's pin sits), 16 px, shown on the line's hover; never over a number or the diff's sign. A line whose pin is there
+  mark's pin sits), 16 px, ink on a small plateau (`--ink-raised`), shown on the line's hover; never over a number or the diff's sign. A line whose pin is there
   keeps the pin; its number still selects it.
 - **Going back** after a jump (a definition, a cited line): `[`, with no button in the top bar; the whole-file viewer
   keeps its own Back in its header.
@@ -130,7 +154,8 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
 - **Status**: M / A / D / R letters (11 px mono 600: amber, green, red, ink-2); the pixel check for viewed; counts as
   tabular figures.
 - **Empty state**: one line in `--ink-3` 13 px, with the one action that fills it as a link button.
-- **Toast**: bottom centre, `--act` background, on-act text, `--r2`, 13 px; an action in it is underlined text. A
+- **Toast**: bottom centre, `--act` background, on-act text, `--r2`, 13 px; an action in it is a ghost on the ink (the
+  pointer lifts an ink plate, `--ink-raised`). A
   failure carries the pixel cross in red before its words, is said as an alert, and stays 6 s; any toast waits while the
   pointer is on it and goes when clicked. A
   commit's toast flips the new commit's id in from its parent's, split-flap cells one mono character wide (`receipt.js`).

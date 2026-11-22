@@ -406,7 +406,7 @@ function githubHTML(t) {
 // Asking at the lines, or commenting for your GitHub review: one slim field there. A question is sent with ↵, like a chat;
 // a comment is GitHub writing, kept as GitHub keeps it: ↵ is a new paragraph and ⌘↵ adds it. The send is drawn like the
 // selection bar's buttons, quiet until there is something to send.
-const draftSend = (label, empty, gh) => `<button class="btn ghost sm send" data-act="draft-send"${empty ? ' disabled' : ''} title="${gh ? '⌘↵ adds it to your review' : '↵ sends, ⇧↵ starts a new line'}"><span>${label}</span><kbd>${gh ? '⌘↵' : '↵'}</kbd></button>`;
+const draftSend = (label, empty, gh) => `<button class="btn primary sm send" data-act="draft-send"${empty ? ' disabled' : ''} title="${gh ? '⌘↵ adds it to your review' : '↵ sends, ⇧↵ starts a new line'}"><span>${label}</span><kbd>${gh ? '⌘↵' : '↵'}</kbd></button>`;
 const askWho = (run) => (modelKind(run?.model) === 'codex' ? 'Codex' : 'Claude');
 function draftHTML() {
   const d = S.draft, empty = !d.value?.trim();
