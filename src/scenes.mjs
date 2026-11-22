@@ -24,3 +24,18 @@ export async function normalizeScene(raw, { by = 'brief', conv = null, model = n
     problem: null,
   };
 }
+
+// a look-over's fixes, as edits to the document: each finds a passage that is there exactly once and replaces it; one
+// that is missing or there twice and the whole set is let go (the scene stands as it was)
+export function applyEdits(html, edits) {
+  let out = String(html);
+  for (const e of Array.isArray(edits) ? edits : []) {
+    const find = typeof e?.find === 'string' ? e.find : '', replace = typeof e?.replace === 'string' ? e.replace : null;
+    if (!find || replace === null) return { problem: 'an edit without find and replace' };
+    const at = out.indexOf(find);
+    if (at < 0) return { problem: `an edit's find is not in the document: ${JSON.stringify(find.slice(0, 80))}` };
+    if (out.indexOf(find, at + 1) >= 0) return { problem: `an edit's find is there more than once: ${JSON.stringify(find.slice(0, 80))}` };
+    out = out.slice(0, at) + replace + out.slice(at + find.length);
+  }
+  return { html: out };
+}

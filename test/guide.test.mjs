@@ -328,3 +328,12 @@ test('a section names files as the change has them: an exact path first, then wi
   assert.deepEqual(d.brief.sections[0].files, ['a/config.ts', 'lib/only.ts'], 'a/config.ts is that file, not config.ts; util.ts names two files, so neither');
   assert.ok(d.brief.sections[1].files.includes('config.ts'));
 });
+
+test('a look-over fixes a scene with edits: each finds a passage that is there once; one that is not, and none land', async () => {
+  const { applyEdits } = await import('../src/scenes.mjs');
+  assert.deepEqual(applyEdits('<b>a</b><i>b</i>', [{ find: '<b>a</b>', replace: '<b>A</b>' }, { find: 'b</i>', replace: 'B</i>' }]), { html: '<b>A</b><i>B</i>' });
+  assert.match(applyEdits('<p>x</p><p>x</p>', [{ find: '<p>x</p>', replace: '' }]).problem, /more than once/);
+  assert.match(applyEdits('<p>x</p>', [{ find: 'nope', replace: '' }]).problem, /not in the document/);
+  assert.match(applyEdits('<p>x</p>', [{ find: '', replace: 'y' }]).problem, /without find/);
+  assert.deepEqual(applyEdits('<p>x</p>', []), { html: '<p>x</p>' });
+});

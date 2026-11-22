@@ -108,7 +108,7 @@ function chromeOverPipe(prof) {
 //   { unavailable } when there is no Chrome to render it in (the scene is kept without being looked at),
 //   { failed } when it could not be rendered (it is not kept on that), or
 //   { problem, errors, cut, shots: [{ theme, at, file }], dir }; stills land in dir, which its writer may read
-export async function renderScene(html, { origin, height = 320, signal = null, times = { light: [1200, 6000], dark: [3000] } } = {}) {
+export async function renderScene(html, { origin, height = 320, signal = null, times = { light: [1000, 4000], dark: [2500] } } = {}) {
   if (signal?.aborted) return { failed: 'stopped' }; // stopped before it began: no Chrome, no folders, on any machine
   if (!BIN.chrome) return { unavailable: 'no Chrome to render it in' };
   const dir = fs.mkdtempSync(path.join(STATE_DIR, 'tmp-scene-')), prof = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-chrome-'));
@@ -136,7 +136,7 @@ export async function renderScene(html, { origin, height = 320, signal = null, t
       // kept small and few here, before any of it comes back
       const ok = await ev(`(async () => {
         const cs = getComputedStyle(document.documentElement), v = (k) => cs.getPropertyValue(k).trim();
-        const keys = ['--bg', '--ink', '--ink-2', '--ink-3', '--rule', '--rule-strong', '--on-act', '--ok', '--warn', '--danger', '--pencil', '--f-ui', '--f-mono'];
+        const keys = ['--bg', '--chrome', '--ink', '--ink-2', '--ink-3', '--rule', '--rule-strong', '--on-act', '--ok', '--warn', '--danger', '--pencil', '--shade', '--shade-3', '--lit', '--f-ui', '--f-mono'];
         const vars = Object.fromEntries(keys.map((k) => [k, v(k)]).filter(([, x]) => x));
         window.__got = []; window.__report = null; window.__asked = false;
         const f = document.createElement('iframe'); f.setAttribute('sandbox', 'allow-scripts');

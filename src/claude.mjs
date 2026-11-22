@@ -20,9 +20,9 @@ import { git, uid } from './util.mjs';
 import { WORKTREE, changedFiles, fileHunks, readWorktree } from './git.mjs';
 import { eligibleForNotes, fileNoteKey, filesNeedingNotes, currentNotes, NOTES_VERSION } from '../web/js/file-notes.js';
 import { normalizeGuide, carryChatParts, ensureIds, editGuide, guideSummary, guidePart, guideEdits, drops, chatTouchedScene } from './guide.mjs';
-import { normalizeScene } from './scenes.mjs';
+import { normalizeScene, applyEdits } from './scenes.mjs';
 import { openMcp } from './mcp.mjs';
-import { docPrompt, DOC_SCHEMA, DOC_FRAME, DOC_LOOK } from './scene-doc-guide.mjs';
+import { docPrompt, DOC_SCHEMA, LOOK_SCHEMA, DOC_FRAME, DOC_LOOK } from './scene-doc-guide.mjs';
 import { renderScene, renderNotes } from './scene-render.mjs';
 export { normalizeGuide };
 
@@ -477,6 +477,7 @@ function sceneStep(root, name, input = {}) {
   const rel = (p) => (typeof p === 'string' && root && p.startsWith(root + '/') ? p.slice(root.length + 1) : p);
   if (name === 'Grep' || name === 'Glob') return input.path ? rel(input.path) : 'the code';
   if (name === 'mcp__loupe__git') return 'the history';
+  if (name === 'Read' && /\/tmp-scene-[^/]+\/[^/]+\.png$/.test(input.file_path || '')) return 'its frames'; // the stills loupe rendered, not the code
   return toolSummary(root, name, input);
 }
 function toolSummary(root, name, input = {}) {
@@ -740,8 +741,10 @@ export async function emitBrief(ws) {
 const sceneRuns = new Map();
 // a scene's run is long (it reads, then writes a few hundred lines of drawing code at high effort): measured 6 to 13 min
 // on open-source changes, so it gets 25 before it is stopped
-const SCENE_MINUTES = 25, SCENE_LATE = 'took longer than twenty-five minutes';
-const SCENE_APPEND = 'You make animated explainers of code changes for loupe, each an HTML document of your own (HTML, CSS and JavaScript). Exact to the code, in loupe\'s look. Read the code before you make it. Answer only through the structured output.';
+// a scene is worth waiting a few minutes for, never more: past five the run stops, and a look-over starts only while
+// there is time for it (the scene as first rendered stands)
+const SCENE_MINUTES = 5, SCENE_LATE = 'took longer than five minutes', LOOK_BY = 3.5 * 60 * 1000;
+const SCENE_APPEND = 'You make animated explainers of code changes for loupe, each an HTML document of your own (HTML, CSS and JavaScript). Exact to the code, in loupe\'s look. Answer only through the structured output.';
 export function writeScene(ws, plan, { model, effort } = {}) {
   const b0 = ws.review.data.brief;
   if (!b0?.key || b0.pending) return Promise.resolve(null); // not while the guide it belongs to is written again
@@ -756,7 +759,7 @@ export function writeScene(ws, plan, { model, effort } = {}) {
   const timer = setTimeout(() => late.abort(), SCENE_MINUTES * 60 * 1000);
   const entry = { gen, abort };
   entry.p = (async () => {
-    const run = { model: pickModel(model, DEFAULTS.sceneModel), effort: pickEffort(effort, DEFAULTS.sceneEffort) };
+    const run = { model: pickModel(model, b0.model || DEFAULTS.briefModel), effort: pickEffort(effort, b0.effort || DEFAULTS.briefEffort) }; // the model and effort its guide was written with
     const mine = () => ws.review.data.brief?.at === gen && !ws.review.data.brief?.pending && !abort.signal.aborted; // not while a new brief is written
     const status = (x) => { if (!mine()) return; const b = ws.review.data.brief; b.scene = { ...b.scene, ...x }; ws.review.save(); emitBrief(ws); };
     // a run starts from a fresh status: nothing of a run before it (its error, its costs) is carried into this one
@@ -770,13 +773,13 @@ export function writeScene(ws, plan, { model, effort } = {}) {
       const parts = (b.sections || []).map((s, k) => `${k + 1}. ${s.title}: ${s.files.join(', ')}`).join('\n');
       const change = `${m.pr ? `Pull request #${m.pr.number}: ${m.pr.title}` : `Local branch ${m.branch} (base ${m.base})`}\nCommits:\n${m.commits.slice(0, 40).map((c) => `${c.short} ${c.subject}`).join('\n')}\n\nWhat the change does (its brief):\n${String(b.tldr).slice(0, 2000)}\n\nIts parts:\n${parts}\n`;
       const story = `${plan.title ? `${plan.title}. ` : ''}${plan.why}\n${plan.story}`;
-      const ask = async (prompt, turns, more = [], effort = run.effort) => {
+      const ask = async (prompt, turns, more = [], effort = run.effort, schema = DOC_SCHEMA) => {
         tries++;
         if (modelKind(run.model) === 'codex') { // tokens, not dollars: what Codex costs depends on its plan
-          try { const r = await codex.structured(ws, { ...run, effort }, SCENE_APPEND + '\n\n' + prompt, DOC_SCHEMA, halt.signal); costs.push({ tokens: r.usage || null }); return r.out; } catch (e) { if (e.usage) costs.push({ tokens: e.usage }); throw e; }
+          try { const r = await codex.structured(ws, { ...run, effort }, SCENE_APPEND + '\n\n' + prompt, schema, halt.signal); costs.push({ tokens: r.usage || null }); return r.out; } catch (e) { if (e.usage) costs.push({ tokens: e.usage }); throw e; }
         }
         const options = baseOptions(ws, { ...run, effort, roots: [ws.root || ws.gitDir, ...more], abort: halt, append: SCENE_APPEND });
-        Object.assign(options, { maxTurns: turns, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema: DOC_SCHEMA } });
+        Object.assign(options, { maxTurns: turns, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema } });
         options.mcpServers = { loupe: loupeServer(ws, null, { guide: false, threads: false }) }; // the code is what it draws from
         let said = 0, out = null;
         for await (const msg of query({ prompt, options })) {
@@ -786,13 +789,16 @@ export function writeScene(ws, plan, { model, effort } = {}) {
         if (!out) throw new Error('no scene came back');
         return out;
       };
-      const first = docPrompt({ change, story }), dirs = [];
+      // the diff of what it shows goes with the ask, so its writer starts drawing instead of reading file by file
+      const about = (b.sections || []).find((s) => s.id === plan.sectionId)?.files || [];
+      const all = await ws.files('all'), mineFiles = about.length ? all.filter((f) => about.includes(f.path)) : all;
+      const first = docPrompt({ change, story, diff: await diffText(ws, mineFiles, 60000) }), dirs = [];
       const look = async (sc) => { const r = await renderScene(sc.html, { origin: `http://127.0.0.1:${PORT}`, height: sc.height, signal: halt.signal }); if (r.dir) dirs.push(r.dir); return r; };
       // what a render found, as a number to compare two versions by (a render that failed is the worst there is)
       const faults = (r) => (r.unavailable ? 0 : r.failed ? 1e6 : (r.problem ? 100 : 0) + (r.errors?.length || 0) * 3 + (r.cut?.length || 0));
       let kept = null;
       try {
-        let out = await ask(first, 30);
+        let out = await ask(first, 10);
         let { scene, problem } = await normalizeScene(out, { by: 'brief', model: run.model });
         if (!scene) { // not a document at all: once more, told why
           status({ step: 'fixing the scene' });
@@ -803,7 +809,7 @@ export function writeScene(ws, plan, { model, effort } = {}) {
         // over and, while the check still finds faults, once more to fix; a fix that renders worse is let go
         let seen = await look(scene);
         if (seen.failed && !halt.signal.aborted) seen = await look(scene); // once more: a render can fail for reasons of its own
-        for (let round = 0; round < 2 && !seen.unavailable && !seen.failed; round++) {
+        for (let round = 0; round < 2 && !seen.unavailable && !seen.failed && Date.now() - t0 < LOOK_BY; round++) {
           const notes = renderNotes(seen);
           if (round > 0 && !notes) break;
           status({ step: notes ? 'fixing what the check found' : 'looking at how it renders' });
@@ -812,11 +818,14 @@ export function writeScene(ws, plan, { model, effort } = {}) {
           if (!images && !notes) break;
           const frames = seen.shots.map((x) => `- ${x.file} (${x.theme}, ${(x.at / 1000).toFixed(1)} s in)`).join('\n');
           // lean on purpose: the story and the look, not the whole first prompt again; the frames, not the code again
-          const prompt = `You made this animation of a code change for loupe, a local code-review desk. What it shows:\n${story}\n\n${DOC_FRAME}\n\n${DOC_LOOK}\n\nloupe rendered it as the card shows it (680 px wide, ${scene.height} px tall).${notes ? `\n\nThe check found:\n${notes}\n` : ''}${images ? `\nIts frames (images; read each once):\n${frames}\n` : ''}\nCheck that it renders, reads and looks right: nothing overlapping or cut off, legible in light and in dark, in loupe's look. You need not read the code again. ${notes ? 'Fix what the check found, and anything else wrong,' : 'If anything is off, fix it and'} return the whole animation again. If it is right as it is, return it unchanged.\n\nYour animation:\n\`\`\`json\n${JSON.stringify({ title: scene.title, why: scene.why, section: scene.section, height: scene.height })}\n\`\`\`\n\`\`\`html\n${scene.html}\n\`\`\``;
+          const prompt = `You made this animation of a code change for loupe, a local code-review desk. What it shows:\n${story}\n\n${DOC_FRAME}\n\n${DOC_LOOK}\n\nloupe rendered it as the card shows it (680 px wide, ${scene.height} px tall).${notes ? `\n\nThe check found:\n${notes}\n` : ''}${images ? `\nIts frames (images; read each once):\n${frames}\n` : ''}\nCheck that it renders, reads and looks right: nothing overlapping or cut off, legible in light and in dark, in loupe's look. You need not read the code again. ${notes ? 'Fix what the check found, and anything else wrong.' : 'If it is right, say so; if anything is off, fix it.'} Fix with edits to the document below, never the whole document again: each find an exact passage of it that is there once, each replace what goes in its place.\n\nYour animation:\n\`\`\`json\n${JSON.stringify({ title: scene.title, why: scene.why, section: scene.section, height: scene.height })}\n\`\`\`\n\`\`\`html\n${scene.html}\n\`\`\``;
           let again;
-          try { again = await ask(prompt, 6, images && seen.dir ? [seen.dir] : [], 'medium'); } catch (e) { if (abort.signal.aborted) throw e; break; } // the look is optional: failed or out of time, the scene stands
-          const fixed = await normalizeScene(again, { by: 'brief', model: run.model });
-          if (!fixed.scene || (fixed.scene.html === scene.html && fixed.scene.height === scene.height)) break; // unchanged: its writer finds it right
+          try { again = await ask(prompt, 6, images && seen.dir ? [seen.dir] : [], 'medium', LOOK_SCHEMA); } catch (e) { if (abort.signal.aborted) throw e; break; } // the look is optional: failed or out of time, the scene stands
+          if (!again?.edits?.length && !Number.isInteger(again?.height)) break; // right as it is
+          const edited = applyEdits(scene.html, again.edits);
+          if (!edited.html) break; // edits that do not fit the document: the scene stands as it rendered
+          const fixed = await normalizeScene({ title: scene.title, why: scene.why, section: scene.section, height: Number.isInteger(again.height) ? again.height : scene.height, html: edited.html }, { by: 'brief', model: run.model });
+          if (!fixed.scene || (fixed.scene.html === scene.html && fixed.scene.height === scene.height)) break; // unchanged
           fixed.scene.id = scene.id;
           const seen2 = await look(fixed.scene);
           if (seen2.failed || faults(seen2) > faults(seen)) break; // the last version that rendered stands

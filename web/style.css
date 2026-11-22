@@ -1335,7 +1335,7 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 .scn { display: grid; gap: var(--s2); }
 .scnpark { position: fixed; left: -10000px; top: 0; visibility: hidden; pointer-events: none; } /* scenes waiting out a redraw */
 .scnstage { position: relative; }
-.scnstage iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
+.scnstage iframe { display: block; width: 100%; height: 100%; border: 0; background: transparent; } /* its colour scheme is the page's, as its document's is: a mismatch has Chrome paint an opaque ground behind it */
 .scnerr { margin: 0; font-size: var(--t-ui); color: var(--danger); }
 .scnnone { font-size: var(--t-ui); color: var(--ink-3); } /* a browser a scene does not run in */
 .scnstart { position: absolute; inset: 0; margin: auto; width: max-content; height: max-content; } /* where a scene waits to be started */
