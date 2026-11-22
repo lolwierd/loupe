@@ -74,6 +74,12 @@ async function localChildren(root, branch, trunk) {
   return kids;
 }
 
+// how many commits HEAD has that the trunk does not (0 when it is at or behind the trunk, or there is no trunk to ask)
+async function ownCommits(root, trunk) {
+  if (!trunk) return 0;
+  return Number((await git(root, ['rev-list', '--count', `${trunk}..HEAD`]).catch(() => '0')).trim()) || 0;
+}
+
 const prItem = (p) => ({ pr: p.number, branch: p.headRefName || p.head?.ref, title: p.title || '', state: String(p.state || '').toLowerCase(), draft: !!(p.isDraft ?? p.draft), merged: !!(p.mergedAt || p.merged_at) });
 
 export async function stackFor(ws, { fresh = false } = {}) {
@@ -131,8 +137,9 @@ async function resolve(ws) {
       return finish({ kind, trunk, items });
     }
   }
-  // 3. Local branches.
-  if (ws.rec.kind === 'local') {
+  // 3. Local branches. A branch with nothing of its own off the trunk (just cut, or all its work uncommitted) sits on the
+  // trunk itself: nothing is under it, and a branch that contains its commit contains the trunk's, not its work.
+  if (ws.rec.kind === 'local' && await ownCommits(ws.rec.root, m.trunk || m.base) > 0) {
     const trunkRef = m.trunk || m.base;
     const chain = [];
     let b = m.branch, root = ws.rec.root, guard = 0;
