@@ -119,3 +119,7 @@ small call per change, made again only for the files that changed since; the set
 
 `LOUPE_PORT` and `LOUPE_HOME` move the port and the state. `npm test` runs the tests. [docs/COMPONENTS.md](docs/COMPONENTS.md)
 is the one way each control is drawn.
+
+## License
+
+Released into the public domain under [the Unlicense](LICENSE).

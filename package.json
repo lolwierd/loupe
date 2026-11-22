@@ -2,6 +2,7 @@
   "name": "loupe",
   "version": "0.1.0",
   "private": true,
+  "license": "Unlicense",
   "type": "module",
   "description": "A local review desk: PRs, branches and uncommitted work, with Claude beside the diff.",
   "bin": {
