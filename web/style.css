@@ -46,6 +46,7 @@
   --lit: #ffffff; --shade: rgba(28, 28, 40, 0.2); --shade-2: rgba(28, 28, 40, 0.075); --shade-3: rgba(28, 28, 40, 0.1);
   --face: color-mix(in srgb, var(--bg) 70%, transparent); --face-hi: var(--bg);
   --floor: color-mix(in srgb, var(--bg) 98%, var(--ink)); /* a well's floor: a hair below the sheet, so it reads pressed in on white */
+  --face-down: color-mix(in srgb, var(--bg) 95%, var(--ink)); /* a plateau pushed down flush: out of the light, a touch dimmer */
   --sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.6);
   --ink-lit: rgba(255, 255, 255, 0.22); --ink-shade: rgba(0, 0, 0, 0.5); --ink-sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.14);
   --f-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
@@ -73,7 +74,7 @@
   --scrim: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
   --tone-ink: #000000;
   --lit: rgba(255, 255, 255, 0.1); --shade: rgba(0, 0, 0, 0.8); --shade-2: rgba(0, 0, 0, 0.5); --shade-3: rgba(0, 0, 0, 0.45);
-  --face: color-mix(in srgb, var(--ink) 5%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 8%, var(--bg)); --floor: var(--bg);
+  --face: color-mix(in srgb, var(--ink) 5%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 8%, var(--bg)); --floor: var(--bg); --face-down: color-mix(in srgb, var(--ink) 3%, var(--bg));
   --sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.05);
   --ink-lit: rgba(255, 255, 255, 0.8); --ink-shade: rgba(0, 0, 0, 0.3); --ink-sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.5);
 }
@@ -93,7 +94,7 @@
     --scrim: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
     --tone-ink: #000000;
     --lit: rgba(255, 255, 255, 0.1); --shade: rgba(0, 0, 0, 0.8); --shade-2: rgba(0, 0, 0, 0.5); --shade-3: rgba(0, 0, 0, 0.45);
-    --face: color-mix(in srgb, var(--ink) 5%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 8%, var(--bg)); --floor: var(--bg);
+    --face: color-mix(in srgb, var(--ink) 5%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 8%, var(--bg)); --floor: var(--bg); --face-down: color-mix(in srgb, var(--ink) 3%, var(--bg));
     --sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.05);
     --ink-lit: rgba(255, 255, 255, 0.8); --ink-shade: rgba(0, 0, 0, 0.3); --ink-sheen: inset 0 12px 10px -10px rgba(255, 255, 255, 0.5);
   }
@@ -128,7 +129,7 @@ b, strong { font-weight: 600; } /* weights are 400, 500 and 600: the browser's b
 .bar { display: flex; align-items: center; gap: var(--s3); }
 /* a key: a small plateau, its skirt the shade below it; struck, it bottoms out into a well */
 kbd { font: 500 var(--t-mono)/16px var(--f-mono); min-width: 18px; text-align: center; display: inline-block; padding: 0 var(--s2); border: 1px solid transparent; border-bottom: 2px solid var(--shade); border-radius: var(--r1); background: var(--face); color: var(--ink-2); box-shadow: inset 0 1px 0 var(--lit), inset 0 0 0 1px var(--shade-2); }
-kbd.struck { transform: translateY(1px); border-bottom-width: 1px; background: var(--press); color: var(--ink); box-shadow: inset 0 1px 0 var(--shade), inset 0 0 0 1px var(--shade-2); }
+kbd.struck { transform: translateY(1px); border-bottom-width: 1px; background: var(--face-down); color: var(--ink); box-shadow: inset 0 1px 1px var(--shade-3), inset 0 0 0 1px var(--shade-2); }
 .btn kbd.struck { transform: none; border-bottom-width: 1px; background: color-mix(in srgb, currentColor 18%, transparent); opacity: 1; }
 .seg button.struck { background: var(--press); color: var(--ink); }
 .tab.struck { color: var(--ink); }
@@ -147,8 +148,9 @@ kbd.struck { transform: translateY(1px); border-bottom-width: 1px; background: v
   --flat: var(--t0), var(--t0), var(--t0), var(--t0), var(--t0), var(--o0), var(--o0), var(--o0);
   --well: inset 0 1px 0 var(--shade), inset 0 0 0 1px var(--shade-2), inset 0 2px 3px var(--shade-3), var(--t0), var(--t0), 0 1px 0 var(--lit), var(--o0), var(--o0);
   --well-in: inset 0 1px 0 var(--shade), inset 0 0 0 1px var(--ink-3), inset 0 2px 3px var(--shade-3), var(--t0), var(--t0), 0 1px 0 var(--lit), var(--o0), var(--o0);
+  --pressed: inset 0 1px 1px var(--shade-3), inset 0 0 0 1px var(--shade-2), var(--t0), var(--t0), var(--t0), 0 0 0 0 var(--shade), 0 0 1px var(--shade-3), var(--o0);
   --ink-raised: inset 0 1px 0 var(--ink-lit), var(--t0), inset 0 -1px 0 var(--ink-shade), var(--ink-sheen), var(--t0), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3);
-  --ink-well: inset 0 1px 0 var(--ink-shade), var(--t0), inset 0 2px 3px var(--ink-shade), var(--t0), var(--t0), 0 1px 0 var(--lit), var(--o0), var(--o0);
+  --ink-pressed: inset 0 1px 1px var(--ink-shade), var(--t0), var(--t0), var(--t0), var(--t0), 0 0 0 0 var(--shade), 0 0 1px var(--shade-3), var(--o0);
 }
 /* Four kinds: primary (the act: ink printed on the plateau, a registered emboss), default, ghost (lies flat until the
    pointer lifts it) and danger (default with red text; together with primary, the red fill of a destructive confirm). 28
@@ -160,17 +162,17 @@ kbd.struck { transform: translateY(1px); border-bottom-width: 1px; background: v
    light and shade swap), darkens a step and gives 3%, the way a pushed thing goes away from the eye. Nothing moves
    sideways; the press lands at once and the release eases back. Halves of a split button, segments, tabs and the meter
    only shade, so no seam opens between neighbours. */
-.btn:active, .btn.struck { background: var(--press); transform: scale(0.97); box-shadow: var(--well); transition-duration: 50ms; }
+.btn:active, .btn.struck { background: var(--face-down); transform: scale(0.97); box-shadow: var(--pressed); transition-duration: 50ms; }
 .btn.l:active, .btn.r:active, .btn.l.struck, .btn.r.struck, .btn.tally:active, .btn.tally.struck { transform: none; }
 .btn[disabled] { opacity: 0.45; cursor: default; pointer-events: none; }
 .btn.sm { height: var(--h1); padding: 0 var(--s3); border-radius: var(--r1); }
 .btn.lg { height: var(--h3); }
 .btn.primary { background: var(--act); color: var(--on-act); box-shadow: var(--ink-raised); }
 .btn.primary:hover { background: color-mix(in srgb, var(--act) 86%, var(--bg)); }
-.btn.primary:active, .btn.primary.struck { background: color-mix(in srgb, var(--act) 72%, var(--bg)); box-shadow: var(--ink-well); }
+.btn.primary:active, .btn.primary.struck { background: color-mix(in srgb, var(--act) 90%, var(--bg)); box-shadow: var(--ink-pressed); }
 .btn.ghost { background: none; box-shadow: var(--flat); color: var(--ink-2); }
 .btn.ghost:hover { background: var(--face); box-shadow: var(--raised-soft); color: var(--ink); }
-.btn.ghost:active, .btn.ghost.struck { background: var(--press); box-shadow: var(--well); }
+.btn.ghost:active, .btn.ghost.struck { background: var(--face-down); box-shadow: var(--pressed); }
 .btn.danger { color: var(--danger); }
 .btn.danger.primary { background: var(--danger); color: var(--on-act); }
 .btn.danger.primary:hover, .btn.danger.primary:active, .btn.danger.primary.struck { background: color-mix(in srgb, var(--danger) 86%, var(--bg)); }
@@ -183,14 +185,14 @@ kbd.struck { transform: translateY(1px); border-bottom-width: 1px; background: v
 .btn.primary kbd.struck { box-shadow: inset 0 2px 0 var(--ink-shade), 0 1px 0 var(--ink-lit); color: var(--on-act); background: color-mix(in srgb, var(--on-act) 12%, transparent); }
 .icon { display: inline-grid; place-items: center; width: var(--h2); height: var(--h2); padding: 0; border: 0; border-radius: var(--r2); background: none; box-shadow: var(--flat); color: var(--ink-2); cursor: pointer; flex: none; transition: background 120ms var(--ease), color 120ms var(--ease), box-shadow 140ms var(--ease); }
 .icon:hover { background: var(--face); box-shadow: var(--raised-soft); color: var(--ink); }
-.icon:active, .icon.struck { background: var(--press); box-shadow: var(--well); transition-duration: 50ms; }
+.icon:active, .icon.struck { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .icon > svg, .icon > canvas { transition: transform 140ms var(--ease); }
 .icon:active > svg, .icon:active > canvas, .icon.struck > svg, .icon.struck > canvas { transform: scale(0.88); transition-duration: 50ms; } /* the pad stays; its glyph gives */
 .icon[disabled] { opacity: 0.35; pointer-events: none; }
 .layout-toggles { display: inline-flex; gap: var(--s2); }
 .layout-toggles .icon .pn { fill: currentColor; stroke: none; opacity: 0; transition: opacity 120ms var(--ease); }
 .layout-toggles .icon[aria-pressed="true"] .pn { opacity: 0.85; }
-.layout-toggles .icon[aria-pressed="true"] { box-shadow: var(--well); } /* a latch: on stays pushed in */
+.layout-toggles .icon[aria-pressed="true"] { background: var(--face-down); box-shadow: var(--pressed); } /* a latch: on stays held down */
 .icon.sm { width: var(--h1); height: var(--h1); }
 .icon svg { width: 16px; height: 16px; flex: none; }
 /* a link button is a ghost set in its line: flat until the pointer lifts a plate round its words (the plate stands out
@@ -198,7 +200,7 @@ kbd.struck { transform: translateY(1px); border-bottom-width: 1px; background: v
 .link { all: unset; cursor: pointer; color: var(--ink-2); font-size: var(--t-mono); padding: 1px var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .link svg { width: 12px; height: 12px; vertical-align: -2px; }
 .link:hover { color: var(--ink); background: var(--face); box-shadow: var(--raised-soft); }
-.link:active { background: var(--press); box-shadow: var(--well); transition-duration: 50ms; }
+.link:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .link.danger:hover { color: var(--danger); }
 .link.danger:active { color: color-mix(in srgb, var(--danger) 80%, var(--ink)); } /* on the press fill, still 4.5:1 */
 /* Segmented control: 24 high buttons in a 28 high channel pressed into the sheet; the chosen one stands in it. */
@@ -208,12 +210,12 @@ kbd.struck { transform: translateY(1px); border-bottom-width: 1px; background: v
 .seg button:hover { color: var(--ink); }
 .seg button[disabled] { opacity: 0.4; cursor: default; }
 .seg button[aria-pressed="true"] { background: var(--face); color: var(--ink); box-shadow: var(--raised-soft); }
-.seg button:is(:active, .struck) { background: var(--press); color: var(--ink); box-shadow: var(--well); } /* after the chosen one: a key can strike the segment already chosen */
+.seg button:is(:active, .struck) { background: var(--face-down); color: var(--ink); box-shadow: var(--pressed); } /* after the chosen one: a key can strike the segment already chosen */
 /* Pill: a state you only read. Neutral, or tinted ok (passing), warn (changed, risk) or danger (failing, closed). */
 .pill { display: inline-flex; align-items: center; gap: var(--s2); height: 18px; padding: 0 var(--s3); border-radius: var(--r1); font-size: var(--t-meta); font-weight: 500; color: var(--ink-2); background: var(--hover); box-shadow: inset 0 1px 0 var(--shade-2); white-space: nowrap; border: 0; font-family: inherit; }
 button.pill { cursor: pointer; box-shadow: var(--raised-soft); transition: box-shadow 140ms var(--ease); } /* a status you can press stands up like a chip */
 button.pill:hover { box-shadow: var(--raised); }
-button.pill:active { box-shadow: var(--well); transition-duration: 50ms; }
+button.pill:active { box-shadow: var(--pressed); transition-duration: 50ms; }
 .pill.ok { color: color-mix(in srgb, var(--ok) 78%, var(--ink)); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .pill.warn { color: var(--warn); background: var(--warn-tint); }
 .pill.danger { color: color-mix(in srgb, var(--danger) 80%, var(--ink)); background: color-mix(in srgb, var(--danger) 12%, transparent); }
@@ -255,7 +257,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .toast canvas.tx { flex: none; margin-right: calc(var(--s2) - var(--s4)); } /* a failure's cross, 8 px from its words */
 .toast .tb { border: 0; background: none; color: inherit; font: inherit; font-weight: 500; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0 var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .toast .tb:hover { background: color-mix(in srgb, var(--on-act) 10%, transparent); box-shadow: var(--ink-raised); }
-.toast .tb:active { box-shadow: var(--ink-well); transition-duration: 50ms; }
+.toast .tb:active { box-shadow: var(--ink-pressed); transition-duration: 50ms; }
 
 /* ---------------------------------------------------------------- the frame: top bar / bin | diff | inspector */
 .app { position: relative; display: grid; grid-template-rows: var(--bar) minmax(0, 1fr); height: 100vh; isolation: isolate; }
@@ -378,15 +380,15 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .fh [data-cc] svg { width: 12px; height: 12px; }
 .fh .stat { font: var(--t-mono) var(--f-mono); display: inline-flex; gap: var(--s3); font-variant-numeric: tabular-nums; flex: none; }
 .viewedbox { min-width: 88px; user-select: none; } /* wide enough for Changed, so the button and the ... beside it keep their columns down the page whichever state a file is in */
-.scopebtn:active { background: var(--press); box-shadow: var(--well); }
+.scopebtn:active { background: var(--face-down); box-shadow: var(--pressed); }
 .viewedbox .box { width: 14px; height: 14px; border: 1px solid var(--ink-3); border-radius: var(--r0); display: grid; place-items: center; transition: background 120ms var(--ease), border-color 120ms var(--ease); }
 .viewedbox .box canvas { opacity: 0; transition: opacity 120ms var(--ease); }
 /* the control keeps one shape; the state is the box (empty, green tick, grey tick when counted) and, for a file that changed since,
    the word Changed in amber. The label does not also turn green, and the border does not also come and go. */
 .file.viewed .viewedbox .box { background: var(--ok); border-color: var(--ok); }
-.viewedbox[aria-pressed="true"] { background: none; box-shadow: var(--well); color: var(--ink-2); } /* a latch: viewed stays pushed into the page */
-.viewedbox[aria-pressed="true"]:hover { background: var(--hover); box-shadow: var(--well); }
-.viewedbox[aria-pressed="true"]:is(:active, .struck) { background: var(--press); box-shadow: var(--well); }
+.viewedbox[aria-pressed="true"] { background: var(--face-down); box-shadow: var(--pressed); color: var(--ink-2); } /* a latch: viewed stays held down */
+.viewedbox[aria-pressed="true"]:hover { background: var(--face-down); box-shadow: var(--pressed); color: var(--ink); }
+.viewedbox[aria-pressed="true"]:is(:active, .struck) { background: var(--face-down); box-shadow: var(--pressed); }
 .file.viewed .viewedbox .box canvas { opacity: 1; }
 .file.stale .viewedbox { color: var(--warn); }
 .fb { font: var(--t-code)/20px var(--f-mono); overflow-x: auto; }
@@ -444,7 +446,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .fb.split, .file:is(.allnew, .allgone) .fb { --gut: 48px; }
 .plus { position: absolute; left: calc(1px - var(--gut)); top: 2px; width: 16px; height: 16px; border: 0; border-radius: var(--r1); background: var(--act); box-shadow: var(--ink-raised); color: var(--on-act); padding: 0; cursor: pointer; opacity: 0; transition: opacity 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); z-index: 2; display: grid; place-items: center; }
 .plus:hover { background: color-mix(in srgb, var(--act) 86%, var(--bg)); }
-.plus:active { background: color-mix(in srgb, var(--act) 72%, var(--bg)); box-shadow: var(--ink-well); transition-duration: 50ms; }
+.plus:active { background: color-mix(in srgb, var(--act) 90%, var(--bg)); box-shadow: var(--ink-pressed); transition-duration: 50ms; }
 .plus svg { width: 12px; height: 12px; }
 .ln:hover .cd:not(.e) .plus, .plus:focus-visible { opacity: 1; }
 /* a hidden mark's pin has that spot (yours or a GitHub thread's): its line keeps the pin, and the number still selects it */
@@ -478,7 +480,7 @@ details.steps .note { margin: var(--s2) 0; font-style: italic; }
 .chip:is(button, [data-act]) { cursor: pointer; }
 code.chip { background: var(--floor); box-shadow: var(--well); } /* only read: pressed into the sheet */
 .chip:is(button, [data-act]):hover { background: var(--face-hi); box-shadow: var(--raised); color: var(--ink); }
-.chip:is(button, [data-act]):active:not(:has(.x:active)) { background: var(--press); box-shadow: var(--well); transition-duration: 50ms; } /* its own ×, pressed, is not the chip */
+.chip:is(button, [data-act]):active:not(:has(.x:active)) { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; } /* its own ×, pressed, is not the chip */
 .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip svg { width: 12px; height: 12px; flex: none; }
 .chip .x { all: unset; cursor: pointer; color: var(--ink-3); padding: 1px var(--s2); margin: -1px calc(-1 * var(--s2)) -1px 0; border-radius: var(--r0); transition: color 120ms var(--ease), background 120ms var(--ease); }
@@ -561,7 +563,7 @@ a.loc:focus-visible { outline: 2px solid var(--pencil); }
 /* a long path is cut at its left, so the file and the line it points at stay in view (a bdi isolates the text, so it stays in reading order) */
 .markview .mtitle .loc { all: unset; cursor: pointer; font: var(--t-mono) var(--f-mono); color: var(--ink-2); direction: rtl; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; padding: 1px var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .markview .mtitle .loc:hover { color: var(--ink); background: var(--face); box-shadow: var(--raised-soft); }
-.markview .mtitle .loc:active { background: var(--press); box-shadow: var(--well); transition-duration: 50ms; }
+.markview .mtitle .loc:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .quote { display: grid; margin: 0 0 var(--s4); background: var(--bg); font: var(--t-mono)/18px var(--f-mono); cursor: pointer; }
 .quote { transition: box-shadow 140ms var(--ease), border-color 120ms var(--ease); }
 .quote:hover { border-color: transparent; box-shadow: 0 0 0 1px var(--shade-2), 0 1px 0 var(--shade), 0 2px 4px var(--shade-3); }
@@ -592,7 +594,7 @@ a.loc:focus-visible { outline: 2px solid var(--pencil); }
 #mapbig .dgtabs.big button::before { inset: 12px calc(-1 * var(--s3)); } /* inside the dialog's 56 px head, clear of its clipped edge */
 .tab:hover::before, :is(.mapcard, #mapbig) .dgtabs button:where(:not([aria-selected="true"])):hover::before { background: var(--face); box-shadow: var(--raised-soft); }
 .tab:is(:active, .struck), :is(.mapcard, #mapbig) .dgtabs button:is(:active, .struck) { color: var(--ink); } /* on the press plate, 4.5:1 */
-.tab:is(:active, .struck)::before, :is(.mapcard, #mapbig) .dgtabs button:is(:active, .struck)::before { background: var(--press); box-shadow: var(--well); transition-duration: 50ms; } /* after the hover, at its specificity: a press shows while hovered */
+.tab:is(:active, .struck)::before, :is(.mapcard, #mapbig) .dgtabs button:is(:active, .struck)::before { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; } /* after the hover, at its specificity: a press shows while hovered */
 .tab[aria-selected="true"]::after { content: ""; position: absolute; left: var(--s3); right: var(--s3); bottom: -1px; height: 2px; background: var(--act); border-radius: var(--r0); }
 .pbody { min-height: 0; overflow: auto; }
 .pane { display: grid; grid-template-columns: minmax(0, 1fr); padding: 0 var(--s4) var(--s6); align-content: start; min-width: 0; }
@@ -629,7 +631,7 @@ details.sect[open] > summary.sh::after { transform: none; }
 .prhead .facts .pair .ar { padding: 0 var(--s2); color: var(--ink-3); font-family: var(--f-ui); }
 .prhead .facts .figs { all: unset; cursor: pointer; padding: 1px var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .prhead .facts .figs:hover { background: var(--face); box-shadow: var(--raised-soft); }
-.prhead .facts .figs:active { background: var(--face); box-shadow: var(--well); transition-duration: 50ms; } /* pressed by its well alone: the coloured counts keep their contrast */
+.prhead .facts .figs:active { background: var(--face); box-shadow: var(--pressed); transition-duration: 50ms; } /* pressed by its well alone: the coloured counts keep their contrast */
 .prhead .facts .figs:focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
 .prhead:has(.facts) h1 { margin-bottom: var(--s1); }
 
@@ -668,7 +670,7 @@ details.sect[open] > summary.sh::after { transform: none; }
 .md.dmd .cutrow { margin-top: 0; } /* the block above keeps its own 8 px */
 .md.dmd .cut { all: unset; cursor: pointer; color: var(--ink-2); font-variant-numeric: tabular-nums; padding: 1px var(--s2); margin: 0 calc(-1 * var(--s2)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .md.dmd .cut:hover { color: var(--ink); background: var(--face); box-shadow: var(--raised-soft); }
-.md.dmd .cut:active { background: var(--press); box-shadow: var(--well); transition-duration: 50ms; }
+.md.dmd .cut:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .md.dmd .cut:focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
 .md.dmd .cut.inlist { margin-left: calc(20px - var(--s2)); } /* its plate's padding taken back, as every link's is */
 @media (prefers-reduced-motion: reduce) { .md.dmd .fold .chev { transition: none; } }
@@ -828,8 +830,8 @@ details.sect[open] > summary.sh::after { transform: none; }
 .top .go:hover .btn.r:not(.primary) { box-shadow: inset 0 1px 0 var(--lit), inset -1px 0 0 var(--shade-2), inset 0 -1px 0 var(--shade-2), var(--sheen), inset 1px 0 0 var(--shade), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3); }
 .top .go .btn.primary.l { box-shadow: inset 0 1px 0 var(--ink-lit), var(--t0), inset 0 -1px 0 var(--ink-shade), var(--ink-sheen), var(--t0), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3); }
 .top .go .btn.primary.r { box-shadow: inset 0 1px 0 var(--ink-lit), var(--t0), inset 0 -1px 0 var(--ink-shade), var(--ink-sheen), inset 1px 0 0 var(--ink-shade), 0 1px 0 var(--shade), 0 1px 3px var(--shade-3), 0 3px 4px -2px var(--shade-3); }
-.top .go .btn:is(.l, .r):is(:active, .struck), .top .go:hover .btn:is(.l, .r):not(.primary):is(:active, .struck) { box-shadow: var(--well); }
-.top .go .btn.primary:is(.l, .r):is(:active, .struck) { box-shadow: var(--ink-well); }
+.top .go .btn:is(.l, .r):is(:active, .struck), .top .go:hover .btn:is(.l, .r):not(.primary):is(:active, .struck) { box-shadow: var(--pressed); }
+.top .go .btn.primary:is(.l, .r):is(:active, .struck) { box-shadow: var(--ink-pressed); }
 /* floors: the title keeps its first characters when there is room for them */
 @media (min-width: 1100px) { .wsbtn .t { min-width: 120px; } }
 @media (max-width: 1500px) { .tally .meter { width: 110px; } }
@@ -1117,7 +1119,7 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .marks-hidden .ln.marked:not(.lit) .no:first-child { box-shadow: none; }
 .mpin { position: absolute; left: 1px; top: 2px; display: grid; place-items: center; width: 14px; height: 16px; padding: 0; border: 0; border-radius: var(--r1); background: none; box-shadow: var(--flat); cursor: pointer; transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .mpin:hover { background: var(--face); box-shadow: var(--raised-soft); }
-.mpin.lit, .mpin:active { background: var(--press); box-shadow: var(--well); }
+.mpin.lit, .mpin:active { background: var(--face-down); box-shadow: var(--pressed); }
 .mpin.done { opacity: 0.45; }
 .mpin > svg { width: 12px; height: 12px; color: var(--ink-3); }
 .mpin canvas { display: block; }
@@ -1195,7 +1197,7 @@ canvas.spark.landed { animation: landed 360ms steps(3) 1; }
 .mapcard.shut .mapbody { display: none; }
 .mapcard .mtoggle { all: unset; display: inline-flex; align-items: center; gap: var(--s3); cursor: pointer; font-weight: 600; color: var(--ink); padding: 2px var(--s3); margin: -2px calc(-1 * var(--s3)); border-radius: var(--r1); box-shadow: var(--flat); transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .mapcard .mtoggle:hover { background: var(--face); box-shadow: var(--raised-soft); }
-.mapcard .mtoggle:active { background: var(--press); box-shadow: var(--well); transition-duration: 50ms; }
+.mapcard .mtoggle:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .mapcard .mtoggle::before { content: ""; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid var(--ink-3); transition: transform 120ms var(--ease); }
 .mapcard.shut .mtoggle::before { transform: rotate(-90deg); }
 .mapcard .mtoggle:focus-visible { outline: 2px solid var(--pencil); outline-offset: 2px; border-radius: var(--r1); }
@@ -1370,7 +1372,7 @@ body:has(#motedock.flying) .lens:has(.of-mote) { display: none; }
 .scopebar, .scopebar.steps { display: flex; align-items: center; gap: var(--s1); padding: var(--s3) var(--s2) 0; }
 .scopebar .scopebtn { flex: 0 1 auto; width: auto; height: var(--h1); padding: 0 var(--s2); gap: var(--s1); border: 0; border-radius: var(--r1); background: none; box-shadow: var(--flat); color: var(--ink); font-weight: 500; }
 .scopebar .scopebtn:hover { background: var(--face); box-shadow: var(--raised-soft); }
-.scopebar .scopebtn:active { background: var(--press); box-shadow: var(--well); }
+.scopebar .scopebtn:active { background: var(--face-down); box-shadow: var(--pressed); }
 .scopebar .scopebtn:focus-visible { outline: 2px solid var(--pencil); outline-offset: -2px; } /* inset: the relief keeps its shadows */
 .scopebar .what { grid-column: auto; flex: none; margin-left: auto; padding: 0 var(--s2) 0 var(--s3); display: inline-flex; align-items: baseline; gap: var(--s2); font: var(--t-meta)/16px var(--f-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .scopebar .what .dot { color: var(--ink-3); }
@@ -1385,7 +1387,7 @@ body:has(#motedock.flying) .lens:has(.of-mote) { display: none; }
 .runpick { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: var(--s1); height: var(--h1); padding: 0 var(--s2); border-radius: var(--r1); font: 500 var(--t-ui) var(--f-ui); color: var(--ink-2); white-space: nowrap; cursor: pointer; transition: box-shadow 140ms var(--ease), background 120ms var(--ease), color 120ms var(--ease); }
 .runpick { box-shadow: var(--flat); }
 .runpick:hover { background: var(--face); box-shadow: var(--raised-soft); color: var(--ink); }
-.runpick:active { background: var(--press); box-shadow: var(--well); transition-duration: 50ms; }
+.runpick:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .runpick:focus-visible { outline: 2px solid var(--pencil); outline-offset: 1px; }
 .runpick svg { width: 12px; height: 12px; flex: none; }
 .runpick canvas.spark { margin: 0 -1px 0 -3px; } /* the sprite's star is 13 of its 16 px: it sits on the label's edge as a 14 px icon would */

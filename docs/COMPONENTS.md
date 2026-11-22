@@ -35,7 +35,9 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
   can press, a select, a key, the chosen segment, the + that starts a mark, the map's parts); what you write in or only
   read is pressed into it (fields, composers, the draft in the code, a dialog's message box, the palette's field row,
   pills, read-only chips such as a route's branch names, the segmented control's channel, what the map shows outside
-  this repository). Pressing a raised thing pushes it through to a well: its light and shade swap. A latch stays pushed in
+  this repository). Pressing a raised thing pushes it down flush with the sheet, never through it into a dent: its cast slides
+  under it and goes, its top loses the light, its face dims a touch (`--face-down`, `--pressed`; on ink `--ink-pressed`),
+  and it gives to 97%. A latch stays held down
   while it is on: the top bar's Files and Inspector toggles, and a file's Viewed box once the file is viewed.
 - **Ghosts**: everything else you can press lies flat in the page until the pointer lifts it: ghost and icon buttons,
   link buttons (a plate round their words, standing out by its padding so the words keep their place), the model
@@ -54,9 +56,9 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
   inside its top wall and a soft fall under it, faint sides, and a lit lip under its foot. Writing in it, its sides go
   to ink-3 (`--well-in`, 4.7:1): that is a field's focus mark, from the pointer or the keyboard alike, so a field takes
   no blue ring.
-- **Ink**: the primary is a registered emboss, ink printed on the plateau (`--ink-raised`, pressed `--ink-well`).
+- **Ink**: the primary is a registered emboss, ink printed on the plateau (`--ink-raised`, pressed `--ink-pressed`).
 - **One list**: the composite reliefs (`--raised`, `--raised-soft`, `--flat`, `--well`, `--well-in`,
-  `--ink-raised`, `--ink-well`, the split button's halves, the draft's landing flash) are the same eight shadows in the
+  `--ink-raised`, `--pressed`, `--ink-pressed`, the split button's halves, the draft's landing flash) are the same eight shadows in the
   same order (five inset: top, sides, foot, sheen, crease; three outer: the cast and its two softenings), unused ones
   transparent (`--t0`, `--o0`), so a press and a hover blend instead of jumping. Smaller marks draw less: a key is two
   inset lines and its skirt, a read-only pill one inset line (a pill you can press stands low, as a chip), a key hint inside a button keeps a half-strength outline (a key
@@ -76,18 +78,18 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
   *Ghost*: lies flat in the sheet, `--ink-2`; the pointer lifts it (`--face`, `--raised-soft`). *Danger*: default with
   red text; a destructive confirm is a red plateau. All 28 px (24 in rows, 32 in dialog footers), padding 0 12 (0 8 at
   24), 13 px 500, `--r2` (`--r1` at 24). A key hint is a `<kbd>` inside the button, after the label, pressed into it.
-  *Pressed* (by the pointer, or by its key: `strike.js` gives it `.struck`): pushed through to a well (`--well` on a
-  `--press` fill; a primary `--ink-well` on its ink mixed 72% with the sheet), and it gives to 97%, the way a pushed thing goes away from the eye. It
+  *Pressed* (by the pointer, or by its key: `strike.js` gives it `.struck`): pushed down flush with the sheet (`--pressed` on
+  `--face-down`; a primary `--ink-pressed` on its ink mixed 90% with the sheet), and it gives to 97%, the way a pushed thing goes away from the eye. It
   lands at once (50 ms) and eases back (140 ms). A split button is one plateau scored between its halves (a groove in
   shade); its halves, segments, tabs and the meter only shade, so no seam opens between neighbours.
 - **Icon button**: 28 square (24 compact), `--r2`, 16 px icon in `--ink-2`, flat in the sheet; hover lifts its pad
-  (`--raised-soft`) + ink; pressed, the pad is a well on `--press` and the glyph gives to 88%.
+  (`--raised-soft`) + ink; pressed, the pad goes down flush (`--pressed`) and the glyph gives to 88%.
 - **Key hint** (`kbd`): a keycap, a small plateau whose skirt is two pixels of shade. When its key is pressed it bottoms
-  out on one, into a well, and the control that key drives shows its press, if it is in view (`strike.js`). In a menu
+  out on one, its face dimmed, and the control that key drives shows its press, if it is in view (`strike.js`). In a menu
   or the palette, and in the find field, a key is a plain figure.
 - **Link button** (`.link`): a text action, 12 or 13 px to match its line, `--ink-2`, a ghost: the pointer lifts a
   plate round its words (`--raised-soft`; 4 px of padding with 4 px taken back by margin, so the words keep their place),
-  a press sinks it. Used for actions inside text or section headers ("All", "Rewrite", "Back to this change alone").
+  a press pushes it down flush. Used for actions inside text or section headers ("All", "Rewrite", "Back to this change alone").
 - **Input / select / scope button**: 28 px, `--r2`, padding 0 8, 13 px, no border. An input (and a composer, and a
   dialog's message box) is a well on `--floor`; writing in it, its sides darken (`--well-in`, on the composer and the
   message box while anything in them has focus); that is their focus mark, with no blue ring (with forced colours, which
@@ -96,10 +98,10 @@ shade, never an outline. One light, from above (the glass's lit top edge, the pr
 - **Segmented control**: 24 px buttons inside a 28 px channel pressed into the sheet (`--hover`, `--well`), `--r2`
   channel, `--r1` buttons; the chosen one stands in it (`--face`, `--raised-soft`) with ink text. Same everywhere (verdict, Write/Preview tabs are tabs, not segments).
 - **Tabs**: text, 13 px 500, `--ink-3`; selected ink with a 2 px ink underline. Under the pointer a plate lifts behind
-  the word (28 px in a 40 px tab row; on the map's tabs, 26 px reaching 8 px past the word), pressed a well. Panel tabs,
+  the word (28 px in a 40 px tab row; on the map's tabs, 26 px reaching 8 px past the word), pressed, down flush. Panel tabs,
   Write/Preview and the map's tabs alike; a map tab already chosen does not lift.
 - **Chip** (a value you can act on: an attachment, a branch, a ref): 24 px, `--r1`, a low plateau (`--face`,
-  `--raised-soft`), 12 px; pressed, a well. A head and
+  `--raised-soft`), 12 px; pressed, down flush. A head and
   its base (`branch → main`) wrap as one unit.
 - **Model picker**: the model and effort as words with a chevron (`Sonnet 5.5 · high ⌄`), 24 px, 13 px 500 `--ink-2`, a
   ghost: it lies flat and the pointer lifts it (`--raised-soft`). The spark (the pixel sprite, still: the one spark) only for Claude models. The same drawing in a
