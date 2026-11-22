@@ -22,8 +22,8 @@ const quick = { light: [400], dark: [300] }, look = (html, height = 200) => rend
 const clean = (r) => r.dir && fs.rmSync(r.dir, { recursive: true, force: true });
 
 test('a scene that renders gets its stills, light and dark, and nothing to fix', { skip, timeout: 60000 }, async () => {
-  // at the stills' real times, not the quick ones: a slow machine paints a frame's first picture late, and a still taken before it is blank
-  const r = await renderScene('<p style="font:13px var(--f-ui);color:var(--ink)">a jar on a shelf</p>', { origin: `http://127.0.0.1:${port}`, height: 200 });
+  // one still a theme, taken late (not at the quick times): a slow machine paints a frame's first picture late, and a still taken before it is blank
+  const r = await renderScene('<p style="font:13px var(--f-ui);color:var(--ink)">a jar on a shelf</p>', { origin: `http://127.0.0.1:${port}`, height: 200, times: { light: [4000], dark: [4000] } });
   assert.equal(r.failed, undefined); assert.equal(r.problem, null); assert.deepEqual(r.errors, []); assert.deepEqual(r.cut, []);
   assert.deepEqual(r.shots.map((s) => s.theme), ['light', 'dark']); assert.ok(r.shots.every((s) => fs.statSync(s.file).size > 100));
   clean(r);
