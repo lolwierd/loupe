@@ -182,13 +182,86 @@ function readWorktreeBytes(root, p) {
 
 // File contents, by blob id when known (content-addressed, so the cache never goes stale), else by revision.
 const blobCache = new Lru(1500);
-export async function readAt(root, rev, p, blob) {
+const blobBatches = new Map();
+const activeBlobs = new Map();
+function readBlob(root, oid, nearby) {
+  return new Promise((resolve) => {
+    let active = activeBlobs.get(root);
+    if (!active) activeBlobs.set(root, active = new Map());
+    if (active.has(oid)) { active.get(oid).push(resolve); return; }
+    let batch = blobBatches.get(root);
+    if (!batch) {
+      batch = new Map();
+      blobBatches.set(root, batch);
+      setImmediate(() => {
+        blobBatches.delete(root);
+        for (let entries = [...batch], i = 0; i < entries.length; i += 32) {
+          readBlobBatch(root, entries.slice(i, i + 32), active);
+        }
+      });
+    }
+    const enqueue = (id, readers) => { active.set(id, readers); batch.set(id, readers); };
+    enqueue(oid, [resolve]);
+    for (const neighbor of nearby || []) {
+      if (neighbor && !blobCache.has(neighbor) && !active.has(neighbor)) enqueue(neighbor, []);
+    }
+  });
+}
+
+async function readBlobBatch(root, entries, active) {
+  const data = await git(root, ['cat-file', '--batch'], {
+    input: entries.map(([oid]) => oid + '\n').join(''), encoding: 'buffer', maxBuffer: 32 * 1024 * 1024,
+  }).catch(() => null);
+  let pos = 0;
+  for (const [oid, readers] of entries) {
+    let text = null;
+    if (data) {
+      const end = data.indexOf(10, pos);
+      const [, type, size] = data.toString('ascii', pos, end).split(' ');
+      pos = end + 1;
+      if (size !== undefined) {
+        const next = pos + Number(size);
+        if (type === 'blob') text = data.toString('utf8', pos, next);
+        pos = next + 1;
+      }
+    } else if (readers.length) {
+      text = await git(root, ['cat-file', 'blob', oid]).catch(() => null);
+    }
+    if (text !== null) blobCache.set(oid, text);
+    active.delete(oid);
+    for (const resolve of readers) resolve(text);
+  }
+  if (!active.size) activeBlobs.delete(root);
+}
+
+export async function readAt(root, rev, p, blob, nearby) {
   if (rev === WORKTREE) return readWorktree(root, p);
-  if (blob && blobCache.has(blob)) return blobCache.get(blob);
-  let text = null;
-  try { text = blob ? await git(root, ['cat-file', 'blob', blob]) : await git(root, ['show', `${rev}:${p}`]); } catch { text = null; }
-  if (blob && text !== null) blobCache.set(blob, text);
-  return text;
+  if (blob) return blobCache.get(blob) ?? readBlob(root, blob, nearby);
+  return git(root, ['show', `${rev}:${p}`]).catch(() => null);
+}
+
+// A range-wide patch saves a process for every ordinary file. Keep Git's per-path logic for renames,
+// copies and quoted paths, where identifying the section or matching rename detection is less direct.
+export async function rangePatches(root, range, files) {
+  const ends = range.new === WORKTREE ? [range.old] : [range.old, range.new];
+  const patch = await git(root, ['diff', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/',
+    '--full-index', '-M', '-U3', ...ends, '--'], { maxBuffer: 12 * 1024 * 1024 });
+  const headers = new Map();
+  for (const f of files) {
+    if (!f.oldPath && !f.untracked && !f.binary && /^[\x20-\x7e]+$/.test(f.path)) {
+      headers.set(`a/${f.path} b/${f.path}`, f);
+    }
+  }
+  const sections = new Map();
+  for (const section of patch.split(/^diff --git /m).slice(1)) {
+    const end = section.indexOf('\n');
+    const f = headers.get(section.slice(0, end));
+    if (!f) continue;
+    const index = /^index ([a-f0-9]+)\.\.([a-f0-9]+)/m.exec(section);
+    if (index && (ZERO.test(index[1]) ? null : index[1]) === f.oldBlob &&
+        (ZERO.test(index[2]) ? null : index[2]) === f.blob) sections.set(f.path, parseHunks(section));
+  }
+  return sections;
 }
 
 // One file's unified diff, as hunks of typed lines with old and new numbers.

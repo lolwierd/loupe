@@ -10,7 +10,7 @@
 //   the file; a click goes there.
 // With reduced motion every one of these is its end state at once.
 import { reducedMotion } from './core.js';
-import { BAYER4, fit, rgba, isDark, lerp, smooth } from './dither.js';
+import { BAYER4, dpr, fit, rgba, isDark, lerp, smooth } from './dither.js';
 
 const PITCH = 3; // CSS px between lamp centres
 const ROWS = 4;
@@ -22,6 +22,7 @@ export function meter(host, { onPick, onHover } = {}) {
   cv.setAttribute('aria-hidden', 'true');
   host.append(cv);
   let segs = [], hover = null, alive = 0, raf = 0, last = 0, time = 0, edge = 0, glint = -1, openingAt = null, colors = null, settled = false;
+  let geometry; // the canvas's fitted size, kept until it is resized or the pixel ratio changes
   const shown = new Map(), level = new Map(), read = new Map(), burns = new Map(), sparks = [];
   const prev = new Map(); // a block's state before its last change, for the part of it the burning edge has not reached
   const theme = () => {
@@ -73,7 +74,8 @@ export function meter(host, { onPick, onHover } = {}) {
     for (const [p, b] of burns) { b.t += dt / 0.42; if (b.t >= 1.25) { burns.delete(p); prev.delete(p); } else moving = true; }
     if (glint >= 0) { glint += dt / 0.6; if (glint > 1.3) glint = -1; else moving = true; }
 
-    const g = fit(cv), ctx = cv.getContext('2d');
+    const g = geometry?.d === dpr() ? geometry : (geometry = fit(cv));
+    const ctx = cv.getContext('2d');
     ctx.setTransform(g.d, 0, 0, g.d, 0, 0);
     ctx.clearRect(0, 0, g.w, g.h);
     const top = g.h - ROWS * PITCH, w = g.w;
@@ -158,7 +160,7 @@ export function meter(host, { onPick, onHover } = {}) {
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
   motion.addEventListener('change', kick);
   const mo = new MutationObserver(retheme); mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  const ro = new ResizeObserver(kick); ro.observe(host);
+  const ro = new ResizeObserver(() => { geometry = null; kick(); }); ro.observe(cv);
 
   return {
     // segs: [{ path, w (lines), state: 'left'|'done'|'stale', read 0..1, cur }], in reading order
@@ -172,6 +174,14 @@ export function meter(host, { onPick, onHover } = {}) {
       }
       segs = next;
       kick();
+    },
+    read(current, fractions) {
+      let changed = false;
+      for (const s of segs) {
+        const cur = s.path === current, read = s.state === 'done' ? 0 : fractions.get(s.path) || 0;
+        if (cur !== s.cur || read !== s.read) { s.cur = cur; s.read = read; changed = true; }
+      }
+      if (changed) kick();
     },
     glint() { if (!reducedMotion()) { glint = 0; kick(); } },
     get settled() { return settled; },

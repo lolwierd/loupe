@@ -1,7 +1,7 @@
 // The diff column: every changed file as a card in one scroll (tree order, or the guide's), loaded as it nears the
 // viewport. Selecting lines, the composer under them, and the threads anchored to them live here.
 import { S, $, $$, esc, tick, h, api, wsApi, I, pref, toast, fileOf, convOf, threadsAt, lastRun, rememberRun, plural, ago, reducedMotion } from './core.js';
-import { buildRows, buildSplit, wordRanges, findRow, findLine, revealAround, expandGap, loadTokens, tokHTML, headText, rangeLabel, selText } from './diff.js';
+import { buildRows, buildSplit, wordRanges, rowPlans, findRow, findLine, revealAround, expandGap, loadTokens, tokHTML, headText, rangeLabel, selText } from './diff.js';
 import { md } from './md.js';
 import { modelKind, msgHTML, runBtn, runOf, grow, menu, shimmerSync } from './ui.js';
 import { hooks } from './hooks.js';
@@ -100,7 +100,9 @@ function guideHeadHTML(sec, k) {
 }
 
 let io = null;
+let preload;
 export function renderCards(keepFiles = false) {
+  hooks.cardVisibilityChanged?.();
   const order = orderedFiles();
   const sections = S.review.brief?.sections || [];
   const cards = $('#cards');
@@ -126,8 +128,13 @@ export function renderCards(keepFiles = false) {
   cards.innerHTML = intro + (order.length ? order.map(({ f, sec }) => (sec !== null ? guideHeadHTML(sections[sec], sec) : '') + cardHTML(f)).join('')
     : `<div class="state"><div class="box"><div class="big">Nothing to review here</div><div>${S.rangeKey === 'wip' ? 'No uncommitted changes.' : 'This scope changes no files.'}</div></div></div>`);
   io?.disconnect();
-  io = new IntersectionObserver((ents) => {
-    for (const e of ents) if (e.isIntersecting) { const p = e.target.dataset.p; if (!S.shut.has(p)) loadFile(p).catch((err) => bodyError(p, err)); }
+  preload = { id: S.id, files: order.map(({ f }) => f), started: false };
+  const observer = io = new IntersectionObserver((ents) => {
+    for (const e of ents) if (e.isIntersecting) {
+      const p = e.target.dataset.p;
+      if (S.shut.has(p) || fileOf(p)?.binary) continue;
+      loadFile(p).then(() => observer.unobserve(e.target), (err) => bodyError(p, err));
+    }
   }, { root: $('#center'), rootMargin: '400px 0px' });
   for (const c of $$('.file', cards)) io.observe(c);
   hooks.filterCards?.();
@@ -155,6 +162,7 @@ export function updateCard(p) {
 }
 
 function bodyError(p, e) { const fb = cardEl(p)?.querySelector('.fb'); if (fb) fb.innerHTML = `<div class="loadd err">${esc(e.message)}</div>`; }
+const splitFile = (f) => S.layout === 'split' && f.status !== 'A' && f.status !== 'D' && !f.untracked;
 
 // ------------------------------------------------------------------ loading one file
 export async function loadFile(p) {
@@ -172,7 +180,9 @@ export async function loadFile(p) {
     S.loaded.delete(p);
     throw e;
   }
-  if (fileOf(p) === f && S.rows.has(p) && cardEl(p)?.querySelector('.fb > .loadd:not(.empty-diff)')) renderBody(p);
+  const card = cardEl(p);
+  if (fileOf(p) === f && S.rows.has(p) && card &&
+      (card.querySelector('.fb > .loadd:not(.empty-diff)') || card.classList.contains('split') !== splitFile(f))) renderBody(p);
 }
 
 async function drawFile(p, f) {
@@ -189,12 +199,95 @@ async function drawFile(p, f) {
     if (!current()) return;
   }
   if (!current()) return;
-  renderBody(p);
+  const draw = () => S.files?.length < 24 ? renderBody(p) : queueDraw(p, f);
+  await draw();
+  if (!current()) return;
+  startPreload();
+  let lastNew = 0, lastOld = 0;
+  if (f.added + f.deleted >= 1024) {
+    for (const row of S.rows.get(p)) {
+      lastNew = Math.max(lastNew, row.n || 0);
+      if (row.t === '-') lastOld = Math.max(lastOld, row.o || 0);
+    }
+  }
+  const oldLength = d.newLen - f.added + f.deleted;
   const jobs = [];
-  if (f.status !== 'D') jobs.push(loadTokens(p, 'new'));
-  if (f.status !== 'A' && !f.untracked && d.hunks.some((hk) => hk.lines.some((l) => l.t === '-'))) jobs.push(loadTokens(p, 'old'));
+  if (f.status !== 'D') jobs.push(diffHighlight(p, 'new', f, d.newLen - lastNew > 600 ? lastNew : 0));
+  if (f.status !== 'A' && !f.untracked && d.hunks.some((hk) => hk.lines.some((l) => l.t === '-'))) {
+    jobs.push(diffHighlight(p, 'old', f, oldLength - lastOld > 600 ? lastOld : 0));
+  }
   await Promise.allSettled(jobs);
-  if (current() && jobs.length) renderBody(p);
+  if (current() && jobs.length) await draw();
+}
+
+// Chrome shares a small set of HTTP connections with the metadata and diff requests.
+// Keep one full-file highlight in flight for large diffs so short files can pass it.
+let longHighlight = Promise.resolve();
+function diffHighlight(p, side, f, through) {
+  if (f.added + f.deleted < 1024) return loadTokens(p, side);
+  const job = longHighlight.then(() => { if (fileOf(p) === f) return loadTokens(p, side, false, through); });
+  longHighlight = job.catch(() => {});
+  return job;
+}
+
+function startPreload() {
+  const pass = preload;
+  if (!pass || pass.started) return;
+  pass.started = true;
+  // Very large changes keep the viewport loader rather than building an unbounded DOM in the background.
+  if (pass.files.length < 80 || pass.files.length > 500 || pass.files.reduce((n, f) => n + lines(f), 0) > 50_000) return;
+  // Give the first cards and their highlights the request slots before filling the rest of the change.
+  setTimeout(() => {
+    let next = 0;
+    const fill = async () => {
+      while (preload === pass && S.id === pass.id && next < pass.files.length) {
+        const f = pass.files[next++];
+        const card = cardEl(f.path);
+        if (fileOf(f.path) !== f || f.binary || S.shut.has(f.path) || card?.hidden || S.loaded.has(f.path) ||
+            threadsAt(f.path).length || githubAt(f.path).length) continue;
+        await loadFile(f.path).catch((error) => { if (preload === pass) bodyError(f.path, error); });
+      }
+    };
+    for (let i = 0; i < 4; i++) fill();
+  }, 150);
+}
+
+const pendingDraws = new Map();
+let drawScheduled = false;
+function queueDraw(p, f, front = false) {
+  return new Promise((resolve) => {
+    const pending = pendingDraws.get(p);
+    if (pending?.f === f) {
+      pending.done.push(resolve);
+      pending.front ||= front;
+    } else {
+      pending?.done.forEach((done) => done());
+      pendingDraws.set(p, { f, front, done: [resolve] });
+    }
+    if (!drawScheduled) scheduleDraw();
+  });
+}
+function scheduleDraw() {
+  drawScheduled = true;
+  const run = () => {
+    const start = performance.now();
+    do {
+      let entry = pendingDraws.entries().next().value;
+      for (const candidate of pendingDraws) {
+        if (candidate[1].front) { entry = candidate; break; }
+      }
+      const [p, job] = entry;
+      pendingDraws.delete(p);
+      if (fileOf(p) === job.f) {
+        try { renderBody(p); } catch (error) { bodyError(p, error); }
+      }
+      for (const done of job.done) done();
+    } while (pendingDraws.size && performance.now() - start < 5);
+    if (pendingDraws.size) scheduleDraw();
+    else drawScheduled = false;
+  };
+  if (globalThis.scheduler) scheduler.postTask(run);
+  else setTimeout(run, 0);
 }
 
 // One fetch per file's diff, shared by everything that needs it; cleared when the change is read again.
@@ -313,15 +406,19 @@ document.addEventListener('animationend', (e) => {
 });
 export function renderBody(p) { drawBody(p); reflash(p); }
 function drawBody(p) {
-  const fb = cardEl(p)?.querySelector('.fb');
+  const card = cardEl(p), fb = card?.querySelector('.fb');
   const rows = S.rows.get(p);
   if (!fb || !rows) return;
-  const ff = fileOf(p), oneSided = ff && (ff.status === 'A' || ff.untracked || ff.status === 'D');
-  const split = S.layout === 'split' && !oneSided;
+  const split = splitFile(fileOf(p));
   fb.classList.toggle('split', split);
-  cardEl(p).classList.toggle('split', split); // the card carries it too, so what sits above the code (the guide head, the used-by panel) follows its text edge
-  const pairs = buildSplit(rows);
-  const items = split ? pairs : rows.map((r, i) => (r.hdr ? { hdr: i } : { i }));
+  card.classList.toggle('split', split); // the guide head and used-by panel follow the code's edge too
+  let plan = rowPlans.get(rows);
+  if (!plan) {
+    const pairs = buildSplit(rows);
+    plan = { pairs, words: wordRanges(rows, pairs) };
+    rowPlans.set(rows, plan);
+  }
+  const items = split ? plan.pairs : (plan.unified ||= rows.map((r, i) => (r.hdr ? { hdr: i } : { i })));
   S.items.set(p, items);
   const keyOf = (a) => {
     const i = findRow(rows, a);
@@ -341,19 +438,28 @@ function drawBody(p) {
   for (const g of githubAt(p)) { if (!S.marksHidden) put(keyOf(g), githubHTML(g)); else pin(keyOf(g), ghPinOf(g)); }
   const draftK = S.draft?.path === p ? keyOf(S.draft) : -1;
   const hadFocus = S.draft?.path === p && document.activeElement?.closest?.('.draft');
-  const wd = wordRanges(rows, pairs);
-  fb.classList.toggle('long-diff', items.length > 512);
-  if (items.length > 512) fb.style.setProperty('--diff-height', `${items.length * 20}px`);
+  const wd = plan.words;
   const lastK = items.length - 1;
   // Unified rows carry the marks in the gutter; split rows don't (the gutter is per side).
-  fb.innerHTML = items.map((it, k) => {
+  const html = items.map((it, k) => {
     let out = it.hdr !== undefined ? hdrHTML(rows[it.hdr], k, k === 0, k === lastK) : split ? splitRowHTML(p, rows, it, k, wd) : rowHTML(p, rows[it.i], k, wd.get(it.i), marks);
     // the pin goes last in the row, so the cells keep their places (split view finds a side by its index)
     if (pins.has(k) && out.endsWith('</div>')) out = out.slice(0, -6) + laneHTML(pins.get(k)) + '</div>';
     for (const x of after.get(k) || []) out += x;
     if (k === draftK) out += draftHTML();
     return out;
-  }).join('') || '<div class="loadd empty-diff">No text changes (a mode or rename only).</div>';
+  });
+  const chunks = [];
+  if (html.length > 512 || html.length && S.files.length >= 80) {
+    const size = html.length > 512 ? 32 : html.length;
+    for (let i = 0; i < html.length; i += size) {
+      const part = html.slice(i, i + size);
+      const headers = items.slice(i, i + size).filter((it) => it.hdr !== undefined).length;
+      chunks.push(`<div class="diff-chunk" style="--diff-height:${part.length * 20 + headers * 8}px">${part.join('')}</div>`);
+    }
+  }
+  fb.classList.toggle('chunked', chunks.length > 0);
+  fb.innerHTML = (chunks.length ? chunks : html).join('') || '<div class="loadd empty-diff">No text changes (a mode or rename only).</div>';
   if (draftK >= 0) {
     const ta = fb.querySelector('.draft textarea');
     ta.value = S.draft.value || '';
@@ -364,6 +470,53 @@ function drawBody(p) {
   hooks.bodyDrawn?.(p);
 }
 export function renderAllBodies() { for (const p of S.rows.keys()) renderBody(p); }
+let layoutPass;
+export function renderLayout() {
+  const viewport = S.files.length >= 24 ? $('#center').getBoundingClientRect() : null;
+  const shells = [], offscreen = layoutPass = [];
+  for (const { f } of orderedFiles()) {
+    const card = cardEl(f.path);
+    if (!card) continue;
+    const split = splitFile(f);
+    if (card.classList.contains('split') === split) continue;
+    if (!S.rows.has(f.path)) {
+      shells.push({ card, split });
+      continue;
+    }
+    if (!viewport) { renderBody(f.path); continue; }
+    const rect = card.getBoundingClientRect();
+    if (rect.bottom >= viewport.top && rect.top <= viewport.bottom || S.draft?.path === f.path) queueDraw(f.path, f, true);
+    else {
+      offscreen.push(f);
+      io?.observe(card);
+    }
+  }
+  for (const { card, split } of shells) {
+    card.classList.toggle('split', split);
+    card.querySelector('.fb').classList.toggle('split', split);
+  }
+  paintSel();
+  if (offscreen.length) finishLayout(offscreen);
+}
+
+function finishLayout(files) {
+  const idle = globalThis.requestIdleCallback || ((fn) => setTimeout(() => fn({ timeRemaining: () => 0 }), 0));
+  files.sort((a, b) => lines(a) - lines(b));
+  let next = 0;
+  function batch(deadline) {
+    if (layoutPass !== files) return;
+    const start = performance.now();
+    do {
+      const f = files[next++], card = cardEl(f.path);
+      if (fileOf(f.path) === f && card?.classList.contains('split') !== splitFile(f)) renderBody(f.path);
+    } while (next < files.length && deadline.timeRemaining() > 4 && performance.now() - start < 5);
+    if (next < files.length) idle(batch, { timeout: 180 });
+  }
+  // The viewport is already queued. Coalesce quick toggles before touching offscreen bodies.
+  setTimeout(() => {
+    if (layoutPass === files) idle(batch, { timeout: 180 });
+  }, 180);
+}
 
 // A hidden mark's pin: the same glyph as its line in the code (Claude's spark, GitHub's mark),
 // its first words in the title, Claude's pixel when an answer waits unread, and a count when a line holds more.
@@ -450,10 +603,16 @@ function selIdx() {
   for (let k = a; k <= b; k++) { const it = items[k]; if (!it || it.hdr !== undefined) continue; if (it.i != null) set.add(it.i); if (it.L != null && (s.side !== 'new' || it.L === it.R)) set.add(it.L); if (it.R != null && s.side !== 'old') set.add(it.R); }
   return [...set].sort((x, y) => x - y);
 }
+let selectionPath = null;
 export function paintSel() {
-  for (const el of $$('.ln.sel')) el.classList.remove('sel');
-  $('#seltools')?.remove();
-  const s = S.sel; if (!s) return;
+  if (selectionPath) {
+    const old = cardEl(selectionPath);
+    if (old) for (const el of $$('.ln.sel', old)) el.classList.remove('sel');
+    $('#seltools')?.remove();
+  }
+  const s = S.sel;
+  selectionPath = s?.path ?? null;
+  if (!s) return;
   const fb = cardEl(s.path)?.querySelector('.fb'); if (!fb) return;
   const [a, b] = [Math.min(s.a, s.b), Math.max(s.a, s.b)];
   for (let k = a; k <= b; k++) fb.querySelector(`.ln[data-k="${k}"]`)?.classList.add('sel');
@@ -497,12 +656,24 @@ $('#root').addEventListener('mousedown', (e) => {
   const row = hit.closest('.ln'), fb = hit.closest('.fb');
   if (!row || !fb || hit.classList.contains('e')) return;
   e.preventDefault();
-  const p = fb.dataset.p, k = Number(row.dataset.k);
-  if (!e.shiftKey && !S.draft && S.sel?.path === p && S.sel.a === k && S.sel.b === k) { S.sel = null; paintSel(); return; } // the same line again: let go
+  const p = fb.dataset.p, wasSplit = fb.classList.contains('split');
+  let k = Number(row.dataset.k);
   // In split view, the side you started on is the side you select.
   const cell = hit.classList.contains('no') ? hit : hit.closest('.cd');
-  // the side comes from the cell only where the file is drawn split (a one-sided file is drawn as one column)
-  const side = fb.classList.contains('split') ? ([...row.children].indexOf(cell) < 2 ? 'old' : 'new') : null;
+  let side = wasSplit ? ([...row.children].indexOf(cell) < 2 ? 'old' : 'new') : null;
+  const split = splitFile(fileOf(p));
+  if (wasSplit !== split) {
+    // This card can still show the previous layout. Resolve the clicked line before replacing its row map.
+    const item = S.items.get(p)[k];
+    const i = wasSplit ? (side === 'old' ? item.L : item.R) : item.i;
+    if (i == null) return;
+    if (split) side = S.rows.get(p)[i].t === '-' ? 'old' : 'new';
+    else side = null;
+    renderBody(p);
+    k = S.items.get(p).findIndex((it) => it.i === i || it.L === i || it.R === i);
+    if (k < 0) return;
+  }
+  if (!e.shiftKey && !S.draft && S.sel?.path === p && S.sel.a === k && S.sel.b === k) { S.sel = null; paintSel(); return; } // the same line again: let go
   S.sel = e.shiftKey && S.sel?.path === p ? { ...S.sel, b: k } : { path: p, a: k, b: k, side };
   if (S.draft && S.draft.path === p && e.shiftKey) { const s = selection(); Object.assign(S.draft, s); S.dragging = false; renderBody(p); return; }
   S.dragging = true;
@@ -524,6 +695,8 @@ window.addEventListener('mouseup', () => { if (S.dragging) { S.dragging = false;
 // ------------------------------------------------------------------ actions on cards, drafts and threads
 export async function setViewed(p, on) {
   const f = fileOf(p); if (!f) return;
+  const card = on ? cardEl(p) : null;
+  const offset = card && card.getBoundingClientRect().top - $('#center').getBoundingClientRect().top;
   const key = viewKey(f);
   S.review.unviewed ||= {};
   for (const [map, add] of [[S.review.viewed, on], [S.review.unviewed, !on]]) {
@@ -534,15 +707,13 @@ export async function setViewed(p, on) {
   // viewed folds the file away; unviewed opens it again, since you are going back to read it
   toggleFold(p, on);
   updateCard(p);
-  hooks.progress?.();
+  hooks.progress?.(p);
   hooks.sound?.viewed(S.id); // a tick up the ladder (with desk sounds on)
   // Mote is pleased (a hop and a check off his head), then looks at the file's row in the list, where its check lands
   if (on) { hooks.mote?.viewed(); hooks.mote?.glance(() => document.querySelector(`.trow[data-p="${CSS.escape(p)}"]`), 420); }
   api(`/api/w/${S.id}/viewed`, { method: 'POST', body: { path: p, blob: key, viewed: on } }).catch((e) => toast(e.message, { fail: true }));
   if (on) {
-    const c = cardEl(p);
-    const top = c.getBoundingClientRect().top - $('#center').getBoundingClientRect().top;
-    if (top < 44) c.scrollIntoView({ block: 'start' });
+    if (offset < 44 && Math.abs(offset - 40) > 1) card?.scrollIntoView({ block: 'start' });
     toast(`${p.split('/').pop()} viewed`, { action: 'Undo', run: () => { setViewed(p, false); toggleFold(p, false); hooks.goLoc?.({ path: p, line: 0 }); } });
   }
 }
@@ -551,7 +722,7 @@ export function toggleFold(p, shut) {
   const s = shut ?? !c.classList.contains('shut');
   c.classList.toggle('shut', s);
   s ? S.shut.add(p) : S.shut.delete(p);
-  if (s) { c.querySelectorAll('.ln.flash').forEach(unflash); if (S.flash?.path === p) S.flash = null; } // folded mid-flash: done
+  if (s && S.flash?.path === p) { c.querySelectorAll('.ln.flash').forEach(unflash); S.flash = null; }
   // Always: loadFile knows a file that is loaded (a card redrawn while it was folded only needs its body drawn again, and
   // nothing else will do it, since the card was already in view), one still loading, and one not read yet.
   if (!s) loadFile(p).catch((err) => bodyError(p, err));

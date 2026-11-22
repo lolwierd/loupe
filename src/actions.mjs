@@ -238,20 +238,30 @@ const local = (ws) => { if (ws.rec.kind !== 'local') throw fail('commit and push
 // (the upstream it tracks, else origin/<branch>) and how far apart they are.
 export async function shipState(ws) {
   local(ws);
-  const head = (await g(ws, ['rev-parse', '--verify', '--quiet', 'HEAD']).catch(() => '')).trim() || null;
-  const branch = (await g(ws, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => '')).trim() || 'HEAD';
+  const [headText, branchText, upstreamText] = await Promise.all([
+    g(ws, ['rev-parse', '--verify', '--quiet', 'HEAD']).catch(() => ''),
+    g(ws, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => ''),
+    g(ws, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).catch(() => ''),
+  ]);
+  const head = headText.trim() || null;
+  const branch = branchText.trim() || 'HEAD';
   const def = (ws.meta?.trunk || '').replace(/^origin\//, '') || 'main';
-  const upstream = branch === 'HEAD' ? null : (await g(ws, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).catch(() => '')).trim() || null;
-  const remote = (upstream && (await g(ws, ['config', `branch.${branch}.remote`]).catch(() => '')).trim()) || 'origin';
-  const dest = (upstream && (await g(ws, ['config', `branch.${branch}.merge`]).catch(() => '')).trim()) || `refs/heads/${branch}`;
+  const upstream = branch === 'HEAD' ? null : upstreamText.trim() || null;
   const remoteRef = upstream || `origin/${branch}`;
-  const remoteSha = (await g(ws, ['rev-parse', '--verify', '--quiet', `${remoteRef}^{commit}`]).catch(() => '')).trim() || null;
+  const [remoteText, destText, remoteShaText, wip] = await Promise.all([
+    upstream ? g(ws, ['config', `branch.${branch}.remote`]).catch(() => '') : '',
+    upstream ? g(ws, ['config', `branch.${branch}.merge`]).catch(() => '') : '',
+    g(ws, ['rev-parse', '--verify', '--quiet', `${remoteRef}^{commit}`]).catch(() => ''),
+    head ? changedFiles(ws.rec.root, { old: head, new: WORKTREE }) : [],
+  ]);
+  const remote = remoteText.trim() || 'origin';
+  const dest = destText.trim() || `refs/heads/${branch}`;
+  const remoteSha = remoteShaText.trim() || null;
   let ahead = 0, behind = 0;
   if (remoteSha && head) {
     const [b, a] = (await g(ws, ['rev-list', '--left-right', '--count', `${remoteSha}...${head}`]).catch(() => '0\t0')).trim().split(/\s+/).map(Number);
     ahead = a || 0; behind = b || 0;
   } else if (head && ws.meta?.base) ahead = Number((await g(ws, ['rev-list', '--count', `${ws.meta.base}..${head}`]).catch(() => '0')).trim()) || 0;
-  const wip = head ? await changedFiles(ws.rec.root, { old: head, new: WORKTREE }) : [];
   let template = '';
   for (const f of ['.github/pull_request_template.md', '.github/PULL_REQUEST_TEMPLATE.md', 'docs/pull_request_template.md', 'pull_request_template.md']) {
     try { template = fsShip.readFileSync(pathShip.join(ws.rec.root, f), 'utf8').slice(0, 6000); break; } catch { /* next */ }

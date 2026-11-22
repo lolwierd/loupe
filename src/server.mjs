@@ -16,7 +16,7 @@ import * as C from './claude.mjs';
 import * as L from './live.mjs';
 import * as A from './actions.mjs';
 import { stackFor } from './stacks.mjs';
-import { tokens } from './highlight.mjs';
+import { highlightJSON, initHighlightCache, primeHighlight } from './highlight-cache.mjs';
 import { goplsFor, lspState, stopAll, readableExternal, lineAt } from './lsp.mjs';
 import { uid, safeRel } from './util.mjs';
 import { WORKTREE, searchRepository, citationLine, readAt } from './git.mjs';
@@ -39,8 +39,11 @@ const SHORT = new Set(SHORT_HOSTNAME ? [SHORT_HOSTNAME] : []);
 const originOk = (o) => { try { return hostOk(new URL(o).host); } catch { return false; } };
 
 function send(res, code, obj) {
+  return sendJSON(res, code, JSON.stringify(obj));
+}
+function sendJSON(res, code, json) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-  res.end(JSON.stringify(obj));
+  res.end(json);
 }
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -230,6 +233,7 @@ async function route(req, res, url) {
 
   if (method === 'GET' && sub === '/files') {
     const files = await ws.files(scope);
+    if (files.length >= 24) primeHighlight(files.find((f) => !f.binary && f.kind === 'code')?.path);
     const r = ws.range(scope);
     return send(res, 200, {
       scope: r.key, old: r.old, new: r.new === WORKTREE ? 'worktree' : r.new, key: W.contentKey(files),
@@ -269,7 +273,12 @@ async function route(req, res, url) {
       text = await (await import('./git.mjs')).readAt(ws.gitDir, r.new === WORKTREE ? WORKTREE : r.new, fp);
     }
     if (text === null) return send(res, 404, { error: `${fp} is not on the ${side} side` });
-    if (sub === '/hl') return send(res, 200, await tokens(`${ws.id}:${scope}:${side}:${fp}:${text.length}:${hash(text)}`, text, fp));
+    if (sub === '/hl') {
+      const through = Number(url.searchParams.get('through'));
+      // Small changes can reuse the daemon's loaded grammars without spinning up a worker.
+      const inline = ws.meta?.totals?.files < 24 && text.length <= 12_000 && !/[^\n]{1024}/.test(text);
+      return sendJSON(res, 200, await highlightJSON(text, fp, { through: Number.isSafeInteger(through) ? through : 0, inline }));
+    }
     const lines = text.split('\n'); if (text.endsWith('\n')) lines.pop();
     return send(res, 200, { path: fp, side, lines });
   }
@@ -306,7 +315,7 @@ async function route(req, res, url) {
     const abs = url.searchParams.get('file');
     if (!readableExternal(abs)) return send(res, 404, { error: 'only files under GOROOT or the Go module cache open here' });
     const text = fs.readFileSync(fs.realpathSync(abs), 'utf8');
-    if (url.searchParams.get('hl')) return send(res, 200, await tokens('ext:' + abs, text, abs));
+    if (url.searchParams.get('hl')) return sendJSON(res, 200, await highlightJSON(text, abs));
     const lines = text.split('\n'); if (text.endsWith('\n')) lines.pop();
     return send(res, 200, { path: abs, lines, external: true });
   }
@@ -587,7 +596,6 @@ function liveAsk(ws, conv, msg, raw) {
 }
 
 
-const hash = (s) => { let h = 0; for (let i = 0; i < s.length; i += Math.max(1, Math.floor(s.length / 2048))) h = (h * 31 + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
 
 // ------------------------------------------------------------------ the listeners
 function handler(req, res) {
@@ -635,6 +643,7 @@ async function startTls(port) {
 }
 
 export async function start() {
+  await initHighlightCache();
   const server = http.createServer(handler);
   server.keepAliveTimeout = 65000;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(PORT, '127.0.0.1', resolve); });

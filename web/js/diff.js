@@ -4,6 +4,7 @@ import { S, $, esc, api, wsApi, fileOf } from './core.js';
 
 // ------------------------------------------------------------------ tokens
 const tokClass = new Map();
+export const rowPlans = new WeakMap();
 function cls(light, dark, fs) {
   const k = `${light}|${dark}|${fs}`;
   if (tokClass.has(k)) return tokClass.get(k);
@@ -18,21 +19,25 @@ function cls(light, dark, fs) {
   }
   return c;
 }
-export async function loadTokens(p, side, ext = false) {
+export async function loadTokens(p, side, ext = false, through) {
   const key = (ext ? 'ext' : side) + ':' + p;
-  if (S.tok.has(key)) return S.tok.get(key);
+  const cached = S.tok.get(key);
+  if (cached && (!cached.through || through && cached.through >= through)) return cached;
   const { id, scope } = S, file = fileOf(p);
-  const r = await api(ext ? `/api/w/${S.id}/ext?hl=1&file=${encodeURIComponent(p)}` : wsApi('/hl', { side, path: p }));
+  const r = await api(ext ? `/api/w/${S.id}/ext?hl=1&file=${encodeURIComponent(p)}` : wsApi('/hl', { side, path: p, ...(through ? { through } : {}) }));
   if (S.id !== id || S.scope !== scope || fileOf(p) !== file) return;
+  const prior = S.tok.get(key);
+  if (r.through && prior && (!prior.through || prior.through >= r.through)) return prior;
   const pal = r.palette.map(([l, d, fs]) => cls(l, d, fs));
   const lines = r.lines.map((line) => line.map(([t, k]) => [t, pal[k]]));
+  if (r.through) lines.through = r.through;
   S.tok.set(key, lines);
   return lines;
 }
 // One line as highlighted spans. Each [a, b) marks a separate edit.
 export function tokHTML(key, line, text, ranges = []) {
   let toks = S.tok.get(key)?.[line - 1];
-  if (!toks || toks.map((t) => t[0]).join('') !== text) toks = [[text, '']];
+  if (!toks || (toks.text ??= toks.map((t) => t[0]).join('')) !== text) toks = [[text, '']];
   let c = 0, edit = 0, out = '';
   for (const [t, k] of toks) {
     const end = c + t.length;
@@ -90,9 +95,14 @@ export async function expandGap(p, i, dir) {
   const lines = await headText(p);
   if (S.rows.get(p) !== rows || rows[i] !== r || r.gap !== g) return;
   const size = g.to - g.from + 1, cnt = dir === 'all' ? size : Math.min(20, size);
+  const last = dir === 'down' ? g.from + cnt - 1 : g.to;
+  const cached = S.tok.get('new:' + p);
+  if ((!cached && rows.length > 512) || (cached?.through && last > cached.through)) await loadTokens(p, 'new').catch(() => {});
+  if (S.rows.get(p) !== rows || rows[i] !== r || r.gap !== g) return;
   if (dir === 'down') { rows.splice(i, 0, ...ctxRows(lines, g, g.from, g.from + cnt - 1)); g.from += cnt; }
   else { rows.splice(i + 1, 0, ...ctxRows(lines, g, g.to - cnt + 1, g.to)); g.to -= cnt; }
   if (g.from > g.to) { r.gap = null; if (!r.h) rows.splice(rows.indexOf(r), 1); }
+  rowPlans.delete(rows);
 }
 // Show new-side line n and three lines around it, splitting the gap that hides it.
 export async function revealAround(p, n) {
@@ -103,10 +113,14 @@ export async function revealAround(p, n) {
   const r = rows[i], lines = await headText(p), g = r.gap;
   if (S.rows.get(p) !== rows || rows[i] !== r || !g || g.from > n || g.to < n) return false;
   const a = Math.max(g.from, n - 3), b = Math.min(g.to, n + 3);
+  const cached = S.tok.get('new:' + p);
+  if (cached?.through && b > cached.through) await loadTokens(p, 'new').catch(() => {});
+  if (S.rows.get(p) !== rows || rows[i] !== r || r.gap !== g) return false;
   const before = a > g.from ? [{ hdr: true, h: null, gap: { from: g.from, to: a - 1, delta: g.delta } }] : [];
   const keep = b < g.to || r.h;
   r.gap = b < g.to ? { from: b + 1, to: g.to, delta: g.delta } : null;
   rows.splice(i, 1, ...before, ...ctxRows(lines, g, a, b), ...(keep ? [r] : []));
+  rowPlans.delete(rows);
   return true;
 }
 

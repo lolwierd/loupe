@@ -40,6 +40,7 @@ function fileRow(f, depth, name) {
 // it, and the section you are reading opened to its files and how many of its checks you ticked. The why and the
 // checks themselves stand in the middle, above the section's files, where you read them.
 let openSec = -1;
+let visibleDirs = new Map(), currentRow;
 export const sectionOf = (p) => (S.review.brief?.sections || []).findIndex((s) => s.files.includes(p));
 function guideSideHTML(match) {
   const secs = S.review.brief.sections;
@@ -58,6 +59,8 @@ function guideSideHTML(match) {
     `<div class="gfoot">${S.review.brief.pending ? `<span class="shimmer" style="${shimmerSync()}">Regenerating</span>` : `<button class="link" data-act="writebrief">Regenerate the guide</button>`}</div></nav>`;
 }
 export function renderTree() {
+  visibleDirs = new Map();
+  currentRow = null;
   const q = S.filter.toLowerCase();
   const match = (f) => !q || f.path.toLowerCase().includes(q);
   const files = S.files.filter(match);
@@ -79,6 +82,7 @@ export function renderTree() {
   } else {
     const node = (n, depth) => [...n.dirs.values()].sort((a, b) => a.name.localeCompare(b.name)).map((d) => {
       const all = collect(d), left = leftIn(all), done = all.every((f) => isViewed(f) || f.kind === 'generated');
+      visibleDirs.set(d.path, all);
       const slash = d.name.lastIndexOf('/') + 1;
       return `<button class="trow dir${S.dirShut.has(d.path) ? ' shut' : ''}${done ? ' viewed' : ''}" data-d="${esc(d.path)}" style="--d:${depth}" title="${esc(d.path)}" aria-label="${esc(d.path)}">${I.chev}<span class="nm dirname">${slash ? `<span class="parent">${esc(d.name.slice(0, slash))}</span>` : ''}<span class="leaf">${esc(d.name.slice(slash))}</span></span><span class="meta"><span class="lines">${done ? icon('check', '--ok') : left ? left.toLocaleString() : ''}</span></span></button>` +
         (S.dirShut.has(d.path) ? '' : node(d, depth + 1));
@@ -89,7 +93,12 @@ export function renderTree() {
     ? '<div class="tempty">No matching files. <button class="link" data-act="clearfilter">Clear</button></div>'
     : html || '<div class="tempty">No changes.</div>';
   markCurrent();
-  for (const f of S.files) { const c = cardEl(f.path); if (c) c.hidden = !match(f); }
+  let visibilityChanged = false;
+  for (const f of S.files) {
+    const c = cardEl(f.path), hidden = !match(f);
+    if (c && c.hidden !== hidden) { c.hidden = hidden; visibilityChanged = true; }
+  }
+  if (visibilityChanged) hooks.cardVisibilityChanged?.();
 }
 const collect = (d) => [...d.files, ...[...d.dirs.values()].flatMap(collect)];
 
@@ -97,8 +106,29 @@ export function markCurrent() {
   const p = S.current;
   // reading into another section opens it in the guide's contents
   if (S.mode === 'guide' && S.review.brief?.sections?.length && p && sectionOf(p) >= 0 && sectionOf(p) !== openSec) return renderTree();
-  for (const n of $$('.trow[aria-current="true"]')) n.removeAttribute('aria-current');
-  if (p) $(`.trow[data-p="${CSS.escape(p)}"]`)?.setAttribute('aria-current', 'true');
+  currentRow?.removeAttribute('aria-current');
+  currentRow = p && $('#tlist').querySelector(`.trow[data-p="${CSS.escape(p)}"]`);
+  currentRow?.setAttribute('aria-current', 'true');
+}
+
+export function updateTreeViewed(path) {
+  if (S.mode === 'guide' || (S.order === 'guide' && S.review.brief?.sections?.length)) return renderTree();
+  const root = $('#tlist');
+  const row = root.querySelector(`.trow[data-p="${CSS.escape(path)}"]`);
+  if (row) {
+    const focused = document.activeElement === row;
+    row.outerHTML = fileRow(fileOf(path), Number(row.style.getPropertyValue('--d')), path.split('/').pop());
+    if (path === S.current) markCurrent();
+    if (focused) root.querySelector(`.trow[data-p="${CSS.escape(path)}"]`)?.focus({ preventScroll: true });
+  }
+  for (const [dir, files] of visibleDirs) {
+    if (!path.startsWith(dir + '/')) continue;
+    const button = root.querySelector(`.trow[data-d="${CSS.escape(dir)}"]`);
+    const done = files.every((f) => isViewed(f) || f.kind === 'generated');
+    const left = leftIn(files);
+    button.classList.toggle('viewed', done);
+    button.querySelector('.lines').innerHTML = done ? icon('check', '--ok') : left ? left.toLocaleString() : '';
+  }
 }
 
 // The tab says what is left (title and favicon ring), and the moment the last file is viewed a toast says so (the meter

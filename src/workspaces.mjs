@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { STATE_DIR, SEARCH_ROOTS, BIN, HOME } from './config.mjs';
 import { git, gitOk, run, JsonFile, Lru, slug, isSha, safeRel, single, serial } from './util.mjs';
-import { WORKTREE, revParse, commitsBetween, changedFiles, fileHunks, readAt, lineCount, related, kindOf } from './git.mjs';
+import { WORKTREE, revParse, commitsBetween, changedFiles, fileHunks, rangePatches, readAt, lineCount, related, kindOf } from './git.mjs';
 import { goplsFor } from './lsp.mjs';
 import * as GH from './github.mjs';
 import { localParent, localTrunk, stackFor, stackSnapshot } from './stacks.mjs';
@@ -181,6 +181,7 @@ export class Workspace {
     this.clients = new Set();
     this.cache = new Lru(64);        // scope key -> files
     this.hunkCache = new Lru(800);   // range key + path -> hunks
+    this.patchCache = new Lru(2);    // scope key -> pending range-wide patch
     this.version = 0;                // bumps on every change the watcher sees
     // A PR read on an earlier run is "idle" until a page asks for it; one never read is "preparing".
     this.status = rec.kind === 'pr' ? (rec.pr && rec.clone ? 'idle' : 'preparing') : 'ready';
@@ -364,7 +365,13 @@ export class Workspace {
         const gr = GH.githubRepoOf(origin.split(/\s+/)[1]);
         if (gr && this.meta?.branch) { owner = gr.owner; repo = gr.repo; number = await GH.prForBranch(owner, repo, this.meta.branch); }
       }
-      if (!number) { this.github = { at: Date.now(), pr: null, threads: [], owner, repo, repoFull: owner ? `${owner}/${repo}` : null }; this.emit('github', {}); return this.github; }
+      if (!number) {
+        const before = this.github;
+        this.github = { at: Date.now(), pr: null, threads: [], owner, repo, repoFull: owner ? `${owner}/${repo}` : null };
+        // A freshness timestamp alone does not require the page to fetch and redraw its diff.
+        if (!before || before.pr || before.error || before.owner !== owner || before.repo !== repo) this.emit('github', {});
+        return this.github;
+      }
       const [pr, threads, pending] = await Promise.all([GH.pullRequest(owner, repo, number), GH.reviewThreads(owner, repo, number).catch(() => []), GH.pendingReview(owner, repo, number).catch((e) => ({ error: e.message }))]);
       // Your pending review's comments are threads too: the ones GitHub already lists as threads are marked pending
       // there; any it does not list yet are added, on the new side at their line.
@@ -544,10 +551,21 @@ export class Workspace {
   }
   async hunks(scope, p) {
     const r = this.range(scope);
-    const f = await this.file(scope, p);
+    const scopeKey = this.scopeKey(scope);
+    const files = await this.files(scope);
+    const f = files.find((file) => file.path === p);
     if (!f) return null;
     const key = `${r.old}:${r.new}:${fileNoteKey(f)}`;
-    const hunks = f.untracked ? await fileHunks(this.gitDir, r, f) : this.hunkCache.get(key) ?? await fileHunks(this.gitDir, r, f);
+    let hunks = f.untracked ? null : this.hunkCache.get(key);
+    if (!hunks && files.length >= 32 && !f.untracked && !f.oldPath && !f.binary) {
+      let pending = this.patchCache.get(scopeKey);
+      if (!pending) {
+        pending = rangePatches(this.gitDir, r, files).catch(() => null);
+        this.patchCache.set(scopeKey, pending);
+      }
+      hunks = (await pending)?.get(p);
+    }
+    hunks ??= await fileHunks(this.gitDir, r, f);
     if (!f.untracked) this.hunkCache.set(key, hunks);
     const text = f.status === 'D' ? null : await this.text(scope, 'new', p);
     return { path: p, oldPath: f.oldPath, status: f.status, hunks, newLen: lineCount(text) };
@@ -556,8 +574,13 @@ export class Workspace {
   async text(scope, side, p) {
     if (!safeRel(p)) return null;
     const r = this.range(scope);
-    const f = await this.file(scope, p);
-    if (side === 'old') return readAt(this.gitDir, r.old, f?.oldPath || p, f?.oldBlob);
+    const files = await this.files(scope), i = files.findIndex((f) => f.path === p), f = files[i];
+    if (side === 'old') {
+      const start = i - i % 24;
+      const nearby = f?.oldBlob && files.length >= 32 ? files.slice(start, start + 24)
+        .filter((file) => !file.binary && file.deleted && file.oldBlob !== f.oldBlob).map((file) => file.oldBlob) : null;
+      return readAt(this.gitDir, r.old, f?.oldPath || p, f?.oldBlob, nearby);
+    }
     return readAt(this.gitDir, r.new, p, f?.blob);
   }
   // A path the viewer may open: one the scope changes, or any file tracked at the new side.

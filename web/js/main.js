@@ -1,12 +1,12 @@
 // The page: which change this URL is, the frame around it (top bar; bin | diff | inspector), live
 // updates from the daemon, keys, the palette and home. One URL per change; "/" goes back to the last one.
 import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, briefRun, notesRun } from './core.js';
-import { renderCards, renderBody, renderAllBodies, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment, statusGlyph, updateFileNotes } from './cards.js';
+import { renderCards, renderBody, renderAllBodies, renderLayout, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment, statusGlyph, updateFileNotes } from './cards.js';
 import { attemptFileNotes, filesNeedingNotes, resetNotesAttempt, currentNotes } from './file-notes.js';
-import { renderTree, markCurrent, nextUnviewed } from './tree.js';
+import { renderTree, updateTreeViewed, markCurrent, nextUnviewed } from './tree.js';
 import { renderPanel, setTab, renderTabs, openChat, paintMessage } from './panel.js';
 import { goLoc, goThread, openViewer, closeViewer, hideTip, goBack, clearReturns, remember, forget } from './nav.js';
-import { renderProgress, paintProgress, renderGo, renderStack, doAct } from './acts.js';
+import { renderProgress, paintProgress, paintScrollProgress, renderGo, renderStack, doAct } from './acts.js';
 import { menu, closeMenu, shimmerSync, refreshRunButtons, pickRun, runLabel } from './ui.js';
 import { hooks } from './hooks.js';
 import './actions.js';
@@ -23,7 +23,13 @@ import { animateTheme, systemTheme, themeOrigin } from './theme-wave.js';
 // Every part that shows the review's state, redrawn together, so no part ever disagrees with another. The inspector is
 // not one of them: the Overview says nothing about what is viewed, and redrawing it (the PR's description and its
 // conversation, as markdown) on every v and ] was the biggest cost of a keypress on a PR.
-function progress() { renderTree(); paintProgress(); renderGo(); hooks.mote?.progress(allViewed(), leftShare()); }
+function progress(path) {
+  if (path) updateTreeViewed(path);
+  else renderTree();
+  paintProgress();
+  if (!path) renderGo();
+  hooks.mote?.progress(allViewed(), leftShare());
+}
 // Mote's two readings of the review, from the same files (every file but the generated ones, whatever the filter shows):
 // is every one viewed, and the share of their lines not yet viewed, 0..1 (its lens gathers its light by it). A change of
 // no lines (renames only) is all left until every file is viewed, then none.
@@ -193,6 +199,7 @@ async function readWorkspace(reason) {
 // (a program's name leading it, "gh: …" or "git fetch: …", keeps its case)
 const sentence = (t = '') => { t = String(t).trim(); return t && (/^([a-z][\w-]*:|(gh|git|gopls|codex|claude|loupe|node|npm)\b)/.test(t) ? t[0] : t[0].toUpperCase()) + t.slice(1) + (/[.!?…)]$/.test(t) ? '' : '.'); };
 function showState(title, text, error) {
+  hooks.cardVisibilityChanged?.();
   $('#cards').innerHTML = `<div class="state${error ? ' failed' : ''}"><div class="box">${error ? moteHTML('failed') : ''}<div class="big">${esc(title)}</div>${error ? `<div class="why">${esc(sentence(text))}</div><button class="btn" data-act="retry">Try again</button>` : `<div class="working"><span class="shimmer" style="${shimmerSync()}">${esc(text || 'Reading the change…')}</span></div>`}</div></div>`;
   decorateState($('#cards > .state'), { error, m: S.opening?.id === S.id ? S.opening : null });
   wakeMotes($('#cards'));
@@ -393,11 +400,14 @@ async function restoreSpot(s) {
 }
 // Which file you are reading: the last card whose top is above the line 90 px down, except when a guide heading sits
 // between it and the line, which means you are at the start of the heading's first file.
+let spyCards;
+hooks.cardVisibilityChanged = () => { spyCards = null; };
 function spyNow() {
   const c = $('#center');
   if (!c) return;
   const { top, bottom } = c.getBoundingClientRect(), line = top + 90;
-  const cards = $$('#cards > .file:not([hidden]), #cards > .gsec');
+  const cards = spyCards ||= [...$('#cards').children].filter((el) =>
+    el.classList.contains('gsec') || el.classList.contains('file') && !el.hidden);
   let lo = 0, hi = cards.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
@@ -406,7 +416,6 @@ function spyNow() {
   const el = cards[lo - 1];
   const cur = el?.classList.contains('gsec') ? cards[lo] : el;
   const p = cur?.dataset.p || orderedFiles()[0]?.f.path || null;
-  if (p !== S.current) { S.current = p; markCurrent(); paintProgress(); }
   // How far into each open file the bottom of the screen has reached: the strip shows it as a dither.
   let moved = false;
   let start = lo - 1;
@@ -419,12 +428,15 @@ function spyNow() {
     const f = Math.max(0, Math.min(1, (bottom - r.top) / Math.max(1, r.height)));
     if (f > (S.readFrac.get(el.dataset.p) || 0) + 0.02) { S.readFrac.set(el.dataset.p, f); moved = true; }
   }
-  if (moved) paintProgress();
+  const changed = p !== S.current;
+  if (changed) { S.current = p; markCurrent(); }
+  if (changed || moved) paintScrollProgress();
 }
 let spy = false;
 function onScroll() {
   if (spy) return; spy = true;
-  requestAnimationFrame(() => { spy = false; spyNow(); hideTip(); });
+  // Read the scroller after this frame's layout, so scrolling and the meter do not each flush it.
+  requestAnimationFrame(() => setTimeout(() => { spy = false; spyNow(); hideTip(); }, 0));
 }
 // Next left: you are done with this file. It is marked viewed and you go to the next one left after it.
 // ] is done with this file: viewed, and on to the next one left. [ undoes it: the file goes back to unviewed and the page
@@ -475,7 +487,11 @@ function applyMode(mode, first) {
 }
 hooks.applyMode = applyMode;
 const paneOpen = (which) => !$('#main').classList.contains(PANE[which][0]);
-function setLayout(l) { S.layout = l; pref.set('layout', l); S.sel = null; renderAllBodies(); }
+function setLayout(l) {
+  if (S.layout === l) return;
+  S.layout = l; pref.set('layout', l); S.sel = null;
+  renderLayout();
+}
 document.addEventListener('mousedown', (e) => {
   const r = e.target.closest?.('[data-resize]');
   if (!r) return;
@@ -539,12 +555,16 @@ function listenWs() {
   });
   on('settings', (st) => { S.app.settings = st; for (const f of S.files) updateCard(f.path); progress(); maybeAutoNotes(); });
   on('review', (d) => {
+    const before = S.review.viewed, unviewed = S.review.unviewed;
     if (d.viewed) S.review.viewed = d.viewed;
     if (d.unviewed) S.review.unviewed = d.unviewed;
     if ('verdict' in d) { S.review.verdict = d.verdict; if (S.tab === 'overview') renderPanel(); } // your verdict, sent from another page too
     if (d.checks) { S.review.checks = d.checks; for (const b of $$('.gck')) { const on = !!d.checks[b.dataset.key]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); } }
-    for (const f of S.files) updateCard(f.path);
-    progress();
+    const same = (a = [], b = []) => a.length === b.length && a.every((value, i) => value === b[i]);
+    const files = S.files.filter(({ path }) => !same(before[path], S.review.viewed[path]) ||
+      !same(unviewed?.[path], S.review.unviewed?.[path]));
+    for (const f of files) updateCard(f.path);
+    if (files.length || d.checks || 'verdict' in d) progress(files.length === 1 && !d.checks ? files[0].path : null);
   });
   on('thread', (d) => {
     let p = null;

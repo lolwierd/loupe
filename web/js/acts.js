@@ -107,6 +107,7 @@ export function paintProgress() {
   paintMeter();
   tickCount();
 }
+export function paintScrollProgress() { M?.read(S.current, S.readFrac); }
 
 // The count rolls down to its new value (old digits slide up and out), and the moment it reaches zero
 // one glint crosses the strip and the check takes the number's place. A roll always runs to its end: a count that
@@ -135,7 +136,7 @@ function rollCount() {
   const b = el.querySelector('.odo');
   if (!b || shown === null || reducedMotion()) { shown = left; rollEnd = 0; return renderProgress(); }
   b.innerHTML = `<span class="roll"><span>${shown.toLocaleString()}</span><span>${left.toLocaleString()}</span></span>`;
-  b.classList.remove('rolling'); void b.offsetWidth; b.classList.add('rolling');
+  b.classList.add('rolling');
   rollEnd = Date.now() + COUNT_ROLL; shown = left;
   setTimeout(() => { if (b.isConnected && shown === left) b.textContent = left.toLocaleString(); }, COUNT_ROLL);
 }

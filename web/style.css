@@ -365,6 +365,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .fh { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: var(--s3); height: 36px; padding: 0 var(--s4) 0 var(--s2); background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--rule); font-size: var(--t-mono); }
 .file.shut .fh { border-bottom: 0; }
 .file.shut .fb, .file.shut .relp { display: none; }
+.file.shut .fb.chunked { display: block; height: 0; overflow: hidden; content-visibility: hidden; }
 .file.shut .file-note, .file-note:empty { display: none; }
 /* a file's note: a caption, not a paragraph. The UI's size on a 20 px line in the third ink, across the whole row from
    the file's own edge, so most notes take one line, with even room above and below; the diff below stays the thing to
@@ -394,7 +395,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .file.viewed .viewedbox .box canvas { opacity: 1; }
 .file.stale .viewedbox { color: var(--warn); }
 .fb { font: var(--t-code)/20px var(--f-mono); overflow-x: auto; }
-.fb.long-diff { content-visibility: auto; contain-intrinsic-block-size: auto var(--diff-height); }
+.diff-chunk { content-visibility: auto; contain-intrinsic-block-size: auto var(--diff-height); }
 .loadd { padding: var(--s5) var(--s5) var(--s5) var(--code-x, var(--s5)); }
 /* Used by: on the file note's edge, three lists with the rule book's label; places are code (mono, a line number gutter) */
 .relp { padding: var(--s3) var(--s4) var(--s4); border-bottom: 1px solid var(--rule); font-size: var(--t-ui); display: grid; gap: var(--s4); background: var(--chrome); }

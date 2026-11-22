@@ -7,7 +7,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 process.env.LOUPE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-test-'));
-const { changedFiles, fileHunks, WORKTREE } = await import('../src/git.mjs');
+const { changedFiles, fileHunks, rangePatches, readAt, WORKTREE } = await import('../src/git.mjs');
 const { serial } = await import('../src/util.mjs');
 const { viewKey } = await import('../src/workspaces.mjs');
 
@@ -48,6 +48,20 @@ test('viewed is keyed to the diff: the uncommitted part and the whole branch dif
   const wip = (await changedFiles(repo, { old: head, new: WORKTREE })).find((f) => f.path === 'a.go');
   assert.equal(all.blob, wip.blob);
   assert.notEqual(viewKey(all), viewKey(wip));
+});
+test('range patches and batched blob reads match per-file Git output', async () => {
+  const range = { old: base, new: WORKTREE };
+  const files = await changedFiles(repo, range);
+  const patches = await rangePatches(repo, range, files);
+  for (const name of ['a.go', 'gone.txt']) {
+    const f = files.find(({ path }) => path === name);
+    assert.deepEqual(patches.get(name), await fileHunks(repo, range, f));
+  }
+  assert.equal(patches.has('new/name.txt'), false);
+  assert.equal(patches.has('odd\tname.txt'), false);
+  const old = files.filter((f) => f.oldBlob);
+  const contents = await Promise.all(old.map((f) => readAt(repo, base, f.oldPath || f.path, f.oldBlob, old.map((x) => x.oldBlob))));
+  assert.deepEqual(contents, old.map((f) => g('show', `${base}:${f.oldPath || f.path}`)));
 });
 test('serial: a call during a run gets a fresh run, not the stale one', async () => {
   const once = serial();
@@ -105,7 +119,6 @@ test('literal paths keep bracketed routes separate in hunks and blame', async ()
 });
 
 test('verified worktree hunks reject newer tracked and untracked bytes under old keys', async () => {
-  const { readAt } = await import('../src/git.mjs');
   const range = { old: base, new: WORKTREE };
   w('a.go', 'old tracked edit\n');
   w('fresh.md', 'old untracked edit\n');

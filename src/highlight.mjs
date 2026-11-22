@@ -1,11 +1,22 @@
 // Syntax highlighting with Shiki: VS Code's TextMate grammars and GitHub's light and dark themes, whole files at a
 // time so multi-line strings and comments come out right. The page gets tokens as [text, paletteIndex] per line.
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { createHighlighter, bundledLanguages } from 'shiki';
-import { Lru } from './util.mjs';
+import shiki from 'shiki/package.json' with { type: 'json' };
+
+export const MAX_HIGHLIGHT_LENGTH = 1_500_000;
+const tokenOptions = { themes: { light: 'github-light', dark: 'github-dark' }, defaultColor: false };
+// Bump the format when the plain-text fallback or palette/line encoding changes.
+const tokenFormat = 1;
+
+export function highlightKey(lang, text, options = tokenOptions) {
+  const settings = JSON.stringify([shiki.version, tokenFormat, MAX_HIGHLIGHT_LENGTH, options, lang]);
+  return createHash('sha256').update(settings + '\0').update(text, 'utf16le').digest('hex');
+}
 
 let hlP = null;
-export const highlighter = () => (hlP ||= createHighlighter({ themes: ['github-light', 'github-dark'], langs: [] }));
+export const highlighter = () => (hlP ||= createHighlighter({ themes: Object.values(tokenOptions.themes), langs: [] }));
 
 const LANG = {
   go: 'go', ts: 'ts', tsx: 'tsx', js: 'js', jsx: 'jsx', mjs: 'js', cjs: 'js', mts: 'ts', cts: 'ts', json: 'json', jsonc: 'jsonc', yaml: 'yaml', yml: 'yaml',
@@ -26,19 +37,15 @@ export function langFor(p) {
   return lang && (lang === 'text' || bundledLanguages[lang]) ? lang : 'text';
 }
 
-const cache = new Lru(400);
-export async function tokens(key, text, p) {
-  if (cache.has(key)) return cache.get(key);
-  const lang = langFor(p);
+export async function tokenize(text, lang) {
   // Very large files are drawn plain: highlighting them would stall the server for seconds.
-  if (lang === 'text' || text.length > 1_500_000) {
+  if (lang === 'text' || text.length > MAX_HIGHLIGHT_LENGTH) {
     const out = { lang: 'text', palette: [['', '', 0]], lines: text.split('\n').map((s) => [[s, 0]]) };
-    cache.set(key, out);
     return out;
   }
   const h = await highlighter();
   if (!h.getLoadedLanguages().includes(lang)) await h.loadLanguage(lang);
-  const r = h.codeToTokens(text, { lang, themes: { light: 'github-light', dark: 'github-dark' }, defaultColor: false });
+  const r = h.codeToTokens(text, { lang, ...tokenOptions });
   const palette = [], seen = new Map();
   const lines = r.tokens.map((line) => line.map((t) => {
     const s = t.htmlStyle || {};
@@ -47,6 +54,5 @@ export async function tokens(key, text, p) {
     return [t.content, seen.get(k)];
   }));
   const out = { lang, palette, lines };
-  cache.set(key, out);
   return out;
 }

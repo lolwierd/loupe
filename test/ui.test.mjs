@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { attemptFileNotes, eligibleForNotes, fileNoteKey, filesNeedingNotes, resetNotesAttempt, currentNotes } from '../web/js/file-notes.js';
+import { buildSplit, rangeLabel, selText } from '../web/js/diff.js';
 import vm from 'node:vm';
 
 test('a preview finishing after navigation never sends its write to the next workspace', async () => {
@@ -37,6 +38,44 @@ test('a selection of deleted lines keeps both endpoints on the old side', () => 
   assert.equal(result.side, 'old');
   assert.equal(result.startLine, 4);
   assert.equal(result.line, 5);
+});
+
+test('clicking a paired line during a deferred layout switch selects the line that was drawn', () => {
+  const source = fs.readFileSync(new URL('../web/js/cards.js', import.meta.url), 'utf8');
+  const selection = source.slice(source.indexOf('function selIdx()'), source.indexOf('export function openDraft(')).replace(/^export /gm, '');
+  const handlerStart = source.indexOf("$('#root').addEventListener('mousedown'");
+  const handler = source.slice(handlerStart, source.indexOf('// a plain click', handlerStart));
+  const rows = [{ hdr: true }, { t: '-', o: 4, s: 'removed' }, { t: '+', n: 4, s: 'added' }];
+  const layouts = { split: buildSplit(rows), unified: [{ hdr: 0 }, { i: 1 }, { i: 2 }] };
+  const S = { rows: new Map([['file', rows]]), items: new Map() };
+  let click, redraws;
+  const readSelection = vm.runInNewContext(selection + handler + '\nselection', {
+    S, rangeLabel, selText, cardEl: () => null, fileOf: (p) => p, splitFile: () => S.layout === 'split',
+    $: (selector) => selector === '#root' ? { addEventListener: (_type, fn) => { click = fn; } } : null,
+    renderBody(p) {
+      assert.equal(S.sel, null);
+      redraws++;
+      S.items.set(p, layouts[S.layout]);
+    },
+  });
+  for (const [from, to, k, cell] of [['split', 'unified', 1, 2], ['unified', 'split', 2, 1]]) {
+    S.layout = to;
+    S.sel = null;
+    redraws = 0;
+    S.items.set('file', layouts[from]);
+    const fb = { dataset: { p: 'file' }, classList: { contains: () => from === 'split' } };
+    const row = { dataset: { k }, children: Array.from({ length: 4 }, () => ({})) };
+    const hit = row.children[cell];
+    hit.classList = { contains: (cls) => cls === 'no' };
+    hit.closest = (selector) => selector === '.ln' ? row : fb;
+    click({ target: { closest: () => hit }, button: 0, preventDefault() {} });
+    assert.equal(redraws, 1);
+    const selected = readSelection();
+    assert.equal(selected.side, 'new');
+    assert.equal(selected.line, 4);
+    assert.equal(selected.anchorText, 'added');
+    assert.equal(selected.preview.length, 1);
+  }
 });
 
 test('guide layout keeps its empty state while the brief is missing', () => {
@@ -311,6 +350,7 @@ test('two readers share an in-flight diff and a stale response cannot paint a ne
   let file = { status: 'D' }, requests = 0, draws = 0, resolve;
   const loadFile = vm.runInNewContext(source.slice(source.indexOf('export async function loadFile'), source.indexOf('// One fetch per file')).replace('export ', '') + '\nloadFile', {
     S, fileOf: () => file, cardEl: () => null, buildRows: (diff) => diff.hunks,
+    setTimeout, performance, preload: null, splitFile: () => false,
     diffOf() { requests++; return new Promise((r) => { resolve = r; }); },
     threadsAt: () => [], githubAt: () => [], renderBody() { draws++; },
   });
