@@ -10,7 +10,7 @@
 // drawn at one sheet pixel per CSS pixel and kept crisp with image-rendering: pixelated. Frame times are the sheet's.
 import { S, $, pref, reducedMotion } from './core.js';
 import { hooks } from './hooks.js';
-import { fit, tok, isDark, watch, ordered, paint, lerp, smooth } from './dither.js';
+import { fit, tok, isDark, watch, BAYER4, frames, lerp, smooth } from './dither.js';
 import { makeFlightFrames, FLY_OFF, FLY_BACK, FLY_STEP, FLY_TRAVEL } from './motefly.js';
 
 const W = 48, H = 52;
@@ -193,10 +193,10 @@ class Mote {
 // with the app's 4×4 Bayer matrix (docs/COMPONENTS.md, Print textures). The canvas rides in the dock, so it goes
 // wherever Mote is dragged, and never takes the pointer.
 const LENS_W = 76, LENS_H = 18, FOOT = 9, LX = 46, LY = 11; // the patch of desk, the feet's row on it, where the light lands
-let lens = null, share = 1, allNow = false, glintUntil = 0, unwatchLens = null;
+let lens = null, share = 1, lensShare = 1, allNow = false, glintAt = 0, unwatchLens = null, stopLens = null;
 function drawLens() {
   if (!lens?.isConnected || lens.parentElement?.classList.contains('away')) return;
-  const g = fit(lens), f = share, dark = isDark();
+  const g = fit(lens), f = lensShare, dark = isDark();
   const r = 1.2 + 10 * f, core = lerp(0.95, 0.3, f), shadowR = 13;
   const field = (x, y) => {
     const fe = ((x - 25) / 17) ** 2 + ((y - FOOT) / 3.2) ** 2; // the contact shadow under its feet
@@ -206,15 +206,37 @@ function drawLens() {
     const light = ld < r + 1 ? core * (1 - smooth(r * 0.2, r + 1, ld)) : 0;
     return { ink: Math.max(contact, lensShadow * (1 - Math.min(1, light * 2))), light };
   };
-  const mask = ordered(g, (x, y) => field(x, y).ink, { cell: g.d, ink: 1 });
-  ordered(g, (x, y) => field(x, y).light, { cell: g.d, ink: 2, into: mask });
-  if (allNow && (Date.now() < glintUntil || reducedMotion())) {
-    const put = (ax, ay) => { for (let Y = ay * g.d; Y < (ay + 1) * g.d; Y++) for (let X = ax * g.d; X < (ax + 1) * g.d; X++) if (X < g.W && Y < g.H) mask[Y * g.W + X] = 3; };
-    for (let k = -3; k <= 3; k++) { put(LX + k, LY); put(LX, LY + k); }
-    for (const [dx, dy] of [[-1, -1], [1, 1], [1, -1], [-1, 1]]) put(LX + dx, LY + dy);
+  const age = performance.now() - glintAt;
+  const glint = allNow ? (reducedMotion() ? 1 : glintAt > 0 ? smooth(0, 110, age) * (1 - smooth(1070, 1400, age)) : 0) : 0;
+  const hi = tok('--hi'), ink = dark ? [0, 0, 0, 200] : [...tok('--ink').slice(0, 3), 120];
+  const ctx = lens.getContext('2d'), img = ctx.createImageData(g.W, g.H);
+  const pixels = new Uint32Array(img.data.buffer);
+  for (let y = 0; y < g.h; y++) for (let x = 0; x < g.w; x++) {
+    const v = field(x + 0.5, y + 0.5), rank = BAYER4[(y & 3) * 4 + (x & 3)] + 0.5;
+    const shadow = smooth(rank - 0.48, rank + 0.48, v.ink * 16) * ink[3];
+    const light = smooth(rank - 0.48, rank + 0.48, v.light * 16) * (dark ? 220 : 255);
+    const dx = Math.abs(x - LX), dy = Math.abs(y - LY);
+    const cross = (dx === 0 && dy <= 3) || (dy === 0 && dx <= 3) || (dx === 1 && dy === 1);
+    const white = Math.max(light, cross ? glint * 255 : 0);
+    const black = shadow * (1 - white / 255), alpha = white + black;
+    if (!alpha) continue;
+    const channel = (i) => Math.round((hi[i] * white + ink[i] * black) / alpha);
+    const color = (Math.round(alpha) << 24) | (channel(2) << 16) | (channel(1) << 8) | channel(0);
+    for (let yy = y * g.d; yy < Math.min(g.H, (y + 1) * g.d); yy++) {
+      pixels.fill(color, yy * g.W + x * g.d, yy * g.W + Math.min(g.W, (x + 1) * g.d));
+    }
   }
-  const hi = tok('--hi'); // the light is the app's own highlight, light in both themes; the shadow is ink, seen through
-  paint(lens, g, mask, [null, dark ? [0, 0, 0, 200] : [...tok('--ink').slice(0, 3), 120], [...hi.slice(0, 3), dark ? 220 : 255], hi]);
+  ctx.putImageData(img, 0, 0);
+}
+function easeLens() {
+  stopLens?.();
+  const from = lensShare;
+  stopLens = frames((ms, still) => {
+    if (!lens?.isConnected) return false;
+    lensShare = still ? share : lerp(from, share, smooth(0, 260, ms));
+    drawLens();
+    return !still && (ms < 260 || (allNow && performance.now() - glintAt < 1400));
+  });
 }
 
 // ------------------------------------------------------------------ the floating one on a change's page
@@ -240,14 +262,20 @@ function status() {
 // a spot dragged out from the old corner is not kept.)
 const SPOT = 'moteSpot';
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const snap = (px, d = globalThis.devicePixelRatio || 1) => Math.round(px * d) / d;
 function place(dock) {
+  dock.style.setProperty('--device-pixel', `${1 / (globalThis.devicePixelRatio || 1)}px`);
   const at = pref.get(SPOT, null);
   if (!at) { dock.style.left = dock.style.top = dock.style.bottom = ''; aim(dock); return; }
   const x = clamp(at.x * innerWidth, 4, innerWidth - W - 4), y = clamp(at.y * innerHeight, 4, innerHeight - H - 4);
-  dock.style.left = `${Math.round(x)}px`; dock.style.top = `${Math.round(y)}px`; dock.style.bottom = 'auto';
+  dock.style.left = `${snap(x)}px`; dock.style.top = `${snap(y)}px`; dock.style.bottom = 'auto';
   aim(dock);
 }
-addEventListener('resize', () => { const d = $('#motedock'); if (d) place(d); });
+addEventListener('resize', () => {
+  stopGlide?.(true);
+  const dock = $('#motedock');
+  if (dock) place(dock);
+});
 // its bubble opens toward the side with more room (in the corner, over the diff); checked wherever it is put, when it
 // has something to say, and when the inspector opens, closes or is resized
 let panelWatch = null;
@@ -258,12 +286,18 @@ hooks.moteMount = (allViewed, left = 1) => {
   const dock = $('#motedock');
   // the same change drawn again (a save in the tree, a refresh, another scope): he carries on with whatever he was doing
   if (main && dock && mountedFor === S.id && main.el.isConnected && dock.contains(main.el)) {
-    share = left; allNow = !!allViewed; allWas = allNow; drawLens(); hooks.mote.sync(); return;
+    if (share !== left || allNow !== !!allViewed) {
+      share = left; allNow = !!allViewed; allWas = allNow; easeLens();
+    }
+    hooks.mote.sync();
+    return;
   }
   mountedFor = S.id;
+  stopGlide?.();
   landing?.(); // a flight under way ends now: the dock is drawn again below
   main?.pause(); life.stop();
   clearTimeout(wordsTimer); clearTimeout(helloTimer);
+  stopLens?.();
   words = null;
   if (!dock) { main = null; return; }
   dock.innerHTML = `<canvas class="motelight" aria-hidden="true" style="width:${LENS_W}px;height:${LENS_H}px;top:${H - FOOT - 4}px"></canvas>${moteHTML()}<span class="mw"></span>`;
@@ -272,7 +306,7 @@ hooks.moteMount = (allViewed, left = 1) => {
   panelWatch?.disconnect();
   const panel = $('#panel');
   if (panel) { panelWatch = new ResizeObserver(() => aim(dock)); panelWatch.observe(panel); }
-  lens = dock.querySelector('.motelight'); share = left; allNow = !!allViewed; glintUntil = 0;
+  lens = dock.querySelector('.motelight'); share = lensShare = left; allNow = !!allViewed; glintAt = 0;
   unwatchLens?.(); unwatchLens = watch(lens, drawLens);
   words = dock.querySelector('.mw');
   lastBusy = new Map(); briefWas = !!S.review?.brief?.pending; allWas = !!allViewed;
@@ -312,10 +346,11 @@ hooks.mote = {
   // after the viewed count changes: a jump when the last file goes viewed, and the lens's light gathered to match
   progress(all, left = share) {
     if (!main) return;
+    const changed = share !== left || allNow !== !!all;
     share = left; allNow = !!all;
-    if (allWas === false && all) { main.play('jumping'); say('Every file viewed', 4000); glintUntil = Date.now() + 1400; setTimeout(drawLens, 1450); }
+    if (allWas === false && all) { main.play('jumping'); say('Every file viewed', 4000); glintAt = performance.now(); }
     allWas = all;
-    drawLens();
+    if (changed) easeLens();
   },
   // a file viewed: he hops (his light stays on the desk), pleased, and a small check rises off his head; then he looks at
   // the file's row. A hop runs to its end: a file viewed while he is in the air adds its check beside the first and leaves
@@ -328,12 +363,10 @@ hooks.mote = {
       const chk = document.createElement('i');
       chk.className = 'motecheck'; chk.setAttribute('aria-hidden', 'true'); chk.style.setProperty('--n', n);
       chk.addEventListener('animationend', () => chk.remove(), { once: true });
+      chk.addEventListener('animationcancel', () => chk.remove(), { once: true });
       dock.append(chk);
     }
-    if (dock.classList.contains('hop')) return;
-    dock.classList.add('hop');
-    m.el.addEventListener('animationend', () => dock.classList.remove('hop'), { once: true });
-    m.pleased();
+    if (shiftMote(m, 'hop')) m.pleased();
   },
   // one of his small things now (by its place in LIFE), or a doze, for tests and for the curious
   live: (i) => (i === 'doze' ? main && life.doze(main) : life.tick(i)),
@@ -374,11 +407,27 @@ let lastInput = Date.now();
 function prop(kind, { dx = 0, ms = 900 } = {}) {
   const dock = main?.el.parentElement;
   if (!dock || dock.querySelectorAll('.moteprop').length > 3) return;
+  if (reducedMotion()) return;
   const p = document.createElement('i');
   p.className = `moteprop ${kind}`; p.setAttribute('aria-hidden', 'true');
   p.style.setProperty('--dx', `${dx}px`); p.style.setProperty('--ms', `${ms}ms`);
   p.addEventListener('animationend', () => p.remove(), { once: true });
+  p.addEventListener('animationcancel', () => p.remove(), { once: true });
   dock.append(p);
+}
+function shiftMote(m, name) {
+  const dock = m.el.parentElement;
+  if (!dock || dock.classList.contains(name) || reducedMotion()) return false;
+  const clear = (e) => {
+    if (e.animationName !== 'mote-' + name) return;
+    dock.classList.remove(name);
+    m.el.removeEventListener('animationend', clear);
+    m.el.removeEventListener('animationcancel', clear);
+  };
+  m.el.addEventListener('animationend', clear);
+  m.el.addEventListener('animationcancel', clear);
+  dock.classList.add(name);
+  return true;
 }
 // eyes to a direction (1 up, then clockwise; 0 the centre) for a while, then the next
 function eyes(m, path) {
@@ -405,9 +454,9 @@ const LIFE = [
   // a glint on his lens
   { w: 2, run: () => { prop('glint', { ms: 700 }); return 760; } },
   // a little hop, pleased
-  { w: 1, run: (m) => { const d = m.el.parentElement; d.classList.add('hop'); m.el.addEventListener('animationend', () => d.classList.remove('hop'), { once: true }); return eyes(m, [[BLINK, 300], [0, 60]]); } },
+  { w: 1, run: (m) => { shiftMote(m, 'hop'); return eyes(m, [[BLINK, 300], [0, 60]]); } },
   // a shuffle to one side and back
-  { w: 2, run: (m) => { const d = m.el.parentElement; d.classList.add('shuffle'); m.el.addEventListener('animationend', () => d.classList.remove('shuffle'), { once: true }); return eyes(m, [[7, 500], [3, 520], [0, 60]]); } },
+  { w: 2, run: (m) => { shiftMote(m, 'shuffle'); return eyes(m, [[7, 500], [3, 520], [0, 60]]); } },
   // a wave at nobody, now and then
   { w: 1, run: (m) => { m.run('waving', false); return sum(TIMES.waving); } },
 ];
@@ -444,7 +493,7 @@ const life = {
     const m = main;
     if (!m) return;
     m.once = null; m.face(0);
-    if (react && !reducedMotion()) { const d = m.el.parentElement; d.classList.add('hop'); m.el.addEventListener('animationend', () => d.classList.remove('hop'), { once: true }); }
+    if (react) shiftMote(m, 'hop');
     m.rest(); if (carryOn) this.next();
   },
 };
@@ -473,36 +522,38 @@ function fly(dock, out, done) {
   const takeoff = FLY_OFF.length - FLY_TRAVEL;
   const r = dock.getBoundingClientRect(), side = r.left + W / 2 < innerWidth / 2 ? -1 : 1;
   const rise = r.top + H + 32, drift = 120 + Math.random() * 80;
-  let index = 0;
+  let index = -1;
   const land = () => {
     if (landing !== land) return;
-    clearTimeout(flight); flight = 0; landing = null;
+    cancelAnimationFrame(flight); flight = 0; landing = null;
     art.remove(); dock.classList.remove('flying'); dock.style.transform = '';
     done();
   };
   landing = land;
   dock.append(art);
   dock.classList.add('flying');
-  const step = () => {
-    if (document.hidden || index === frames.length) { land(); return; }
-    const path = out ? index - takeoff + 1 : FLY_TRAVEL - index;
-    let x = 0, y = 0;
-    if (path > 0) {
-      const k = path / FLY_TRAVEL, e = k * k;
-      y = -2 - e * rise;
-      x = side * e * drift + Math.round(Math.sin(k * Math.PI * 5) * 3);
-    }
-    dock.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
-    art.src = flightFrames[frames[index++]];
-    flight = setTimeout(step, FLY_STEP);
+  let start;
+  const step = (now) => {
+    start ??= now;
+    const age = (now - start) / FLY_STEP, cel = Math.floor(age);
+    if (document.hidden || reducedMotion() || cel >= frames.length) { land(); return; }
+    if (cel !== index) { index = cel; art.src = flightFrames[frames[cel]]; }
+    // Use the sheet's clock only for drawings. The dock travels between those cels at the display's rate.
+    const k = clamp((out ? age - takeoff + 1 : FLY_TRAVEL - age) / FLY_TRAVEL, 0, 1);
+    const e = k * k;
+    const x = side * e * drift + Math.sin(k * Math.PI * 5) * 3;
+    const y = -e * (rise + 2);
+    dock.style.transform = `translate(${snap(r.left + x) - r.left}px, ${snap(r.top + y) - r.top}px)`;
+    flight = requestAnimationFrame(step);
   };
-  step();
+  step(performance.now());
 }
 let landing = null; // the flight under way's end, for a tab hidden mid-flight
 function setAway(on) {
   pref.set(AWAY, !!on);
   const dock = $('#motedock');
   if (!dock) return;
+  stopGlide?.();
   drag = null; dock.classList.remove('drag'); // a press held through it carries nothing
   if (on) {
     if (!main || leaving) return; // gone already, or going
@@ -552,10 +603,10 @@ document.addEventListener('pointermove', (e) => {
   });
 }, { passive: true });
 // a press that moves carries it; one that does not says hello
-let drag = null;
+let drag = null, stopGlide = null;
 document.addEventListener('pointerdown', (e) => {
   const m = e.target.closest?.('#motedock .mote');
-  if (!m || e.button !== 0 || flight || !main) return; // not one in flight
+  if (!m || e.button !== 0 || flight || !main || main.once === 'thrown') return; // not one in flight
   const dock = m.parentElement, r = dock.getBoundingClientRect();
   drag = { dock, dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY, moved: false, trail: [] };
   m.setPointerCapture?.(e.pointerId); e.preventDefault();
@@ -565,7 +616,7 @@ document.addEventListener('pointermove', (e) => {
   if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 4) return;
   drag.moved = true; drag.dock.classList.add('drag');
   const x = clamp(e.clientX - drag.dx, 4, innerWidth - W - 4), y = clamp(e.clientY - drag.dy, 4, innerHeight - H - 4);
-  Object.assign(drag.dock.style, { left: `${x}px`, top: `${y}px`, bottom: 'auto' });
+  Object.assign(drag.dock.style, { left: snap(x) + 'px', top: snap(y) + 'px', bottom: 'auto' });
   drag.trail.push([e.clientX, e.clientY, e.timeStamp]); if (drag.trail.length > 6) drag.trail.shift(); // for a throw
   aim(drag.dock);
 });
@@ -583,20 +634,39 @@ function thrown(d, m, e) {
   const dock = d.dock;
   m.pause(); life.stop(); m.once = 'thrown'; say('');
   m.draw(ROW.jumping, 2);
-  let last = performance.now();
-  const glide = () => { // on, slowing, kept inside the window
-    if (m.once !== 'thrown' || main !== m) return; // called off meanwhile
-    const now = performance.now(), k = Math.min(48, now - last); last = now;
-    const r = dock.getBoundingClientRect();
-    const x = clamp(r.left + vx * k, 4, innerWidth - W - 4), y = clamp(r.top + vy * k, 4, innerHeight - H - 4);
-    if (x <= 4 || x >= innerWidth - W - 4) vx = 0; if (y <= 4 || y >= innerHeight - H - 4) vy = 0;
-    Object.assign(dock.style, { left: `${Math.round(x)}px`, top: `${Math.round(y)}px`, bottom: 'auto' });
-    vx *= Math.pow(0.86, k / 16); vy *= Math.pow(0.86, k / 16);
-    if (Math.hypot(vx, vy) > 0.08 && m.once === 'thrown') return requestAnimationFrame(glide);
-    pref.set(SPOT, { x: x / innerWidth, y: y / innerHeight }); aim(dock);
-    onBack(dock, m);
+  const DRAG = -Math.log(0.86) / 16;
+  const rect = dock.getBoundingClientRect();
+  let x = rect.left, y = rect.top, last = performance.now();
+  let glideFrame;
+  const finish = stopGlide = (land = false) => {
+    cancelAnimationFrame(glideFrame);
+    stopGlide = null;
+    x = clamp(x, 4, innerWidth - W - 4);
+    y = clamp(y, 4, innerHeight - H - 4);
+    dock.style.transform = '';
+    Object.assign(dock.style, { left: snap(x) + 'px', top: snap(y) + 'px', bottom: 'auto' });
+    pref.set(SPOT, { x: x / innerWidth, y: y / innerHeight });
+    aim(dock);
+    if (!land || m.once !== 'thrown' || main !== m) return;
+    if (reducedMotion() || document.hidden) { m.once = null; m.rest(); if (!document.hidden) life.start(); }
+    else onBack(dock, m);
   };
-  requestAnimationFrame(glide);
+  const glide = (now) => { // on, slowing, kept inside the window
+    if (m.once !== 'thrown' || main !== m) { finish(); return; } // called off meanwhile
+    const k = Math.max(0, now - last); last = now;
+    const decay = Math.exp(-DRAG * k), distance = (1 - decay) / DRAG;
+    x = clamp(x + vx * distance, 4, innerWidth - W - 4);
+    y = clamp(y + vy * distance, 4, innerHeight - H - 4);
+    if (x <= 4 || x >= innerWidth - W - 4) vx = 0; if (y <= 4 || y >= innerHeight - H - 4) vy = 0;
+    vx *= decay; vy *= decay;
+    if (Math.hypot(vx, vy) > 0.08 && !reducedMotion() && !document.hidden) {
+      dock.style.transform = `translate(${snap(x) - rect.left}px, ${snap(y) - rect.top}px)`;
+      glideFrame = requestAnimationFrame(glide);
+      return;
+    }
+    finish(true);
+  };
+  glideFrame = requestAnimationFrame(glide);
   return true;
 }
 function onBack(dock, m) {
@@ -604,14 +674,21 @@ function onBack(dock, m) {
   dock.classList.add('onback');
   m.run('running-right', true); // his legs, at the air (m.timer is their loop's)
   m.once = 'thrown';
-  m.aux = setTimeout(() => { // a rock, then the heave over, on a timer of its own
-    dock.classList.add('rock');
-    m.aux = setTimeout(() => {
+  m.aux = setTimeout(() => {
+    const upright = (e) => {
+      if (e.animationName !== 'mote-rock') return;
+      m.el.removeEventListener('animationend', upright);
+      m.el.removeEventListener('animationcancel', upright);
+      if (main !== m || m.once !== 'thrown') return;
       m.aux = 0; m.stop();
       dock.classList.remove('onback', 'rock');
       m.once = null; m.play('jumping');
       m.aux = setTimeout(() => { m.aux = 0; if (main === m && !away()) { say(status()); life.start(); } }, JUMP_MS);
-    }, 520);
+    };
+    if (reducedMotion()) { upright({ animationName: 'mote-rock' }); return; }
+    m.el.addEventListener('animationend', upright);
+    m.el.addEventListener('animationcancel', upright);
+    dock.classList.add('rock');
   }, 1300);
 }
 document.addEventListener('pointerup', (e) => {
@@ -628,6 +705,7 @@ document.addEventListener('dblclick', (e) => { if (e.target.closest?.('#motedock
 document.addEventListener('visibilitychange', () => {
   pruneHomeMotes();
   if (document.hidden) {
+    stopGlide?.();
     landing?.(); // a flight under way lands, or leaves, at once
     clearTimeout(wordsTimer); clearTimeout(helloTimer);
     main?.pause(); life.stop(); // nobody is watching: no life either

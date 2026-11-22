@@ -18,6 +18,7 @@ import './sound.js';
 import { moteHTML, wakeMotes } from './mote.js';
 import { spark, icon, avatar } from './pixel.js';
 import { decorateState, endOpening } from './press.js';
+import { animateTheme, systemTheme, themeOrigin } from './theme-wave.js';
 
 // Every part that shows the review's state, redrawn together, so no part ever disagrees with another. The inspector is
 // not one of them: the Overview says nothing about what is viewed, and redrawing it (the PR's description and its
@@ -57,8 +58,22 @@ Object.assign(hooks, {
 });
 
 // ------------------------------------------------------------------ theme
-function applyTheme(t) { if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
-applyTheme(pref.get('theme', 'system'));
+let themeChoice = pref.get('theme', 'system');
+const effectiveTheme = (choice) => choice === 'light' || choice === 'dark' ? choice : systemTheme();
+function renderTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  const toggle = $('[data-act="theme"]');
+  if (toggle) toggle.innerHTML = theme === 'dark' ? I.moon : I.sun;
+}
+function applyTheme(choice, origin) {
+  themeChoice = choice;
+  const theme = effectiveTheme(choice);
+  animateTheme(() => renderTheme(theme), origin, theme === document.documentElement.dataset.theme);
+}
+renderTheme(effectiveTheme(themeChoice));
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  if (themeChoice === 'system') applyTheme('system', themeOrigin($('[data-act="theme"]')));
+});
 
 // ------------------------------------------------------------------ boot
 async function boot() {
@@ -678,7 +693,7 @@ function commands() {
     { group: 'VIEW', label: hooks.sound?.on() ? 'Turn desk sounds off' : 'Turn desk sounds on', sub: 'a tick per file viewed, a stamp, a typebar', run: () => hooks.sound?.set(!hooks.sound.on()) },
     { group: 'VIEW', label: paneOpen('bin') ? 'Hide the files' : 'Show the files', key: 't', run: () => setPane('bin', !paneOpen('bin')) },
     { group: 'VIEW', label: paneOpen('panel') ? 'Hide the inspector' : 'Show the inspector', key: 'p', run: () => setPane('panel', !paneOpen('panel')) },
-    ...['system', 'light', 'dark'].filter((t) => t !== pref.get('theme', 'system')).map((t) => ({ group: 'VIEW', label: `Theme: ${t}`, run: () => { pref.set('theme', t); applyTheme(t); } })),
+    ...['system', 'light', 'dark'].filter((t) => t !== pref.get('theme', 'system')).map((t) => ({ group: 'VIEW', label: `Theme: ${t}`, run: (origin) => { pref.set('theme', t); applyTheme(t, origin); } })),
     setting('autoView', !!S.app.settings?.autoView, 'Count tests and generated files as viewed'),
     setting('autoBrief', !!S.app.settings?.autoBrief, 'Write the brief when a PR opens'),
     ghUrl && { group: 'GO', label: 'Open on GitHub', run: () => open(ghUrl, '_blank', 'noopener') },
@@ -877,7 +892,10 @@ function openPalette() {
   const go = async (i) => {
     const x = shown[i];
     if (x?.ws) { close(); location.href = x.ws.url; return; }
-    if (x?.cmd) { close(); return x.cmd.run(); }
+    if (x?.cmd) {
+      const origin = themeOrigin(list.querySelector(`[data-i="${i}"]`));
+      close(); return x.cmd.run(origin);
+    }
     const target = x?.target; if (!target) return;
     input.disabled = true;
     try { const r = await api('/api/workspaces', { method: 'POST', body: { target, cwd: S.ws?.root || undefined } }); close(); location.href = r.url; }
@@ -1091,7 +1109,7 @@ document.addEventListener('click', async (e) => {
         { label: 'Count tests and generated files as viewed', value: { autoView: !st.autoView }, on: !!st.autoView },
         { label: 'Write the brief when a PR opens', value: { autoBrief: !st.autoBrief }, on: !!st.autoBrief },
         { label: 'Write file notes when a change opens', value: { autoNotes: st.autoNotes === false }, on: st.autoNotes !== false }], async (it) => {
-        if (it.value.theme) { pref.set('theme', it.value.theme); applyTheme(it.value.theme); b.innerHTML = it.value.theme === 'dark' ? I.moon : I.sun; return; }
+        if (it.value.theme) { pref.set('theme', it.value.theme); applyTheme(it.value.theme, themeOrigin(b)); return; }
         if (it.value.layout) return setLayout(it.value.layout);
         if (it.value.mode) return applyMode(it.value.mode);
         if (it.value.marks) return setMarksHidden(!S.marksHidden);

@@ -8,11 +8,10 @@
 // The ink is a field per device pixel, screened with the 4×4 Bayer matrix (dither.js), so it reads as a print and never
 // as a gradient: heavier where the rubber pressed, a squeeze of ink along every edge, a soft spot where it did not quite
 // touch, grain. The angle, the lean and the soft spot are seeded by the head's id, so the same head always prints the
-// same stamp. It lands in two frames (touch, press), holds, and lifts in three (the ink thinning down the screen);
-// nothing slides. With reduced motion only the small one is printed.
+// same stamp. It settles into the paper, holds, and lifts. With reduced motion only the small one is printed.
 import { S, $, esc, reducedMotion } from './core.js';
 import { hooks } from './hooks.js';
-import { tok, isDark, watch, smooth, hash, noise, fbm, BAYER4, frames, dpr } from './dither.js';
+import { tok, isDark, watch, smooth, hash, noise, fbm, BAYER4, dpr } from './dither.js';
 
 const short = (sha) => String(sha || '').slice(0, 7);
 const day = (t) => new Date(t).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
@@ -59,11 +58,12 @@ function blur(m, W, H, r) {
 function field(W, H, d, opt, seed) {
   const m = shapes(W, H, d, opt), b = blur(m, W, H, Math.max(1, Math.round(1.2 * d))), n = noise(seed), f = new Float32Array(W * H);
   const th = ((seed % 360) * Math.PI) / 180, cx = 0.25 + ((seed >> 9) % 50) / 100, cy = 0.3 + ((seed >> 15) % 40) / 100;
+  const cos = Math.cos(th), sin = Math.sin(th);
   for (let Y = 0; Y < H; Y++) for (let X = 0; X < W; X++) {
     const i = Y * W + X, a = m[i];
     if (a < 0.05) continue;
     const u = X / W, v = Y / H;
-    const lean = 0.62 + 0.38 * smooth(0.05, 0.95, 0.5 + (u - 0.5) * Math.cos(th) + (v - 0.5) * Math.sin(th)); // pressed harder on one side
+    const lean = 0.62 + 0.38 * smooth(0.05, 0.95, 0.5 + (u - 0.5) * cos + (v - 0.5) * sin); // pressed harder on one side
     const soft = 0.4 * Math.exp(-(((u - cx) / 0.16) ** 2 + ((v - cy) / 0.3) ** 2)); // where the rubber did not quite touch
     const grain = (fbm(n, X / (3 * d), Y / (3 * d)) - 0.5) * 0.5;
     f[i] = a * (lean - soft + grain) + Math.max(0, a - b[i]) * 1.4; // and the squeeze along every edge
@@ -98,19 +98,17 @@ function stampBig(v) {
   el.style.left = Math.round(r.left + r.width / 2 - w / 2) + 'px'; el.style.top = Math.round(r.top + r.height * 0.3 - h / 2) + 'px';
   document.body.append(el);
   const opt = { word: 'APPROVED', sub: `at ${short(v.head)} · ${day(v.at)}`, angle: -9 + (seed % 50) / 10 }, colour = ink(), f = field(W, H, d, opt, seed);
-  // [ms, pressure, size]: touch (light, a hair large), press; hold; lift in three, the ink thinning down the screen
-  const steps = [[0, 0.45, 1.03], [70, 1, 1], [LIFT, 0.62, 1], [LIFT + 80, 0.34, 1], [LIFT + 160, 0.14, 1], [LIFT + 240, 0, 1]];
-  let i = 0;
-  frames((t, still) => {
-    if (still) { el.remove(); return false; } // reduced motion turned on mid-stamp: the impression on the PR says it
-    while (i < steps.length && t >= steps[i][0]) {
-      const [, press, size] = steps[i++];
-      if (!press) { el.remove(); return false; }
-      el.style.transform = size === 1 ? '' : `scale(${size})`;
-      paintPlates(el, W, H, [{ mask: plate(f, W, H, press), rgba: colour }]);
-    }
-    return i < steps.length;
-  }, { fps: 30 });
+  paintPlates(el, W, H, [{ mask: plate(f, W, H, 1), rgba: colour }]);
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  const move = el.animate([
+    { offset: 0, opacity: 0.45, transform: 'scale(1.03)', easing: 'cubic-bezier(.2,.7,.2,1)' },
+    { offset: 70 / (LIFT + 240), opacity: 1, transform: 'scale(1)' },
+    { offset: LIFT / (LIFT + 240), opacity: 1, transform: 'scale(1)', easing: 'ease-out' },
+    { offset: 1, opacity: 0, transform: 'scale(1)' },
+  ], { duration: LIFT + 240, fill: 'both' });
+  const stop = () => { move.cancel(); el.remove(); motion.removeEventListener('change', stop); };
+  motion.addEventListener('change', stop);
+  move.finished.then(stop, stop);
 }
 
 // ------------------------------------------------------------------ the small one, on the pull request

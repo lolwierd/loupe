@@ -73,26 +73,39 @@ function sparkFrames() {
 // The still mark is the star at its fullest +, without the satellite.
 const STILL = FRAMES;
 
-let frames = null, frame = 0, raf = 0, last = 0;
-const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+let frames = null, phase = 0, raf = 0, start;
+const motion = matchMedia('(prefers-reduced-motion: reduce)');
 function draw(all) {
+  const i = Math.floor(phase), t = phase - i;
+  const fade = t * t * (3 - 2 * t);
   for (const cv of document.querySelectorAll(all ? 'canvas.spark' : 'canvas.spark:not(.still)')) {
     const x = cv.getContext('2d');
     x.clearRect(0, 0, SZ, SZ);
-    x.drawImage(frames[cv.classList.contains('still') ? STILL : reduced() ? STILL : frame], 0, 0);
+    if (cv.classList.contains('still') || motion.matches) { x.drawImage(frames[STILL], 0, 0); continue; }
+    // Blend premultiplied pixels so lit points keep their brightness as the star turns.
+    x.globalCompositeOperation = 'lighter';
+    x.globalAlpha = 1 - fade;
+    x.drawImage(frames[i], 0, 0);
+    x.globalAlpha = fade;
+    x.drawImage(frames[(i + 1) % FRAMES], 0, 0);
+    x.globalCompositeOperation = 'source-over';
+    x.globalAlpha = 1;
   }
 }
 function tick(ts) {
   raf = 0;
-  if (!document.querySelector('canvas.spark:not(.still)')) return;
-  if (ts - last >= 95) { last = ts; frame = (frame + 1) % FRAMES; draw(false); }
+  if (motion.matches || !document.querySelector('canvas.spark:not(.still)')) { start = undefined; return; }
+  start ??= ts;
+  phase = ((ts - start) / 95) % FRAMES;
+  draw(false);
   raf = requestAnimationFrame(tick);
 }
 function wake() {
   frames ||= sparkFrames();
   draw(true);
-  if (!raf && !reduced() && document.querySelector('canvas.spark:not(.still)')) raf = requestAnimationFrame(tick);
+  if (!raf && !motion.matches && document.querySelector('canvas.spark:not(.still)')) raf = requestAnimationFrame(tick);
 }
+motion.addEventListener('change', wake);
 // New sparks appear whenever a part of the page is drawn: draw them at once, and keep turning while any is busy.
 new MutationObserver((ms) => { if (ms.some((m) => [...m.addedNodes].some((n) => n.nodeType === 1 && (n.matches?.('canvas.spark') || n.querySelector?.('canvas.spark'))))) wake(); })
   .observe(document.documentElement, { childList: true, subtree: true });

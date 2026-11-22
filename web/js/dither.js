@@ -43,7 +43,11 @@ export function watch(el, fn) {
   const again = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => fn()); };
   const mqs = ['(prefers-color-scheme: dark)', '(prefers-reduced-motion: reduce)'].map((q) => matchMedia(q));
   for (const mq of mqs) mq.addEventListener('change', again);
-  const mo = new MutationObserver(again); mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  const mo = new MutationObserver(() => {
+    // A view transition suppresses animation frames during its update callback.
+    if (document.documentElement.classList.contains('theme-capture')) { cancelAnimationFrame(raf); fn(); }
+    else again();
+  }); mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   const ro = new ResizeObserver(again); if (el) ro.observe(el);
   fn();
   return () => { for (const mq of mqs) mq.removeEventListener('change', again); mo.disconnect(); ro.disconnect(); cancelAnimationFrame(raf); };
@@ -129,21 +133,17 @@ export function paint(canvas, g, mask, palette) {
   ctx.putImageData(img, 0, 0);
 }
 
-// a frame clock, frame-stepped at fps (never smooth), until fn returns false; with reduced motion (on from the start,
-// or turned on while it runs) fn is called once more, on the still that says the same thing (rest ms in)
-export function frames(fn, { fps = 12, rest = 0 } = {}) {
+// Elapsed milliseconds on the display clock, with one final still if reduced motion comes on.
+export function frames(fn, { rest = 0 } = {}) {
   if (reducedMotion()) { fn(rest, true); return () => {}; }
-  let t0 = 0, last = -1, raf = 0, stop = false;
+  let start, raf;
   const tick = (now) => {
-    if (stop) return;
     if (reducedMotion()) { fn(rest, true); return; }
-    if (!t0) t0 = now;
-    const step = Math.floor(((now - t0) / 1000) * fps);
-    if (step !== last) { last = step; if (fn((step * 1000) / fps, false) === false) return; }
-    raf = requestAnimationFrame(tick);
+    start ??= now;
+    if (fn(now - start, false) !== false) raf = requestAnimationFrame(tick);
   };
   raf = requestAnimationFrame(tick);
-  return () => { stop = true; cancelAnimationFrame(raf); };
+  return () => cancelAnimationFrame(raf);
 }
 
 // ------------------------------------------------------------------ the tone screen behind every dialog
@@ -157,22 +157,42 @@ export function toneScreen(scrim, box) {
   const cv = document.createElement('canvas');
   cv.className = 'tone'; cv.setAttribute('aria-hidden', 'true');
   scrim.prepend(cv);
+  let drawn;
   const draw = () => {
     const r = cv.getBoundingClientRect(), W = Math.max(1, Math.round(r.width)), H = Math.max(1, Math.round(r.height));
+    const weight = scrim.dataset.weight || 'local', dark = isDark();
+    const L = (TONE[weight] ?? TONE.local) * (dark ? 1.25 : 1);
+    const s = box?.isConnected ? box.getBoundingClientRect() : null, reach = 0.45 * Math.max(W, H);
+    const position = s ? [s.left - r.left, s.top - r.top, s.width, s.height].map((v) => Math.round(v / 8)) : [];
+    const key = [W, H, weight, dark, ...position].join('/');
+    if (key === drawn && cv.width === W && cv.height === H) return;
+    drawn = key;
     if (cv.width !== W) cv.width = W;
     if (cv.height !== H) cv.height = H;
-    const weight = scrim.dataset.weight || 'local';
-    const L = (TONE[weight] ?? TONE.local) * (isDark() ? 1.25 : 1);
-    const s = box?.isConnected ? box.getBoundingClientRect() : null, reach = 0.45 * Math.max(W, H);
     const [R, G, B, A] = rgba(weight === 'destructive' ? 'var(--danger)' : 'var(--tone-ink)');
     const ink = ((A << 24) | (B << 16) | (G << 8) | R) >>> 0;
-    const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H), px = new Uint32Array(img.data.buffer);
+    const ctx = cv.getContext('2d');
+    // Light local dialogs use a single repeated tile across the whole scrim.
+    const low = Math.ceil(16 * L * 0.9 - 0.5), high = Math.ceil(16 * L * 1.1 - 0.5);
+    if (low === high) {
+      const tile = document.createElement('canvas');
+      tile.width = tile.height = 4;
+      const t = tile.getContext('2d'), data = t.createImageData(4, 4);
+      new Uint32Array(data.data.buffer).set(BAYER4.map((rank) => rank < low ? ink : 0));
+      t.putImageData(data, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = ctx.createPattern(tile, 'repeat');
+      ctx.fillRect(0, 0, W, H);
+      return;
+    }
+    const img = ctx.createImageData(W, H), px = new Uint32Array(img.data.buffer);
     // the level changes slowly, so it is read once per 4×4 tile of the matrix, at the tile's centre
     for (let ty = 0; ty < H; ty += 4) {
       const gy = r.top + ty + 2, dy = s ? Math.max(s.top - gy, 0, gy - s.bottom) : reach;
       for (let tx = 0; tx < W; tx += 4) {
         const gx = r.left + tx + 2, dx = s ? Math.max(s.left - gx, 0, gx - s.right) : reach;
-        const v16 = 16 * L * (0.9 + 0.2 * smooth(0, reach, dx > 0 || dy > 0 ? Math.hypot(dx, dy) : 0));
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const v16 = 16 * L * (0.9 + 0.2 * smooth(0, reach, distance));
         for (let y = ty, ye = Math.min(H, ty + 4); y < ye; y++) {
           const row = (y & 3) * 4, base = y * W;
           for (let x = tx, xe = Math.min(W, tx + 4); x < xe; x++) if (v16 > BAYER4[row + (x & 3)] + 0.5) px[base + x] = ink;

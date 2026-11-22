@@ -8,7 +8,7 @@
 // A change that could not be opened: two line screens laid over each other, one turned by the base's name and one by
 // the head's, out of register, so a moiré rises out of them round the message. Still: it is a fault, not a process.
 import { S, reducedMotion } from './core.js';
-import { fit, tok, watch, dots, lines, paint, frames, noise, fbm, clamp, smooth, hash, BAYER4 } from './dither.js';
+import { fit, tok, watch, lines, paint, frames, noise, fbm, clamp, smooth, hash, BAYER4 } from './dither.js';
 
 // ------------------------------------------------------------------ the forme
 const PITCH = 7, DOT = 4.2, COLS = 64, PASS = 2600; // CSS px between dots, the largest dot, most dots to a row, ms a pass
@@ -30,6 +30,7 @@ function layoutForme(f) {
   const cols = Math.max(1, Math.min(COLS, Math.ceil(Math.sqrt(f.n * 2.6)), Math.floor(room / PITCH)));
   if (cols === f.cols) return;
   f.cols = cols;
+  f.pass = undefined;
   Object.assign(f.el.querySelector('canvas').style, { width: `${cols * PITCH}px`, height: `${Math.ceil(f.n / cols) * PITCH}px` });
 }
 function drawForme(f, ms) {
@@ -38,31 +39,45 @@ function drawForme(f, ms) {
   f.last = ms;
   const g = fit(c), w = f.cols * PITCH, { n, cols, ink, lumps } = f;
   const pass = Math.floor(ms / PASS), t = (ms % PASS) / PASS, dir = pass % 2 ? -1 : 1;
-  const rx = dir > 0 ? -40 + t * (w + 80) : w + 40 - t * (w + 80); // the roller's centre line
-  for (let i = 0; i < n; i++) {
-    const cx = ((i % cols) + 0.5) * PITCH, cy = (Math.floor(i / cols) + 0.5) * PITCH;
-    const d = (rx - cx) * dir; // > 0: the roller has passed it
-    if (d <= -26) continue;
-    const under = 1 - smooth(0, 26, Math.abs(d));
-    const load = clamp(0.42 + 0.8 * (fbm(lumps, cx / 46 + pass * 3.1, cy / 15) - 0.25));
-    ink[i] = Math.max(ink[i], load ** (pass ? 1 : 1.8) * (d > 0 ? 1 : under) * Math.min(1, 0.7 + 0.15 * pass));
+  const travel = t * t * (3 - 2 * t);
+  const rx = dir > 0 ? -40 + travel * (w + 80) : w + 40 - travel * (w + 80);
+  const ctx = c.getContext('2d');
+  ctx.setTransform(g.d, 0, 0, g.d, 0, 0);
+  ctx.clearRect(0, 0, g.w, g.h);
+  if (f.pass !== pass) {
+    f.pass = pass;
+    f.load = Float32Array.from(ink, (_, i) => {
+      const x = ((i % cols) + 0.5) * PITCH, y = (Math.floor(i / cols) + 0.5) * PITCH;
+      const load = clamp(0.42 + 0.8 * (fbm(lumps, x / 46 + pass * 3.1, y / 15) - 0.25));
+      return load ** (pass ? 1 : 1.8) * Math.min(1, 0.7 + 0.15 * pass);
+    });
   }
-  const at = (x, y) => { const col = Math.floor(x / PITCH), i = Math.floor(y / PITCH) * cols + col; return col < cols && i < n ? i : -1; };
-  const mask = dots(g, (x, y) => (at(x, y) >= 0 ? 0.06 : 0), { pitch: PITCH, max: DOT, ink: 2 }); // bare: a speck each
-  dots(g, (x, y) => { const i = at(x, y); return i >= 0 ? ink[i] : 0; }, { pitch: PITCH, max: DOT, ink: 1, into: mask });
-  paint(c, g, mask, [null, tok('--ink'), tok('--ink-3')]);
+  const dot = (x, y, radius) => { ctx.moveTo(x + radius, y); ctx.arc(x, y, radius, 0, Math.PI * 2); };
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) dot(((i % cols) + 0.5) * PITCH, (Math.floor(i / cols) + 0.5) * PITCH, 0.52);
+  ctx.fillStyle = f.bare;
+  ctx.fill();
+  ctx.beginPath();
+  for (let i = 0; i < n; i++) {
+    const x = ((i % cols) + 0.5) * PITCH, y = (Math.floor(i / cols) + 0.5) * PITCH;
+    ink[i] = Math.max(ink[i], f.load[i] * smooth(-26, 10, (rx - x) * dir));
+    if (ink[i] > 0) dot(x, y, (DOT / 2) * Math.sqrt(ink[i]));
+  }
+  ctx.fillStyle = f.colour;
+  ctx.fill();
   return true;
 }
 // roll the brayer (again, after the box was drawn without it); a still forme is drawn again on theme changes
 function rollForme(f) {
   f.stop?.();
+  colourForme(f);
   f.running = true;
   let rolled = false; // reduced motion turned on mid-roll stops it where it is; from the start, it shows the set still
   f.stop = frames((ms, still) => {
     if (still) { f.running = false; return drawForme(f, rolled ? f.last : f.t0 + ms); }
     rolled = true;
     return drawForme(f, f.t0 + ms);
-  }, { fps: 12, rest: PASS * 0.55 });
+  }, { rest: PASS * 0.55 });
 }
 function mountForme(box, pr, lines) {
   if (forme?.id !== S.id || forme.lines !== lines) {
@@ -87,10 +102,15 @@ function resume(f) {
 }
 // the forme follows the column's width; a still one is drawn again on theme changes and rolls on when motion is
 // turned back on. It is watched until the change opens (endOpening), off the page or not (a failure, then Try again)
+function colourForme(f) {
+  f.colour = `rgba(${tok('--ink').slice(0, 3)},1)`;
+  f.bare = `rgba(${tok('--ink-3').slice(0, 3)},1)`;
+}
 function watchForme(f) {
   f.unwatch = watch(document.getElementById('cards') || f.el, () => {
     if (!f.el.isConnected) return;
     layoutForme(f);
+    colourForme(f);
     resume(f); // a running one: its next frame draws it
   });
 }
@@ -131,7 +151,7 @@ export function endOpening() {
   if (f?.ending) return f.ending;
   const done = () => { f?.stop?.(); f?.unwatch?.(); if (forme === f) forme = null; };
   if (!f || !f.running || !f.el.isConnected || reducedMotion()) { done(); return Promise.resolve(); }
-  const left = PASS - (f.last % PASS) + 1000 / 12; // to the end of this pass, and its last frame drawn
+  const left = PASS - (f.last % PASS) + 1000 / 60; // to the end of this pass, and its last frame drawn
   return (f.ending = new Promise((resolve) => setTimeout(() => { done(); resolve(); }, left)));
 }
 

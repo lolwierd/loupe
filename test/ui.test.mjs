@@ -188,7 +188,7 @@ test('Mote cancels detached and hidden animation timers', () => {
   let next = 0;
   const hooks = {}, document = { hidden: false, addEventListener: (name, fn) => { listeners[name] = fn; } };
   const classList = { add() {}, remove() {}, toggle() {} };
-  const dock = { style: {}, classList, querySelector: () => ({ style: {} }), getBoundingClientRect: () => ({ left: 970, right: 1018 }) }; // the floating dock: placed, then filled
+  const dock = { style: { setProperty() {} }, classList, querySelector: () => ({ style: {} }), getBoundingClientRect: () => ({ left: 970, right: 1018 }) }; // the floating dock: placed, then filled
   vm.runInNewContext(source, {
     hooks, document, S: { review: { brief: { pending: true } } }, $: () => dock, reducedMotion: () => false,
     watch: () => () => {}, // the lens's light is drawn on theme and size changes; nothing to draw here

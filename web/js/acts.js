@@ -108,7 +108,7 @@ export function paintProgress() {
   tickCount();
 }
 
-// The count rolls down to its new value (old digits slide up and out, three steps), and the moment it reaches zero
+// The count rolls down to its new value (old digits slide up and out), and the moment it reaches zero
 // one glint crosses the strip and the check takes the number's place. A roll always runs to its end: a count that
 // changes while one rolls waits for it, then rolls on from what it shows to the newest count, and nothing draws the
 // count again mid-roll.
@@ -133,14 +133,14 @@ function rollCount() {
   if (!el || shown === left) return;
   if (left === 0 && total) { shown = 0; renderProgress(); M?.glint(); return; }
   const b = el.querySelector('.odo');
-  if (!b || shown === null) { shown = left; return renderProgress(); }
+  if (!b || shown === null || reducedMotion()) { shown = left; rollEnd = 0; return renderProgress(); }
   b.innerHTML = `<span class="roll"><span>${shown.toLocaleString()}</span><span>${left.toLocaleString()}</span></span>`;
   b.classList.remove('rolling'); void b.offsetWidth; b.classList.add('rolling');
   rollEnd = Date.now() + COUNT_ROLL; shown = left;
   setTimeout(() => { if (b.isConnected && shown === left) b.textContent = left.toLocaleString(); }, COUNT_ROLL);
 }
 // After a write the next step turns over to the one after it ("Commit 1 file" becomes "Push 3 commits"), rolled the way
-// the lines-left odometer rolls (three steps in 200 ms), so the change of step is noticed without a word. The app draws
+// the lines-left odometer rolls (200 ms), so the change of step is noticed without a word. The app draws
 // this button more than once after a write (the ship state, then the review state); a roll in progress is drawn again
 // at the step it had reached, then the plain label. Only within a few seconds of a write; with reduced motion, never.
 const ROLL = 200;
