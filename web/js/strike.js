@@ -33,6 +33,7 @@ function target(e) {
     o: () => cardNow()?.querySelector('.fh [data-act="fold"].icon'),
     t: () => $('[data-act="togglebin"]'), p: () => $('[data-act="togglepanel"]'), r: () => $('[data-act="refresh"]'),
     g: () => $(`#ordseg [data-o="${order}"]`),
+    '[': () => $('#backslip .link'),
     1: () => $('#ptab-overview'), 2: () => $('#ptab-chat'), 3: () => $('#ptab-review'),
   }[k] || null;
 }

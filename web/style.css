@@ -196,7 +196,7 @@ kbd.struck { transform: translateY(1px); background: var(--face-down); color: va
 .link { all: unset; cursor: pointer; color: var(--ink-2); font-size: var(--t-mono); padding: 1px var(--off); margin: 0 calc(-1 * var(--off)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .link svg { width: 12px; height: 12px; vertical-align: -2px; }
 .link:hover { color: var(--ink); background: var(--face); box-shadow: var(--raised-soft); }
-.link:active { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
+.link:active, .link.struck { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
 .link.danger:hover { color: var(--danger); }
 .link.danger:active { color: color-mix(in srgb, var(--danger) 80%, var(--ink)); } /* on the press fill, still 4.5:1 */
 /* A link inside a sentence has no box: a word space is all the room there is. Its words carry a rule, and take the ink under the pointer. */
@@ -721,6 +721,14 @@ details.sect[open] > summary.sh::after { transform: none; }
 .nrow .s { font-size: var(--t-meta); color: var(--ink-3); }
 
 /* ---------------------------------------------------------------- overlays */
+/* Going back after a jump (nav.js): a slip at the foot of the diff's column naming where [ returns to. It floats, so it
+   is paper with the float rule and casts nothing; its words are a link button and its key a hint, each 12 px from the
+   slip's edge; it rises in as a menu does. Bottom left: Mote keeps the bottom right and a toast the middle. */
+.backslip { position: absolute; z-index: 6; left: var(--s5); bottom: var(--s5); display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4) var(--s2) var(--s2); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r2); animation: rise 130ms var(--ease) 1; cursor: pointer; }
+.backslip .link { display: inline-flex; align-items: center; gap: var(--s1); height: 24px; font-size: var(--t-ui); padding: 0 var(--s3) 0 3px; margin: 0; } /* the chevron's ink starts 5 px into its box: 8 px off the ink both sides */
+.backslip .link svg { width: 16px; height: 16px; flex: none; }
+.backslip b { font-weight: 500; color: var(--ink); }
+.backslip b.mono { font: 500 var(--t-mono)/20px var(--f-mono); }
 .viewer { position: absolute; z-index: 6; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--bg); }
 .vhead { display: flex; align-items: center; gap: var(--s3); height: 36px; padding: 0 var(--s2) 0 var(--s4); border-bottom: 1px solid var(--rule); background: var(--chrome); }
 .vhead:has(#vback:not([hidden])) { padding-left: var(--s2); }

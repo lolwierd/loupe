@@ -320,7 +320,7 @@ test('jump history restores two origins and is cleared with the comparison', asy
   const back = {};
   const S = { id: 'one', scope: 'all', view: null };
   const nav = vm.runInNewContext(source.slice(source.indexOf('const returns'), source.indexOf('export async function goThread')).replace(/^export /gm, '') + '\n({ goLoc, goBack, clearReturns })', {
-    S, $: (id) => ({ '#center': center, '#vback': back })[id],
+    S, $: (id) => ({ '#center': center, '#vback': back, '#viewer': S.view && {} })[id],
     hideTip() {}, closeViewer() { S.view = null; },
     openViewer(v) { S.view = v; center.scrollTop = 0; },
     resolvePath: (p) => p, fileOf: () => null,
@@ -342,6 +342,56 @@ test('jump history restores two origins and is cleared with the comparison', asy
   assert.equal(back.hidden, true);
   await nav.goBack();
   assert.equal(S.view, null);
+});
+
+test('after a jump a slip names where [ goes back to, follows a chain of jumps, and stands aside for ] and the viewer', async () => {
+  const source = fs.readFileSync(new URL('../web/js/nav.js', import.meta.url), 'utf8');
+  const center = { scrollTop: 0, scrollLeft: 0 };
+  const S = { id: 'one', scope: 'all', view: null, current: 'pkg/a.go' };
+  let slip = null, viewer = null;
+  const column = { append(el) { slip = el; } };
+  const h = () => {
+    const where = { textContent: '', mono: false, classList: { toggle(_, on) { where.mono = on; } } }, button = { title: '' };
+    const el = { where, button, querySelector: (sel) => ({ b: where, button }[sel] ?? null), remove() { if (slip === el) slip = null; } };
+    return el;
+  };
+  const nav = vm.runInNewContext(source.slice(source.indexOf('const returns'), source.indexOf('export async function goThread')).replace(/^export /gm, '') + '\n({ goLoc, goBack, clearReturns, remember, paintReturn })', {
+    S, h, I: { chevL: '' },
+    $: (id) => ({ '#center': center, '#viewer': viewer, '#backslip': slip, '.viewer-col': column })[id],
+    hideTip() {}, closeViewer() {}, openViewer() {}, resolvePath: (p) => p, fileOf: () => null,
+  });
+  const at = (p, l) => ({ isConnected: true, focus() {}, closest: (sel) => (sel === '.tx[data-l]' ? { dataset: { l: String(l) } } : sel === '[data-p]' ? { dataset: { p } } : null) });
+  const inPanel = { isConnected: true, focus() {}, closest: (sel) => (sel === '#pbody' ? {} : null) };
+  await nav.goLoc({ path: 'pkg/b.go', line: 3 }, at('pkg/a.go', 12));
+  assert.equal(slip.where.textContent, 'a.go:12');
+  assert.equal(slip.where.mono, true);
+  assert.equal(slip.button.title, 'Back to pkg/a.go ([)');
+  await nav.goLoc({ path: 'pkg/c.go', line: 9 }, inPanel); // a citation in the guide: back to the file the diff was on
+  assert.equal(slip.where.textContent, 'a.go');
+  nav.remember(() => {}); // ] keeps a place, and [ undoes that first: the slip would name the wrong place
+  assert.equal(slip, null);
+  await nav.goBack();
+  assert.equal(slip.where.textContent, 'a.go');
+  await nav.goBack();
+  assert.equal(slip.where.textContent, 'a.go:12');
+  await nav.goBack();
+  assert.equal(slip, null);
+  await nav.goLoc({ path: 'pkg/b.go' }, at('pkg/a.go', 4), null, { back: { text: 'the search' } });
+  assert.equal(slip.where.textContent, 'the search');
+  assert.equal(slip.where.mono, false);
+  viewer = {}; nav.paintReturn(); // the whole-file viewer has its own Back
+  assert.equal(slip, null);
+  viewer = null; nav.paintReturn();
+  assert.equal(slip.where.textContent, 'the search');
+  nav.clearReturns();
+  assert.equal(slip, null);
+  S.view = { path: 'pkg/whole.go', line: 40 }; // a citation clicked with the whole-file viewer open: Back reopens it
+  await nav.goLoc({ path: 'pkg/b.go', line: 1 }, inPanel);
+  assert.equal(slip.where.textContent, 'whole.go:40');
+  S.view = null;
+  const big = { isConnected: true, focus() {}, closest: (sel) => (sel === '#mapbig' ? { classList: { contains: (c) => c === 'k-scene' } } : null) };
+  await nav.goLoc({ path: 'pkg/b.go', line: 1 }, big); // a node in the scene opened large: Back opens it again
+  assert.equal(slip.where.textContent, 'the scene');
 });
 
 test('two readers share an in-flight diff and a stale response cannot paint a new scope', async () => {

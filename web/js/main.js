@@ -833,7 +833,7 @@ function openRepositorySearch(snapshot = {}) {
     if (!match) return;
     const back = { query: input.value, result, selected: i, scroll: list.scrollTop };
     close();
-    return goLoc({ ...match, exact: true }, null, () => openRepositorySearch(back));
+    return goLoc({ ...match, exact: true }, null, () => openRepositorySearch(back), { back: { text: 'the search' } });
   };
   input.value = snapshot.query || '';
   input.addEventListener('input', () => { selected = 0; search(); });

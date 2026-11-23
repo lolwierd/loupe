@@ -69,7 +69,7 @@ are on in loupe, and a right-click on any pull request link has **Open link in l
 |---|---|
 | `j` `k` | next and previous file |
 | `]` | done with this file: mark it viewed and go to the next |
-| `[` | back: un-view the file `]` just marked, or return from a jump |
+| `[` | back: un-view the file `]` just marked, or return from a jump (so do the mouse's back button and `⌘[`) |
 | `/` `f` | find a file, search the repository |
 | `v` `o` | mark viewed, fold |
 | `a` `c` | on selected lines: ask, comment for your review |

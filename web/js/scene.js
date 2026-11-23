@@ -107,7 +107,7 @@ export class ScenePlayer {
   // a link from the scene to its code: the large view closes first, and Back opens it again
   open(path, line) {
     const big = this.el.closest('.sheetscrim');
-    if (big?.close) { const id = this.scene.id; big.close(); hooks.goLoc?.({ path, line }, null, () => hooks.openScene?.(id)); }
+    if (big?.close) { const id = this.scene.id; big.close(); hooks.goLoc?.({ path, line }, null, () => hooks.openScene?.(id), { back: { text: 'the scene' } }); }
     else hooks.goLoc?.({ path, line }, this.el);
   }
   destroy() {

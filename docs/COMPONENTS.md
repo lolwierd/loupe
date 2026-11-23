@@ -154,8 +154,13 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
 - **The + that starts a mark**: in the margin, on the empty left edge of its side's line-number gutter (where a hidden
   mark's pin sits), 16 px, a small key of ink (`--ink-raised`), shown on the line's hover; never over a number or the diff's sign. A line whose pin is there
   keeps the pin; its number still selects it.
-- **Going back** after a jump (a definition, a cited line): `[`, with no button in the top bar; the whole-file viewer
-  keeps its own Back in its header.
+- **Going back** after a jump (a definition, a cited line, a search result): `[`, and a slip at the foot of the diff's
+  column, bottom left, that names where it goes (`‹ Back to middleware.go:13 [`, the line left from, else the file the
+  diff was on, the map or the search). It is what floats (paper, `--float`), its words a link button 8 px off their ink
+  and its key a hint, each 12 px from its edge. It shows while the newest place to go back to is a jump, so not after
+  `]` (which `[` undoes first), and not over the whole-file viewer, which keeps its own Back in its header. Nothing goes
+  back in the top bar. The mouse's back button and `⌘[` do what `[` does while there is somewhere to go, instead of
+  leaving the review.
 - **Meter**: one block of lamps per file; the gap between two blocks is empty, never a dim lamp, so a board that is all
   viewed reads all lit.
 - **Chat**: in your own checkout (a local workspace) it is Claude Code or Codex at work there: it reads, edits and runs
