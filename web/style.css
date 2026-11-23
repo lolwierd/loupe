@@ -859,7 +859,6 @@ details.sect[open] > summary.sh::after { transform: none; }
 .top .go .btn:is(.l, .r):is(:active, .struck), .top .go:hover .btn:is(.l, .r):not(.primary):is(:active, .struck) { box-shadow: var(--pressed); }
 .top .go .btn.primary:is(.l, .r):is(:active, .struck) { box-shadow: var(--ink-pressed); }
 /* floors: the title keeps its first characters when there is room for them */
-@media (min-width: 1100px) { .wsbtn .t { min-width: 120px; } }
 @media (max-width: 1500px) { .tally .meter { width: 110px; } }
 @media (max-width: 1180px) { .wsbtn .r { display: none; } }
 @media (max-width: 1060px) { .tally .meter { display: none; } }
