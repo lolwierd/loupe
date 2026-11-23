@@ -345,12 +345,15 @@ export function canComment(p) {
 }
 
 // ------------------------------------------------------------------ drawing a file's body
+// The digits of the number in a line's gutter, as a class: the + and a hidden mark's pin centre in the room left of it
+// (style.css). A unified row takes the wider of its two numbers, so the + keeps its place across added and kept lines.
+const nw = (...ns) => ' nw' + Math.min(5, String(Math.max(0, ...ns.map((n) => n || 0))).length);
 function rowHTML(p, r, k, range, marks) {
   const c = r.t === '+' ? 'a' : r.t === '-' ? 'd' : '';
   const side = r.t === '-' ? 'old' : 'new', ln = r.t === '-' ? r.o : r.n;
   const mk = marks.get(`${side}:${ln}`);
   return `<div class="ln ${c}${mk ? ' marked' + (mk.startsWith('claude') ? ' claude' : '') + (mk.endsWith(' lit') ? ' lit' : '') : ''}" data-k="${k}"><span class="no">${r.o ?? ''}</span><span class="no">${r.n ?? ''}</span>` +
-    `<span class="cd"><button class="plus" tabindex="-1" aria-label="Select this line">${I.plus}</button><span class="mk">${r.t === ' ' ? '' : r.t === '-' ? '−' : '+'}</span>` +
+    `<span class="cd${nw(r.o, r.n)}"><button class="plus" tabindex="-1" aria-label="Select this line">${I.plus}</button><span class="mk">${r.t === ' ' ? '' : r.t === '-' ? '−' : '+'}</span>` +
     `<span class="tx" data-r="${side}" data-l="${ln}">${tokHTML(side + ':' + p, ln, r.s, range)}</span></span></div>`;
 }
 function splitRowHTML(p, rows, it, k, wd) {
@@ -358,7 +361,7 @@ function splitRowHTML(p, rows, it, k, wd) {
     if (i == null) return '<span class="no e"></span><span class="cd e"></span>';
     const r = rows[i], ch = r.t !== ' ', c = ch ? (left ? ' d' : ' a') : '';
     const side = left && ch ? 'old' : 'new', ln = left && ch ? r.o : r.n;
-    return `<span class="no${c}">${left ? r.o ?? '' : r.n ?? ''}</span><span class="cd${c}"><button class="plus" tabindex="-1" aria-label="Select this line">${I.plus}</button>` +
+    return `<span class="no${c}">${left ? r.o ?? '' : r.n ?? ''}</span><span class="cd${c}${nw(left ? r.o : r.n)}"><button class="plus" tabindex="-1" aria-label="Select this line">${I.plus}</button>` +
       `<span class="mk">${ch ? (left ? '−' : '+') : ''}</span><span class="tx" data-r="${side}" data-l="${ln}">${tokHTML(side + ':' + p, ln, r.s, wd.get(i))}</span></span>`;
   };
   return `<div class="ln" data-k="${k}">${half(it.L, true)}${half(it.R, false)}</div>`;
@@ -419,10 +422,6 @@ function drawBody(p) {
   if (!fb || !rows) return;
   const split = splitFile(fileOf(p));
   fb.classList.toggle('split', split);
-  // the widest line number here, in digits: the + and a hidden mark's pin sit centred in the room left of it (style.css)
-  let widest = 0;
-  for (const r of rows) widest = Math.max(widest, r.o || 0, r.n || 0);
-  fb.style.setProperty('--nw', String(widest).length);
   card.classList.toggle('split', split); // the guide head and used-by panel follow the code's edge too
   let plan = rowPlans.get(rows);
   if (!plan) {
@@ -456,7 +455,11 @@ function drawBody(p) {
   const html = items.map((it, k) => {
     let out = it.hdr !== undefined ? hdrHTML(rows[it.hdr], k, k === 0, k === lastK) : split ? splitRowHTML(p, rows, it, k, wd) : rowHTML(p, rows[it.i], k, wd.get(it.i), marks);
     // the pin goes last in the row, so the cells keep their places (split view finds a side by its index)
-    if (pins.has(k) && out.endsWith('</div>')) out = out.slice(0, -6) + laneHTML(pins.get(k)) + '</div>';
+    if (pins.has(k) && out.endsWith('</div>')) {
+      // the pin sits in the first column: by its number, else (an added line in split) the one beside it
+      const w = split ? (it.L != null ? nw(rows[it.L].o) : nw(rows[it.R]?.n)) : nw(rows[it.i].o, rows[it.i].n);
+      out = out.slice(0, -6) + laneHTML(pins.get(k), w) + '</div>';
+    }
     for (const x of after.get(k) || []) out += x;
     if (k === draftK) out += draftHTML();
     return out;
@@ -541,9 +544,9 @@ function ghPinOf(g) {
   const first = g.comments[0];
   return { attr: `data-gh="${esc(g.id)}"`, cls: g.pending ? 'gh pend' : 'gh', glyph: I.github, title: `${g.pending ? 'Your pending comment' : first?.author || 'GitHub'}: ${oneLine(first?.body, 120)}`, unread: false, done: g.resolved, lit: S.mark === 'gh:' + g.id };
 }
-function laneHTML(list) {
+function laneHTML(list, w = '') {
   const x = list.find((m) => !m.done) || list[0], n = list.length;
-  return `<button class="mpin ${x.cls}${x.done ? ' done' : ''}${x.lit ? ' lit' : ''}" data-act="mark-open" ${x.attr} title="${esc(x.title)}${n > 1 ? ` (and ${n - 1} more on this line)` : ''}">${x.glyph}${x.unread ? '<i class="sat"></i>' : ''}${n > 1 ? `<span class="mc">${n}</span>` : ''}</button>`;
+  return `<button class="mpin${w} ${x.cls}${x.done ? ' done' : ''}${x.lit ? ' lit' : ''}" data-act="mark-open" ${x.attr} title="${esc(x.title)}${n > 1 ? ` (and ${n - 1} more on this line)` : ''}">${x.glyph}${x.unread ? '<i class="sat"></i>' : ''}${n > 1 ? `<span class="mc">${n}</span>` : ''}</button>`;
 }
 
 // ------------------------------------------------------------------ marks at their lines

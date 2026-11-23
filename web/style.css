@@ -454,10 +454,11 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
    --gut is how far that edge is left of the code: both number columns in the unified view, one in split. */
 .fb { --gut: 96px; }
 .fb.split, .file:is(.allnew, .allgone) .fb { --gut: 48px; }
-.fb { --nw: 2; } /* the digits of the file's widest line number (cards.js) */
+.fb { --nw: 2; }
+.nw1 { --nw: 1; } .nw2 { --nw: 2; } .nw3 { --nw: 3; } .nw4 { --nw: 4; } .nw5 { --nw: 5; } /* its line number's digits (cards.js) */
 /* A number column is 48 px with 8 px after the number. The + (and a hidden mark's pin) sits centred in the room left of
-   the file's widest number: from the column's edge (past its 1 px rule, in split's right half: --rim) to its first
-   digit. ch is read in the numbers' own type, which both set. */
+   its line's number: from the column's edge (past its 1 px rule, in split's right half: --rim) to the first digit. ch
+   is read in the numbers' own type, which both set. */
 .split .ln > .cd:last-child .plus { --rim: 1px; }
 .plus { --rim: 0px; position: absolute; left: calc(max(var(--rim), (24px + var(--rim) - var(--nw) * 1ch) / 2) - var(--gut)); top: 2px; width: 16px; height: 16px; font: var(--t-mono) var(--f-mono); border: 0; border-radius: var(--r1); background: var(--act); box-shadow: var(--ink-raised); color: var(--on-act); padding: 0; cursor: pointer; opacity: 0; transition: opacity 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); z-index: 2; display: grid; place-items: center; }
 .plus:hover { background: color-mix(in srgb, var(--act) 86%, var(--bg)); }
