@@ -112,7 +112,7 @@ function headHTML() {
   const behind = p && p.headRefOid !== m.headFull ? `<div class="warnline">GitHub has ${p.headRefOid.slice(0, 7)}, this checkout is at ${m.head.slice(0, 7)}</div>` : '';
   const prCard = p ? `<div class="card prcard"><div class="row"><span class="by">${I.pr}<b>#${p.number}</b>${avatar(p.author)}<span>${p.viewerIsAuthor ? 'you' : esc(p.author || '')}</span></span><span class="sp"></span><button class="btn sm" data-act="openprws" title="Open the pull request as GitHub has it">Open the PR</button></div>` +
     `<div class="row">${prState(p)}${checksPill(p)}${decisionPill(p)}</div><div class="ptitle" title="${esc(p.title)}">${esc(p.title)}</div>${behind}${impressionHTML()}</div>` : '';
-  return `<div class="prhead"><h1>${esc(m.branch)}</h1><div class="row"><span>into</span><button class="runpick mono" data-act="basemenu" title="Compare with another branch"><span>${esc(m.base)}</span>${I.chev}</button><span>${plural(m.commits.length, 'commit')}</span>${m.dirty ? `<span class="pill warn">${plural(m.dirty, 'uncommitted file')}</span>` : ''}</div><div class="path" title="${esc(m.root)}"><bdi dir="ltr">${esc(m.root)}</bdi></div></div>${prCard}`;
+  return `<div class="prhead"><h1>${esc(m.branch)}</h1><div class="row"><span>into</span><button class="runpick mono" data-act="basemenu" title="${esc(m.base)}"><span>${esc(m.baseLabel || m.base)}</span>${I.chev}</button><span>${plural(m.commits.length, 'commit')}</span>${m.dirty ? `<span class="pill warn">${plural(m.dirty, 'uncommitted file')}</span>` : ''}</div><div class="path" title="${esc(m.root)}"><bdi dir="ltr">${esc(m.root)}</bdi></div></div>${prCard}`;
 }
 // A brief written before 20 Nov can hold its TLDR as a JSON array of sentences.
 const tldrText = (t) => {

@@ -22,6 +22,7 @@ export const settings = () => {
   return st;
 };
 const live = new Map(); // id -> Workspace
+const fullOid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 // ------------------------------------------------------------------ targets: what someone pasted or typed
 // A GitHub PR link (or loupe's own copy of one), owner/repo#123, #123 or 123 inside a repository, or a path.
@@ -183,7 +184,7 @@ export class Workspace {
     this.cache = new Lru(64);        // scope key -> files
     this.hunkCache = new Lru(800);   // range key + path -> hunks
     this.patchCache = new Lru(2);    // scope key -> pending range-wide patch
-    this.version = 0;                // bumps on every change the watcher sees
+    this.version = 0;                // invalidates worktree ranges on every local sync
     // A PR read on an earlier run is "idle" until a page asks for it; one never read is "preparing".
     this.status = rec.kind === 'pr' ? (rec.pr && rec.clone ? 'idle' : 'preparing') : 'ready';
     this.progress = '';
@@ -234,27 +235,40 @@ export class Workspace {
     return p ? { additions: p.additions, deletions: p.deletions, changedFiles: p.changedFiles, baseRefName: p.baseRefName, headRefName: p.headRefName } : null;
   }
 
-  // Make the workspace answerable: read the checkout, or for a PR reuse what an earlier run fetched
-  // (a background ls-remote catches new pushes) and fetch only what is missing.
+  // Local metadata is reusable only after a sync that began with the current watcher attached.
   ready() {
+    if (this.rec.kind === 'local' && !this.localRootExists()) return Promise.reject(new Error(this.progress));
+    if (this.watch?.opening) return this.watch.opening;
     return this.once('ready', async () => {
-      if (this.meta && this.status === 'ready') return this.meta;
       if (this.rec.kind === 'local') {
-        if (!fs.existsSync(this.rec.root)) { this.status = 'error'; this.progress = `${this.rec.root} is gone`; throw new Error(this.progress); }
+        if (this.meta && this.watch?.fs && this.syncedWatch === this.watch && this.status === 'ready') return this.meta;
         return this.sync(true);
       }
+      if (this.meta && this.status === 'ready') return this.meta;
       if (this.rec.pr && this.rec.clone && await gitOk(this.rec.clone, ['rev-parse', '--verify', '--quiet', `refs/loupe/pr/${this.rec.number}/head`])) {
         this.status = 'ready';
         await this.sync(true);
-        const wtHead = this.rec.worktree && fs.existsSync(path.join(this.rec.worktree, '.git')) ? (await git(this.rec.worktree, ['rev-parse', 'HEAD']).catch(() => '')).trim() : '';
-        this.rec.worktreeReady = wtHead === this.meta.headFull;
+        this.rec.worktreeReady = await this.worktreeAtHead();
+        this.meta.root = this.root; // the sync above read readiness from the last run
         if (!this.rec.worktreeReady) this.ensureWorktree().catch(() => {});
-        if (!this.github) this.fetchGithubComments().catch(() => {});
+        if (!this.clients.size && !this.github) this.fetchGithubComments().catch(() => {});
         return this.meta;
       }
       await this.prepare();
       return this.meta;
     });
+  }
+
+  localRootExists() {
+    if (fs.existsSync(this.rec.root)) return true;
+    if (this.status !== 'error') {
+      this.status = 'error';
+      this.progress = `${this.rec.root} is gone`;
+      this.watch?.fs?.close();
+      if (this.watch) this.watch.fs = null;
+      this.emit('changed', { reason: 'workspace unavailable' });
+    }
+    return false;
   }
 
   // -------------------------------------------------------------- PRs: metadata, fetch, worktree
@@ -290,7 +304,7 @@ export class Workspace {
         this.setProgress('');
         await this.sync(true);
         this.ensureWorktree().catch((e) => this.setProgress(`Worktree failed: ${e.message}`));
-        this.fetchGithubComments().catch(() => {});
+        if (!this.clients.size) this.fetchGithubComments().catch(() => {});
       } catch (e) {
         this.status = 'error';
         this.setProgress(e.message);
@@ -298,8 +312,8 @@ export class Workspace {
       }
     });
   }
-  async fetchPr(early = null) {
-    const { number } = this.rec, pr = this.rec.pr;
+  async fetchPr(early = null, pr = this.rec.pr) {
+    const { number } = this.rec;
     this.setProgress(`Fetching #${number} into ${path.basename(this.rec.clone)} (refs/loupe/pr/${number}, nothing checked out)…`);
     // The head and the default branch were fetched while GitHub answered: a PR into the default branch only needs its
     // base pointed at that, and a stacked one fetches its base alone.
@@ -310,26 +324,75 @@ export class Workspace {
     // A PR on another PR (a stack) also gets the trunk, so "the whole stack" can be read.
     const def = (await GH.mergeSettings(this.rec.owner, this.rec.repo))?.defaultBranchRef?.name;
     const refs = [`+refs/pull/${number}/head:refs/loupe/pr/${number}/head`, `+refs/heads/${pr.baseRefName}:refs/loupe/pr/${number}/base`];
-    if (def && def !== pr.baseRefName) refs.push(`+refs/heads/${def}:refs/loupe/pr/${number}/trunk`);
-    await git(this.rec.clone, ['fetch', '--no-tags', '--quiet', this.rec.remote || 'origin', ...refs], { timeout: 10 * 60 * 1000 });
+    if (def) refs.push(`+refs/heads/${def}:refs/loupe/pr/${number}/trunk`);
+    await git(this.rec.clone, ['fetch', '--atomic', '--no-tags', '--quiet', this.rec.remote || 'origin', ...refs], { timeout: 10 * 60 * 1000 });
   }
-  async ensureWorktree() {
+  async prTrunkTip(pr) {
+    const { clone, owner, repo } = this.rec;
+    const def = (await GH.mergeSettings(owner, repo))?.defaultBranchRef?.name;
+    if (!def) return null;
+    if (def === pr.baseRefName && fullOid.test(pr.baseRefOid)) return pr.baseRefOid;
+    const trunk = await git(clone, ['ls-remote', '--refs', this.rec.remote || 'origin', `refs/heads/${def}`]).catch(() => '');
+    const oid = trunk.split('\t')[0];
+    return fullOid.test(oid) ? oid : null;
+  }
+  async updatePrRefs(pr, trunk) {
+    const { clone, number } = this.rec;
+    const remote = this.rec.remote || 'origin';
+    if (!fullOid.test(pr.headRefOid) || !fullOid.test(pr.baseRefOid)) return this.fetchPr(null, pr);
+    if (trunk === undefined) trunk = await this.prTrunkTip(pr);
+    const refs = { head: pr.headRefOid, base: pr.baseRefOid };
+    if (trunk) refs.trunk = trunk;
+    const oids = [...new Set(Object.values(refs))];
+    const present = await Promise.all(oids.map((oid) =>
+      git(clone, ['cat-file', '-e', oid], { env: { GIT_NO_LAZY_FETCH: '1' } }).then(() => true, () => false)));
+    const missing = oids.filter((_, i) => !present[i]);
+    if (missing.length) {
+      this.setProgress(`Fetching #${number} into ${path.basename(clone)}…`);
+      // Fetch objects first, then publish the complete comparison in one ref transaction.
+      await git(clone, ['fetch', '--no-tags', '--quiet', '--refmap=', remote, ...missing], { timeout: 10 * 60 * 1000 });
+    }
+    const input = Object.entries(refs).map(([name, oid]) => `update refs/loupe/pr/${number}/${name} ${oid}\n`).join('');
+    await git(clone, ['update-ref', '--stdin'], { input });
+  }
+  async worktreeAtHead() {
+    const { worktree } = this.rec;
+    return !!worktree && fs.existsSync(path.join(worktree, '.git'))
+      && (await git(worktree, ['rev-parse', 'HEAD']).catch(() => '')).trim() === this.meta?.headFull;
+  }
+  ensureWorktree() { return this.serial('worktree', () => this.ensureWorktreeOnce()); }
+  async ensureWorktreeOnce() {
     if (this.rec.kind !== 'pr') return;
     const head = this.meta?.headFull;
     if (!head) return;
-    const wt = this.rec.worktree || path.join(STATE_DIR, 'worktrees', this.id);
-    this.rec.worktree = wt;
-    if (!fs.existsSync(path.join(wt, '.git'))) {
+    const managed = path.join(STATE_DIR, 'worktrees', this.id);
+    let wt = this.rec.worktree || managed, moved = false;
+    const add = async (at) => {
       this.setProgress('Checking the PR out into loupe\'s own worktree, for Claude and gopls…');
       await git(this.rec.clone, ['worktree', 'prune']).catch(() => {});
-      await git(this.rec.clone, ['worktree', 'add', '--detach', '--force', wt, head], { timeout: 10 * 60 * 1000 });
-    } else if ((await git(wt, ['rev-parse', 'HEAD']).catch(() => '')).trim() !== head) {
-      await git(wt, ['checkout', '--detach', '--force', '--quiet', head], { timeout: 10 * 60 * 1000 });
+      await git(this.rec.clone, ['worktree', 'add', '--detach', '--force', at, head], { timeout: 10 * 60 * 1000 });
+      moved = true;
+    };
+    const at = fs.existsSync(path.join(wt, '.git')) ? (await git(wt, ['rev-parse', 'HEAD']).catch(() => '')).trim() : '';
+    if (!at) {
+      // gone, or a folder git can no longer read as a checkout: whatever is left there stays, and a fresh one is made
+      if (fs.existsSync(wt)) wt = managed + '-' + crypto.randomUUID();
+      await add(wt);
+    } else if (at !== head) {
+      // Without --force, and keeping ignored files too: git refuses when the move would overwrite an edit or a file someone
+      // left in loupe's checkout, and then the new head goes into a fresh one beside it, the old one kept as it is.
+      const done = await git(wt, ['checkout', '--detach', '--quiet', '--no-overwrite-ignore', head], { timeout: 10 * 60 * 1000 }).then(() => true, () => false);
+      if (done) moved = true;
+      else await add(wt = managed + '-' + crypto.randomUUID());
     }
+    this.rec.worktree = wt;
+    if (this.meta.headFull !== head) return; // the head moved meanwhile: the refresh that moved it runs this again
+    // A check that found everything as the page has it tells the page nothing (each page's first open runs one).
+    const news = moved || !this.rec.worktreeReady || this.meta.root !== wt;
     this.rec.worktreeReady = true;
+    this.meta.root = wt;
     registry.save();
-    this.setProgress('');
-    this.emit('changed', { reason: 'worktree ready' });
+    if (news) { this.setProgress(''); this.emit('changed', { reason: 'worktree ready' }); }
   }
   // Handwritten note threads were removed on 20 Nov 2026. Leave them on disk and hide them from the page.
   visibleReview() {
@@ -369,6 +432,7 @@ export class Workspace {
       if (!number) {
         const before = this.github;
         this.github = { at: Date.now(), pr: null, threads: [], owner, repo, repoFull: owner ? `${owner}/${repo}` : null };
+        if (before?.pr) this.sync().catch(() => {});
         // A freshness timestamp alone does not require the page to fetch and redraw its diff.
         if (!before || before.pr || before.error || before.owner !== owner || before.repo !== repo) this.emit('github', {});
         return this.github;
@@ -386,11 +450,19 @@ export class Workspace {
       // A checkout's base follows its PR's base, once GitHub has said what that is.
       if (this.rec.kind === 'local' && this.meta && pr.headRefName === this.meta.branch) this.sync().catch(() => {});
       if (this.rec.kind === 'pr') {
-        const retargeted = this.rec.pr?.baseRefName && pr.baseRefName !== this.rec.pr.baseRefName;
-        this.rec.pr = { ...(this.rec.pr || {}), title: pr.title, body: pr.body, state: pr.state, isDraft: pr.isDraft, labels: pr.labels };
-        registry.save();
-        if (retargeted && this.status === 'ready') this.prepareAgain().then(() => this.emit('changed', { reason: `#${number} now targets ${pr.baseRefName}` })).catch(() => {});
-        else if (this.status === 'ready') this.sync().catch(() => {});
+        const m = this.meta;
+        if (this.status === 'ready' && m) {
+          const moved = pr.baseRefName !== m.base || pr.headRefName !== m.branch
+            || (pr.headRefOid && pr.headRefOid !== m.headFull) || (pr.baseRefOid && pr.baseRefOid !== m.baseFull);
+          const trunk = moved ? undefined : await this.prTrunkTip(pr);
+          if (moved || (trunk && trunk !== await revParse(this.gitDir, `refs/loupe/pr/${number}/trunk`).catch(() => ''))) {
+            await this.prepareAgain(pr, trunk);
+          } else {
+            this.rec.pr = { ...this.rec.pr, title: pr.title, body: pr.body, state: pr.state, isDraft: pr.isDraft, labels: pr.labels };
+            registry.save();
+            this.sync().catch(() => {});
+          }
+        }
       }
       this.emit('github', {});
       return this.github;
@@ -405,41 +477,44 @@ export class Workspace {
       if (this.status !== 'ready') return this.prepare();
       const before = this.meta?.headFull;
       await this.prepareAgain();
+      this.fetchGithubComments().catch(() => {});
       return { moved: before !== this.meta?.headFull };
     }
-    this.version++;
     await this.sync(true);
     return {};
   }
-  prepareAgain() { return this.once('again', () => this.prepareAgainOnce()); }
-  async prepareAgainOnce() {
+  prepareAgain(pr, trunk) { return this.once('again', () => this.prepareAgainOnce(pr, trunk)); }
+  async prepareAgainOnce(pr, trunk) {
     const { owner, repo, number } = this.rec;
-    this.rec.worktreeReady = false; // Claude and gopls wait until the checkout matches the new head
-    const fields = 'number,title,body,author,baseRefName,headRefName,headRefOid,baseRefOid,url,state,isDraft,additions,deletions,changedFiles,createdAt,updatedAt,labels,reviewDecision,isCrossRepository';
-    const pr = JSON.parse(await run(BIN.gh, ['pr', 'view', String(number), '--repo', `${owner}/${repo}`, '--json', fields]));
-    this.rec.pr = { ...pr, author: pr.author?.login, labels: (pr.labels || []).map((l) => l.name) };
-    await this.fetchPr();
+    pr ||= await GH.pullRequest(owner, repo, number);
+    await this.updatePrRefs(pr, trunk);
+    this.rec.pr = { ...this.rec.pr, ...pr, isCrossRepository: pr.crossRepo };
     await this.sync(true);
-    await this.ensureWorktree();
-    await this.fetchGithubComments().catch(() => {});
+    await this.ensureWorktree(); // after every refresh, through the one serial check: a repair for the old head may have just finished
+    if (this.rec.worktreeReady) this.setProgress('');
   }
 
   // -------------------------------------------------------------- the change itself
   async sync(force = false, snapshot) {
     return this.serial('sync', async () => {
+      const watch = this.watch;
       const before = this.meta;
       const beforeStack = this.stackSnapshotKey;
+      const beforeContent = this.contentSig;
       const g = this.gitDir;
       let head, branch, base, baseSha, mergeBase = null, trunk = null, parent, prBase;
       if (this.rec.kind === 'pr') {
         if (!this.rec.clone) return null;
         const n = this.rec.number;
         head = await revParse(g, `refs/loupe/pr/${n}/head`);
+        if (before && head !== before.headFull) this.rec.worktreeReady = false;
         baseSha = await revParse(g, `refs/loupe/pr/${n}/base`);
         base = this.rec.pr.baseRefName; branch = this.rec.pr.headRefName;
         mergeBase = (await git(g, ['merge-base', baseSha, head]).catch(() => '')).trim() || null;
         trunk = (await gitOk(g, ['rev-parse', '--verify', '--quiet', `refs/loupe/pr/${n}/trunk`])) ? `refs/loupe/pr/${n}/trunk` : null;
       } else {
+        if (!this.localRootExists()) throw new Error(this.progress);
+        if (this.status === 'error' && !watch?.fs) watch?.attach();
         head = (await git(g, ['rev-parse', 'HEAD']).catch(() => '')).trim();
         branch = (await git(g, ['symbolic-ref', '--quiet', 'HEAD']).catch(() => '')).trim().replace(/^refs\/heads\//, '') || 'HEAD';
         // The base: what you chose, else the branch this one was built on (a stack), else the remote's default.
@@ -447,7 +522,7 @@ export class Workspace {
         // on; the remote's default branch.
         trunk = await localTrunk(g);
         snapshot ||= await stackSnapshot(g);
-        if (this.github?.pr?.headRefName === branch && this.github.pr.baseRefName) {
+        if (this.github?.pr?.state === 'OPEN' && this.github.pr.headRefName === branch && this.github.pr.baseRefName) {
           const ref = `refs/remotes/origin/${this.github.pr.baseRefName}`;
           if (await gitOk(g, ['rev-parse', '--verify', '--quiet', ref])) prBase = ref;
         }
@@ -456,6 +531,7 @@ export class Workspace {
           || parent?.base || prBase
           || trunk;
         baseSha = (await git(g, ['rev-parse', '--verify', '--quiet', base]).catch(() => '')).trim();
+        if (!this.rec.base && parent && baseSha !== parent.sha) base = baseSha = parent.sha;
         if (!baseSha && base !== trunk) {
           base = trunk;
           baseSha = (await git(g, ['rev-parse', '--verify', '--quiet', trunk]).catch(() => '')).trim();
@@ -489,18 +565,24 @@ export class Workspace {
           if (fork && fork !== mergeBase) trunkMergeBase = fork;
         }
       }
-      const sig = `${head}|${baseSha}|${mergeBase}|${branch}`;
+      const sig = `${head}|${base}|${baseSha}|${mergeBase}|${branch}`;
       if (!force && before && before.sig === sig && before.trunkMergeBase === trunkMergeBase && this.rec.kind === 'pr') return before;
       if (!this.review.data.seenHead) { this.review.data.seenHead = head; this.review.save(); }
       const meta = {
         id: this.id, kind: this.rec.kind, url: this.url, sig,
         repoName: this.rec.kind === 'pr' ? this.rec.repo : path.basename(this.rec.root),
         repoFull: this.rec.kind === 'pr' ? `${this.rec.owner}/${this.rec.repo}` : null,
-        root: this.root, gitDir: g, branch, base, baseSha: baseSha?.slice(0, 9), head: head?.slice(0, 9), headFull: head, mergeBase: mergeBase?.slice(0, 9), mergeBaseFull: mergeBase,
+        root: this.root, gitDir: g, branch, base, baseSha: baseSha?.slice(0, 9), baseFull: baseSha, head: head?.slice(0, 9), headFull: head, mergeBase: mergeBase?.slice(0, 9), mergeBaseFull: mergeBase,
+        baseLabel: base === baseSha ? base.slice(0, 9) : base.replace(/^refs\/(heads\/|remotes\/)/, ''),
         commits, totals: null, dirty: 0, pr: this.rec.pr || null, seenHead: this.review.data.seenHead,
         trunk: trunkLabel, trunkMergeBase, baseAuto: this.rec.kind === 'local' && !this.rec.base && base !== trunk,
         sinceCount: this.review.data.seenHead && head && this.review.data.seenHead !== head ? (await commitsBetween(g, this.review.data.seenHead, head).catch(() => [])).length : 0,
       };
+      if (this.rec.kind === 'local') this.version++;
+      // Readiness belongs to a head. Set together with publishing, with nothing awaited between: a repair for the old head
+      // that finished meanwhile must not hand its checkout to the new one (the serial check after a refresh fixes it).
+      if (this.rec.kind === 'pr' && before && head !== before.headFull) this.rec.worktreeReady = false;
+      meta.root = this.root;
       this.meta = meta; // range() reads it
       this.cache.clear();
       const allFiles = await this.files('all');
@@ -508,13 +590,19 @@ export class Workspace {
       const wip = this.rec.kind === 'local' ? await this.files('wip').catch(() => []) : [];
       meta.dirty = wip.length;
       meta.wipPaths = wip.flatMap((f) => f.oldPath ? [f.oldPath, f.path] : [f.path]);
-      this.contentSig = `${sig}|${contentKey(allFiles)}|${meta.dirty}`;
+      if (this.rec.kind === 'local' && !this.localRootExists()) throw new Error(this.progress);
+      this.contentSig = `${diffSignature(allFiles)}|${diffSignature(wip)}`;
       this.stackSnapshotKey = snapshot?.key;
-      if (before && (before.branch !== branch || before.headFull !== head)) this.fetchGithub(true).catch(() => {});
-      if (before && before.sig !== sig) {
+      this.syncedWatch = watch;
+      const recovered = this.rec.kind === 'local' && this.status === 'error';
+      if (this.rec.kind === 'local') { this.status = 'ready'; this.progress = ''; }
+      if (this.rec.kind === 'local' && before && (before.branch !== branch || before.headFull !== head)) this.fetchGithub(true).catch(() => {});
+      if (recovered) this.emit('changed', { reason: 'workspace available' });
+      else if (before && before.sig !== sig) {
         const reason = before.branch !== branch ? `switched to ${branch}` : before.headFull !== head ? 'new commits' : 'the base moved';
         this.emit('changed', { reason });
       } else if (before && (beforeStack !== this.stackSnapshotKey || before.trunkMergeBase !== trunkMergeBase)) this.emit('changed', { reason: 'stack changed' });
+      else if (before && beforeContent !== this.contentSig) this.emit('changed', { reason: 'files changed' });
       return this.meta;
     });
   }
@@ -535,12 +623,15 @@ export class Workspace {
     }
     return { key: 'all', old: m.mergeBaseFull || m.headFull || EMPTY_TREE, new: tip };
   }
-  scopeKey(scope) { try { const r = this.range(scope); return `${r.key}:${r.old}:${r.new}:${r.new === WORKTREE ? this.version : ''}`; } catch { return ''; } }
+  captureRange(scope) {
+    return typeof scope === 'string' ? { ...this.range(scope), version: this.version } : scope;
+  }
+  scopeKey(scope) { try { const r = this.captureRange(scope); return `${r.key}:${r.old}:${r.new}:${r.new === WORKTREE ? r.version : ''}`; } catch { return ''; } }
 
   async files(scope = 'all', { fresh = false } = {}) {
-    const r = this.range(scope);
+    const r = this.captureRange(scope);
     if (fresh) return changedFiles(this.gitDir, r);
-    const key = this.scopeKey(scope);
+    const key = this.scopeKey(r);
     const hit = this.cache.get(key);
     if (hit) return hit;
     const files = await changedFiles(this.gitDir, r);
@@ -551,12 +642,12 @@ export class Workspace {
     return (await this.files(scope)).find((f) => f.path === p) || null;
   }
   async hunks(scope, p) {
-    const r = this.range(scope);
-    const scopeKey = this.scopeKey(scope);
-    const files = await this.files(scope);
+    const r = this.captureRange(scope);
+    const scopeKey = this.scopeKey(r);
+    const files = await this.files(r);
     const f = files.find((file) => file.path === p);
     if (!f) return null;
-    const key = `${r.old}:${r.new}:${fileNoteKey(f)}`;
+    const key = `${r.old}:${r.new}:${r.new === WORKTREE ? r.version : ''}:${fileNoteKey(f)}`;
     let hunks = f.untracked ? null : this.hunkCache.get(key);
     if (!hunks && files.length >= 32 && !f.untracked && !f.oldPath && !f.binary) {
       let pending = this.patchCache.get(scopeKey);
@@ -568,14 +659,14 @@ export class Workspace {
     }
     hunks ??= await fileHunks(this.gitDir, r, f);
     if (!f.untracked) this.hunkCache.set(key, hunks);
-    const text = f.status === 'D' ? null : await this.text(scope, 'new', p);
+    const text = f.status === 'D' ? null : await readAt(this.gitDir, r.new, p, f.blob);
     return { path: p, oldPath: f.oldPath, status: f.status, hunks, newLen: lineCount(text) };
   }
   // Text of a file at one side of the scope. The new side of a local workspace is the working tree.
   async text(scope, side, p) {
     if (!safeRel(p)) return null;
-    const r = this.range(scope);
-    const files = await this.files(scope), i = files.findIndex((f) => f.path === p), f = files[i];
+    const r = this.captureRange(scope);
+    const files = await this.files(r), i = files.findIndex((f) => f.path === p), f = files[i];
     if (side === 'old') {
       const start = i - i % 24;
       const nearby = f?.oldBlob && files.length >= 32 ? files.slice(start, start + 24)
@@ -587,8 +678,8 @@ export class Workspace {
   // A path the viewer may open: one the scope changes, or any file tracked at the new side.
   async readable(scope, p) {
     if (!safeRel(p)) return false;
-    if (await this.file(scope, p)) return true;
-    const r = this.range(scope);
+    const r = this.captureRange(scope);
+    if (await this.file(r, p)) return true;
     if (r.new === WORKTREE) {
       const paths = await git(this.gitDir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', p]);
       return paths.split('\0').includes(p);
@@ -596,9 +687,9 @@ export class Workspace {
     return gitOk(this.gitDir, ['cat-file', '-e', `${r.new}:${p}`]);
   }
   async relatedOf(scope, p) {
-    const r = this.range(scope);
-    const d = await this.hunks(scope, p);
-    const changed = new Set((await this.files(scope)).map((f) => f.path));
+    const r = this.captureRange(scope);
+    const d = await this.hunks(r, p);
+    const changed = new Set((await this.files(r)).map((f) => f.path));
     return related(this.gitDir, r.new, p, d?.hunks || [], changed);
   }
 
@@ -608,7 +699,6 @@ export class Workspace {
     if (base && !(await gitOk(this.rec.root, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`]))) throw new Error(`no such ref: ${base}`);
     this.rec.base = base || undefined;
     registry.save();
-    this.version++;
     await this.sync(true);
     this.emit('changed', { reason: `comparing with ${this.meta.base}` });
   }
@@ -653,6 +743,10 @@ export class Workspace {
   addClient(res) {
     this.clients.add(res);
     this.startWatching();
+    if (this.rec.kind === 'pr' && this.clients.size === 1) {
+      // its checkout may have gone while nobody looked, even when GitHub says nothing moved
+      this.ready().then(() => { this.ensureWorktree().catch(() => {}); return this.fetchGithub(true); }).catch(() => {});
+    }
     // Checks and reviews move on their own: read GitHub again every minute while a page is open.
     if (!this.ghPoll) { this.ghPoll = setInterval(() => { if (this.clients.size) this.fetchGithub(true).catch(() => {}); }, 60000); this.ghPoll.unref?.(); }
   }
@@ -661,62 +755,77 @@ export class Workspace {
     if (!this.clients.size) setTimeout(() => { if (!this.clients.size) this.stopWatching(); }, 30000).unref?.();
   }
   startWatching() {
-    if (this.watch || this.rec.kind !== 'local') {
-      if (this.rec.kind === 'pr' && !this.prPoll) {
-        // Someone pushed to the PR? A cheap ls-remote every minute while a page is open.
-        this.prPoll = setInterval(async () => {
-          if (!this.rec.clone || this.status !== 'ready') return;
-          const out = await git(this.rec.clone, ['ls-remote', this.rec.remote || 'origin', `refs/pull/${this.rec.number}/head`]).catch(() => '');
-          const sha = out.split(/\s+/)[0];
-          if (sha && this.meta && sha !== this.meta.headFull) this.prepareAgain().catch(() => {});
-        }, 60000);
-      }
-      return;
-    }
+    if (this.watch || this.rec.kind !== 'local') return;
     const root = this.rec.root;
     let timer = null;
     const changed = new Set();
     const kick = () => {
-      clearTimeout(timer);
+      if (timer) return;
       timer = setTimeout(async () => {
+        timer = null;
         const paths = [...changed]; changed.clear();
-        goplsFor(root)?.changed(paths);
-        // A write the diff can't see (an ignored file, a build output, a save with no change) redraws nothing.
-        const before = this.contentSig;
-        this.version++;
-        this.cache.clear();
+        // check-ignore consults the index, so tracked paths remain visible even under an ignore rule.
+        const input = paths.map((p) => './' + p).join('\0') + '\0';
+        const ignored = new Set((await run(BIN.git, ['check-ignore', '-z', '--stdin'], {
+          cwd: root, input, env: { GIT_OPTIONAL_LOCKS: '0' },
+        }).catch(() => '')).split('\0'));
+        const visible = paths.filter((p) => !ignored.has('./' + p));
+        if (!visible.length || this.watch !== watch) return;
+        goplsFor(root)?.changed(visible);
         await this.sync(true).catch(() => {});
-        if (this.contentSig !== before) this.emit('changed', { reason: 'files changed', paths: paths.slice(0, 50) });
       }, 350);
     };
-    let fsw = null;
-    try {
-      fsw = fs.watch(root, { recursive: true }, (_, file) => {
-        if (!file) return;
-        const f = String(file);
-        if (/(^|\/)(\.git|node_modules|\.next|dist|build|target|\.cache|\.turbo)(\/|$)/.test(f) || f.endsWith('.swp') || f.endsWith('~')) return;
-        changed.add(f);
-        kick();
-      });
-    } catch { /* recursive watch unavailable: the poll below still sees commits */ }
-    // Commits, checkouts, rebases and fetches change refs, not files: poll the refs.
+    const attach = () => {
+      try {
+        const fsw = fs.watch(root, { recursive: true }, (_, file) => {
+          if (!file) return;
+          const f = String(file);
+          if (/(^|\/)\.git(\/|$)/.test(f)) return;
+          changed.add(f);
+          kick();
+        });
+        fsw.on('error', () => { fsw.close(); if (watch.fs === fsw) watch.fs = null; });
+        watch.fs = fsw;
+      } catch { /* the poll also checks the worktree when recursive watching is unavailable */ }
+    };
+    // A checkout can change refs or the index without touching any watched file.
+    const index = git(root, ['rev-parse', '--git-path', 'index']).then((p) => path.resolve(root, p.trim())).catch(() => null);
+    const readIndex = async () => {
+      const file = await index;
+      const st = file && await fs.promises.stat(file, { bigint: true }).catch(() => null);
+      return st ? `${st.ino}:${st.mtimeNs}:${st.size}` : null;
+    };
+    let lastIndex = readIndex();
     const poll = setInterval(async () => {
-      if (!this.meta) return;
-      const [head, branch, snapshot] = await Promise.all([git(root, ['rev-parse', 'HEAD']).catch(() => ''),
-        git(root, ['symbolic-ref', '--quiet', 'HEAD']).then((ref) => ref.trim().replace(/^refs\/heads\//, '')).catch(() => 'HEAD'), stackSnapshot(root)]);
-      const base = await git(root, ['rev-parse', '--verify', '--quiet', this.meta.base]).catch(() => '');
+      const m = this.meta;
+      if (this.watch !== watch || !this.localRootExists()) return;
+      if (this.status === 'error' || !m) {
+        await this.sync(true).catch(() => {});
+        return;
+      }
+      const [head, branch, snapshot, base, beforeIndex, currentIndex] = await Promise.all([git(root, ['rev-parse', 'HEAD']).catch(() => ''),
+        git(root, ['symbolic-ref', '--quiet', 'HEAD']).then((ref) => ref.trim().replace(/^refs\/heads\//, '')).catch(() => 'HEAD'),
+        stackSnapshot(root), revParse(root, m.base).catch(() => ''), lastIndex, readIndex()]);
+      if (this.watch !== watch) return;
+      lastIndex = currentIndex;
       const stackChanged = snapshot.key !== this.stackSnapshotKey;
-      if (head.trim() !== (this.meta.headFull || '') || (head.trim() && branch !== this.meta.branch) || stackChanged || base.trim().slice(0, 9) !== (this.meta.baseSha || '')) {
-        this.version++;
+      if (head.trim() !== (m.headFull || '') || (head.trim() && branch !== m.branch) || stackChanged
+        || base !== (m.baseFull || '') || beforeIndex !== currentIndex || !watch.fs) {
         await this.sync(true, snapshot).catch(() => {});
       }
     }, 2000);
-    this.watch = { close: () => { fsw?.close(); clearInterval(poll); clearTimeout(timer); } };
+    const watch = this.watch = { fs: null, attach, close: () => { watch.fs?.close(); clearInterval(poll); clearTimeout(timer); } };
+    attach();
+    watch.opening = this.sync(true).finally(() => { watch.opening = null; });
+    watch.opening.catch(() => {});
   }
-  stopWatching() { this.watch?.close(); this.watch = null; clearInterval(this.prPoll); this.prPoll = null; clearInterval(this.ghPoll); this.ghPoll = null; }
+  stopWatching() { this.watch?.close(); this.watch = null; clearInterval(this.ghPoll); this.ghPoll = null; }
 }
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+function diffSignature(files) {
+  return JSON.stringify([files.untrackedSkipped || 0, ...files.map((f) => [fileNoteKey(f), f.status, !!f.untracked])]);
+}
 // What "viewed" is keyed to: this diff of the file, from its old content to its new. Viewing the uncommitted part
 // of a file does not mark the whole branch's change to it viewed, and any edit asks again.
 export const viewKey = (f) => `${f.oldBlob || '0'}..${f.blob || 'gone'}`;

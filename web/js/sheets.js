@@ -126,7 +126,7 @@ const SHEETS = {
     idle: () => (pref.get('prDraft', true) ? 'Open draft' : 'Open'),
     form() {
       const st = S.ship, base = S.prBase || st.base || '';
-      return `<div class="route"><code class="chip" title="This branch">${esc(st.branch)}</code><span class="arr" aria-hidden="true">→</span><input class="field mono base" data-f="prBase" value="${esc(base)}" style="width:${Math.max(8, base.length + 3)}ch" aria-label="Into (base branch)" spellcheck="false" title="Into: the base branch"></div>` +
+      return `<div class="route"><code class="chip" title="This branch">${esc(st.branch)}</code><span class="arr" aria-hidden="true">→</span><input class="field mono base" data-f="prBase" value="${esc(base)}" placeholder="Base branch" style="width:${Math.max(12, base.length + 3)}ch" aria-label="Into (base branch)" spellcheck="false" title="Into: the base branch"></div>` +
         `<input class="field lg" data-f="prTitle" placeholder="Title" value="${esc(S.prTitle || '')}" autocomplete="off" aria-label="Title">` +
         `<div class="box"><div class="mdtabs" role="tablist" aria-label="Description"><button class="tab" role="tab" data-mdv="write" aria-selected="true">Write</button><button class="tab" role="tab" data-mdv="preview" aria-selected="false">Preview</button><span class="sp"></span><span class="hint">GitHub markdown</span></div>` +
         `<textarea class="body prose" rows="10" data-f="prBody" placeholder="Why, what changed, how it was tested" aria-label="Description">${esc(S.prBody ?? st.template ?? '')}</textarea><div class="mdpv md" hidden></div></div>` +

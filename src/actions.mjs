@@ -238,14 +238,18 @@ const local = (ws) => { if (ws.rec.kind !== 'local') throw fail('commit and push
 // (the upstream it tracks, else origin/<branch>) and how far apart they are.
 export async function shipState(ws) {
   local(ws);
-  const [headText, branchText, upstreamText] = await Promise.all([
+  const def = (ws.meta?.trunk || '').replace(/^origin\//, '') || 'main';
+  const comparison = ws.meta?.base || def;
+  const [headText, branchText, upstreamText, baseRef] = await Promise.all([
     g(ws, ['rev-parse', '--verify', '--quiet', 'HEAD']).catch(() => ''),
     g(ws, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => ''),
     g(ws, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']).catch(() => ''),
+    // Git can expand checkout shorthand to a branch name even in symbolic mode.
+    comparison === '@' || comparison.includes('@{') ? ''
+      : g(ws, ['rev-parse', '--verify', '--symbolic-full-name', '--end-of-options', comparison]).catch(() => ''),
   ]);
   const head = headText.trim() || null;
   const branch = branchText.trim() || 'HEAD';
-  const def = (ws.meta?.trunk || '').replace(/^origin\//, '') || 'main';
   const upstream = branch === 'HEAD' ? null : upstreamText.trim() || null;
   const remoteRef = upstream || `origin/${branch}`;
   const [remoteText, destText, remoteShaText, wip] = await Promise.all([
@@ -267,9 +271,10 @@ export async function shipState(ws) {
     try { template = fsShip.readFileSync(pathShip.join(ws.rec.root, f), 'utf8').slice(0, 6000); break; } catch { /* next */ }
   }
   const pr = ws.github?.pr && ws.github.pr.headRefName === branch ? ws.github.pr : null;
+  const base = /^refs\/(?:heads\/|remotes\/[^/]+\/)(.+)$/.exec(baseRef.trim())?.[1] || '';
   return {
     branch, onDefault: branch === def || branch === 'HEAD', defaultBranch: def, upstream, remote, dest, remoteRef, remoteSha, ahead, behind, head,
-    base: (ws.meta?.base || def).replace(/^origin\//, ''), wipFiles: wip,
+    base, wipFiles: wip,
     wip: wip.map((f) => ({ path: f.path, status: f.untracked ? 'A' : f.status, untracked: !!f.untracked, added: f.added, deleted: f.deleted, oldPath: f.oldPath })),
     pr: pr ? { number: pr.number, state: pr.state, url: pr.url, isDraft: pr.isDraft } : null,
     repo: ws.github?.repoFull || ws.github?.repo || null, template,
@@ -316,7 +321,7 @@ const commit = {
     let out;
     try { out = await g(ws, argv, { input: payload.message.trim() + '\n', timeout: 10 * 60 * 1000 }); }
     catch (e) { throw fail(`git commit failed${/hook/i.test(e.stderr) ? ' in a hook' : ''}: ${clip(e.stderr || e.message, 400)}`, 422); }
-    ws.version++; await ws.sync(true);
+    await ws.sync(true);
     return { message: `Committed ${ws.meta.head}: ${clip(payload.message.split('\n')[0], 80)}`, output: clip(out, 400) };
   },
 };
@@ -372,7 +377,7 @@ const openpr = {
     if (!st.remoteSha || st.remoteSha !== st.head) throw fail(st.behind > 0 ? `${st.remoteRef} has commits this checkout does not: pull them and look first` : 'push the branch first, so GitHub has what the PR shows');
     if (!title.trim()) throw fail('write a title', 400);
     const into = String(base || st.base).replace(/^origin\//, '').trim();
-    if (!into || into.startsWith('-')) throw fail('name the base branch', 400);
+    if (!into || into.startsWith('-') || into === ws.meta?.baseFull) throw fail('name the base branch', 400);
     return {
       title: `Open a ${draft ? 'draft ' : ''}pull request on ${st.repo}`, where: `from ${st.branch} into ${into}, as you on GitHub`, confirm: draft ? 'Open draft' : 'Open',
       items: [`“${clip(title, 140)}”`, body.trim() ? `Description: ${clip(body, 200)}` : 'No description'], warnings: [], guard: { head: st.head, branch: st.branch, remoteSha: st.remoteSha, base: into, repo: st.repo },

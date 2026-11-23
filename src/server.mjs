@@ -248,17 +248,17 @@ async function route(req, res, url) {
     if (ws.status !== 'ready') return send(res, 200, { id: ws.id, kind: ws.rec.kind, url: ws.url, status: ws.status, progress: ws.progress, rec: publicRec(ws) });
     return send(res, 200, { ...ws.meta, status: ws.status, progress: ws.progress, rec: publicRec(ws), lsp: ws.root ? lspState(ws.root) : 'off', worktreeReady: !!ws.root });
   }
-  if (ws.status !== 'ready' || !ws.meta) {
+  if (ws.rec.kind === 'local' || ws.status !== 'ready' || !ws.meta) {
     try { await ws.ready(); } catch (e) { return send(res, 409, { error: e.message }); }
   }
-  if (method === 'GET' && sub === '/refs') return send(res, 200, { refs: await ws.refs(), base: ws.meta.base });
+  if (method === 'GET' && sub === '/refs') return send(res, 200, { refs: await ws.refs(), base: ws.meta.base, baseLabel: ws.meta.baseLabel, automatic: !ws.rec.base });
   if (method === 'POST' && sub === '/base') { const b = await readBody(req); await ws.setBase(typeof b.base === 'string' ? b.base.trim() : ''); return send(res, 200, { base: ws.meta.base }); }
   if (method === 'POST' && sub === '/refresh') { const r = await ws.refresh(); return send(res, 200, { ...r, head: ws.meta.head }); }
 
   if (method === 'GET' && sub === '/files') {
-    const files = await ws.files(scope);
+    const r = ws.captureRange(scope);
+    const files = await ws.files(r);
     if (files.length >= 24) primeHighlight(files.find((f) => !f.binary && f.kind === 'code')?.path);
-    const r = ws.range(scope);
     return send(res, 200, {
       scope: r.key, old: r.old, new: r.new === WORKTREE ? 'worktree' : r.new, key: W.contentKey(files),
       files: files.map((f) => ({ ...f, viewed: ws.isViewed(f), changedSinceViewed: ws.wasViewed(f) })),
@@ -275,10 +275,11 @@ async function route(req, res, url) {
     const side = url.searchParams.get('side') === 'old' ? 'old' : 'new';
     const line = Number(url.searchParams.get('line'));
     if (!safeRel(p) || !excerpt || excerpt.length > 160 || !Number.isSafeInteger(line) || line < 1) return send(res, 400, { error: 'Invalid citation.' });
-    if (!(await ws.readable(scope, p))) return send(res, 200, { line: null });
-    const text = side === 'new' && ws.range(scope).new === WORKTREE
+    const r = ws.captureRange(scope);
+    if (!(await ws.readable(r, p))) return send(res, 200, { line: null });
+    const text = side === 'new' && r.new === WORKTREE
       ? await readAt(ws.gitDir, WORKTREE, p)
-      : await ws.text(scope, side, p);
+      : await ws.text(r, side, p);
     return send(res, 200, { line: citationLine(text, line, excerpt) });
   }
   if (method === 'GET' && sub === '/diff') {
@@ -289,12 +290,12 @@ async function route(req, res, url) {
   if (method === 'GET' && (sub === '/file' || sub === '/hl')) {
     const fp = url.searchParams.get('path');
     const side = url.searchParams.get('side') === 'old' ? 'old' : 'new';
-    if (!(await ws.readable(scope, fp))) return send(res, 404, { error: 'not a file in this workspace' });
-    let text = await ws.text(scope, side, fp);
+    const r = ws.captureRange(scope);
+    if (!(await ws.readable(r, fp))) return send(res, 404, { error: 'not a file in this workspace' });
+    let text = await ws.text(r, side, fp);
     if (text === null && side === 'new') {
       // An unchanged file: read it at the new side's revision.
-      const r = ws.range(scope);
-      text = await (await import('./git.mjs')).readAt(ws.gitDir, r.new === WORKTREE ? WORKTREE : r.new, fp);
+      text = await readAt(ws.gitDir, r.new, fp);
     }
     if (text === null) return send(res, 404, { error: `${fp} is not on the ${side} side` });
     if (sub === '/hl') {
@@ -308,8 +309,9 @@ async function route(req, res, url) {
   }
   if (method === 'GET' && sub === '/related') {
     const fp = url.searchParams.get('path');
-    if (!(await ws.file(scope, fp))) return send(res, 404, { error: 'not a file this view changes' });
-    return send(res, 200, await ws.relatedOf(scope, fp));
+    const r = ws.captureRange(scope);
+    if (!(await ws.file(r, fp))) return send(res, 404, { error: 'not a file this view changes' });
+    return send(res, 200, await ws.relatedOf(r, fp));
   }
   if (method === 'GET' && sub.startsWith('/lsp/')) {
     const op = sub.slice(5);

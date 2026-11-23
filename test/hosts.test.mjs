@@ -6,12 +6,12 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-let child, port;
+let child, port, gitGate;
 const freePort = () => new Promise((resolve) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
 // node's fetch cannot set Host, so the requests are made by hand
 const req = (method, p, { host = 'loupe.local', headers = {}, body } = {}) => new Promise((resolve, reject) => {
@@ -24,6 +24,21 @@ const req = (method, p, { host = 'loupe.local', headers = {}, body } = {}) => ne
 before(async () => {
   port = await freePort();
   const env = { ...process.env, LOUPE_MODELS: 'fixed', LOUPE_HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-test-')), LOUPE_PORT: String(port), LOUPE_GH: '/usr/bin/false' };
+  gitGate = env.LOUPE_HOME;
+  env.LOUPE_GIT_GATE = gitGate;
+  env.LOUPE_GIT = path.join(gitGate, 'git-shim');
+  fs.writeFileSync(env.LOUPE_GIT, `#!/bin/sh
+if [ -f "$LOUPE_GIT_GATE/pause" ]; then
+  read -r old new < "$LOUPE_GIT_GATE/pause"
+  case " $* " in
+    *" diff -z --raw "*" $old $new ")
+      mv "$LOUPE_GIT_GATE/pause" "$LOUPE_GIT_GATE/paused"
+      while [ -f "$LOUPE_GIT_GATE/paused" ]; do sleep 0.02; done
+      ;;
+  esac
+fi
+exec git "$@"
+`, { mode: 0o755 });
   child = spawn(process.execPath, [path.join(ROOT, 'bin/loupe.mjs'), 'serve', '--no-80', '--no-mdns'], { env, stdio: 'ignore' });
   for (let i = 0; i < 60; i++) { try { if ((await req('GET', '/api/state', { host: `127.0.0.1:${port}` })).status === 200) return; } catch { /* not up yet */ } await new Promise((r) => setTimeout(r, 100)); }
   throw new Error('the daemon did not come up');
@@ -96,6 +111,83 @@ test('settings: hiddenOrgs is a validated list, and a bad one changes nothing', 
   assert.deepEqual(st.hiddenOrgs, ['acme', 'Foo-bar']);
   assert.equal(st.autoBrief, false);
   assert.deepEqual(JSON.parse((await post({ hiddenOrgs: [] })).body).hiddenOrgs, []);
+});
+
+test('direct local diff API requests refresh even without a page or a metadata request', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-local-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, env: {
+    ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com',
+  } });
+  git('init', '-q', '-b', 'main');
+  git('commit', '-q', '--allow-empty', '-m', 'initial');
+  fs.writeFileSync(path.join(root, 'first'), 'first');
+  const opened = await req('POST', '/api/workspaces', {
+    headers: { 'X-Loupe': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ target: root }),
+  });
+  assert.equal(opened.status, 200);
+  const url = '/api/w/' + JSON.parse(opened.body).id;
+  assert.equal(JSON.parse((await req('GET', url)).body).dirty, 1);
+  fs.writeFileSync(path.join(root, 'second'), 'second');
+  const list = await req('GET', url + '/files?scope=wip');
+  assert.equal(list.status, 200);
+  assert.deepEqual(JSON.parse(list.body).files.map((f) => f.path), ['first', 'second']);
+});
+
+test('diff reads keep their comparison when a sync lands mid-request', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-range-'));
+  const pause = path.join(gitGate, 'pause'), paused = path.join(gitGate, 'paused');
+  t.after(() => { for (const p of [root, pause, paused]) fs.rmSync(p, { recursive: true, force: true }); });
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', env: {
+    ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+    GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com',
+  } }).trim();
+  git('init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(root, 'shared'), 'original\n');
+  git('add', 'shared'); git('commit', '-qm', 'initial');
+  git('switch', '-qc', 'other');
+  git('rm', '-q', 'shared'); git('commit', '-qm', 'remove shared');
+  git('switch', '-qc', 'topic', 'main');
+  fs.writeFileSync(path.join(root, 'shared'), 'current\n');
+  git('commit', '-qam', 'change shared');
+  const old = git('rev-parse', 'main'), head = git('rev-parse', 'topic');
+  const post = (url, body) => req('POST', url, {
+    headers: { 'X-Loupe': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const opened = await post('/api/workspaces', { target: root });
+  assert.equal(opened.status, 200);
+  const url = '/api/w/' + JSON.parse(opened.body).id;
+
+  for (const [route, check] of [
+    ['/files', (body) => {
+      assert.equal(body.old, old);
+      assert.equal(body.new, head);
+      assert.deepEqual(body.files.map((f) => f.path), ['shared']);
+    }],
+    ['/diff', (body) => {
+      assert.equal(body.newLen, 1);
+      assert.deepEqual(body.hunks.flatMap((h) => h.lines.map((l) => l.s)), ['original', 'current']);
+    }],
+    ['/file', (body) => assert.deepEqual(body.lines, ['original'])],
+  ]) {
+    git('switch', '-q', 'topic');
+    assert.equal((await post(url + '/base', { base: 'main' })).status, 200);
+    fs.writeFileSync(pause, `${old} ${head}\n`);
+    const response = req('GET', url + route + '?scope=branch&side=old&path=shared');
+    try {
+      for (let i = 0; i < 250 && !fs.existsSync(paused); i++) await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(fs.existsSync(paused), `paused ${route}`);
+      git('switch', '-q', 'other');
+      assert.equal((await post(url + '/base', { base: 'other' })).status, 200);
+    } finally {
+      fs.rmSync(paused, { force: true });
+    }
+    const { status, body } = await response;
+    assert.equal(status, 200, body);
+    check(JSON.parse(body));
+    assert.deepEqual(JSON.parse((await req('GET', url + '/files?scope=branch')).body).files, []);
+  }
 });
 
 test('a scene document that is not there, or a draft that is not, is not found; the check\'s host page runs no script', async () => {

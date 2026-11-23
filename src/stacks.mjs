@@ -68,10 +68,16 @@ async function localGraph(root, trunk, refs) {
     if (!logs.has(ref)) logs.set(ref, read(root, ['reflog', 'show', '--date=raw', '--format=%H%x09%gD%x09%gs', ref]).then(lines));
     return logs.get(ref);
   };
-  const source = async (ref) => {
+  const sources = new Map();
+  const source = (ref) => {
+    if (!sources.has(ref)) sources.set(ref, creation(ref));
+    return sources.get(ref);
+  };
+  const creation = async (ref) => {
     const entry = (await log(ref)).at(-1);
     const [sha, selector, action] = entry?.split('\t') || [];
     let from = /^branch: Created from (.+)$/.exec(action || '')?.[1];
+    if (!from) return {};
     if (from === 'HEAD') {
       // checkout -b records HEAD. Look for its checkout entry from any worktree of the clone.
       headLog ||= read(root, ['reflog', 'show', '--all', '--date=raw', '--format=%gD%x09%H%x09%gs']).then(lines);
@@ -80,8 +86,10 @@ async function localGraph(root, trunk, refs) {
         .map(([, , msg]) => /^checkout: moving from (.+) to /.exec(msg)?.[1]).filter(Boolean);
       from = new Set(matches).size === 1 ? matches[0] : null;
     }
+    if (!from) return { sha, ref: null };
     const local = localPrefix + from;
-    return { sha, ref: branches.has(local) ? local : resolveRef(from) };
+    const named = branches.has(local) ? local : resolveRef(from);
+    return { sha, ref: branches.has(named) ? named : null };
   };
   const history = (tip) => {
     if (!histories.has(tip)) {
@@ -124,64 +132,67 @@ async function localGraph(root, trunk, refs) {
   };
 
   const parentOf = (ref) => {
-    if (!choices.has(ref)) choices.set(ref, (async () => {
-      const tip = branches.get(ref);
-      if (!tip || !parents.has(tip) || branchOf(ref) === branchOf(trunkRef)) return null;
-      const chain = history(tip), created = await source(ref);
-      const sameLine = (other) => other !== ref && branchOf(other) !== branchOf(ref) && branchOf(other) !== branchOf(trunkRef);
-      const candidates = [];
-      for (const [other, sha] of branches) {
-        if (!sameLine(other)) continue;
-        const n = chain.get(sha);
-        if (n > 0) candidates.push({ ref: other, base: other, sha, n });
-      }
-      if (branches.has(created.ref) && sameLine(created.ref)) {
-        const otherTip = branches.get(created.ref);
-        if (otherTip === tip) {
-          // Equal tips only have an order when the creation record gives one. Reject an entire cycle of twins.
-          const seen = new Set([ref]);
-          let at = created.ref;
-          while (branches.get(at) === tip && !seen.has(at)) {
-            seen.add(at);
-            at = (await source(at)).ref;
-          }
-          if (at !== ref) candidates.push({ ref: created.ref, base: created.ref, sha: tip, n: 0 });
-        } else if (chain.has(created.sha) && !chain.has(otherTip) && (tip === created.sha || !history(otherTip).has(tip))) {
-          // After a parent is rewritten, the child still compares with the old tip it was cut from.
-          const oldTips = await log(created.ref);
-          if (oldTips.some((entry) => entry.startsWith(created.sha + '\t'))) {
-            candidates.push({ ref: created.ref, base: created.sha, sha: created.sha, n: chain.get(created.sha) });
-          }
-        }
-      }
-      // Check the work at the comparison point as well as the current tip. A rewritten parent may have landed meanwhile.
-      if (candidates.length && !await landed(tip)) {
-        const distances = new Map();
-        for (const p of candidates.sort((a, b) => a.n - b.n)) {
-          if (!distances.has(p.n)) distances.set(p.n, []);
-          distances.get(p.n).push(p);
-        }
-        for (const group of distances.values()) {
-          const possible = new Map();
-          for (const p of group) {
-            if (await landed(p.sha)) continue;
-            const origin = await source(p.ref);
-            // A child left at the cut point doesn't become its parent's base when the parent adds another commit.
-            if (origin.sha === p.sha && branchOf(origin.ref || '') === branchOf(ref)) continue;
-            const branch = branchOf(p.ref);
-            // The two copies of one branch at the same commit describe the same change. Locals are listed first.
-            if (!possible.has(branch)) possible.set(branch, { ...p, branch });
-          }
-          const named = possible.get(branchOf(created.ref || ''));
-          if (named || possible.size === 1) return named || possible.values().next().value;
-          // Multiple unrelated names for one ancestor give no evidence for which one is the parent.
-          if (possible.size > 1) return null;
-        }
-      }
-      return null;
-    })());
+    if (!choices.has(ref)) choices.set(ref, findParent(ref));
     return choices.get(ref);
   };
+  async function findParent(ref) {
+    const tip = branches.get(ref);
+    if (!tip || !parents.has(tip) || branchOf(ref) === branchOf(trunkRef)) return null;
+    const chain = history(tip);
+    const eligible = (other) => branchOf(other) !== branchOf(ref) && branchOf(other) !== branchOf(trunkRef);
+    let created = await source(ref);
+    // A creation chain between equal tips has to end somewhere to establish their order.
+    if (created.sha === tip) {
+      const seen = new Set([ref]);
+      let at = created.ref;
+      while (branches.get(at) === tip && !seen.has(at)) {
+        seen.add(at);
+        const edge = await source(at);
+        at = edge.sha === tip ? edge.ref : null;
+      }
+      if (seen.has(at)) created = {};
+    }
+    const floor = chain.get(created.sha);
+    const cut = floor !== undefined && !await landed(created.sha) ? created.sha : null;
+    const choice = (other, sha) => ({ ref: other, branch: branchOf(other), base: branches.get(other) === sha ? other : sha, sha });
+    const unnamed = (sha, candidates = []) => ({ ref: null, branch: null, base: sha, sha, candidates });
+    const byDistance = new Map();
+    if (cut) byDistance.set(floor, []);
+    for (const [other, sha] of branches) {
+      const n = chain.get(sha);
+      if (!eligible(other) || !(n > 0 || sha === cut) || (cut && n > floor)) continue;
+      if (!byDistance.has(n)) byDistance.set(n, []);
+      byDistance.get(n).push(other);
+    }
+    if (!byDistance.size || await landed(tip)) return null;
+
+    const name = branchOf(created.ref || '');
+    for (const [, refs] of [...byDistance].sort(([a], [b]) => a - b)) {
+      const sha = branches.get(refs[0]) || cut;
+      if (await landed(sha)) continue;
+      const possible = new Map();
+      for (const other of refs) {
+        const origin = await source(other);
+        // A child left at the cut point doesn't become its parent's base.
+        if (origin.sha === sha && origin.ref && branchOf(origin.ref) === branchOf(ref)) continue;
+        const branch = branchOf(other);
+        if (!possible.has(branch)) possible.set(branch, choice(other, sha));
+      }
+      // A parent that moved can still name the cut when its history or reflog proves it.
+      if (sha === cut && created.ref && eligible(created.ref) && !possible.has(name)) {
+        const otherTip = branches.get(created.ref);
+        const otherHistory = history(otherTip);
+        if ((tip === cut || otherTip === tip || !otherHistory.has(tip))
+          && (otherHistory.has(cut) || (await log(created.ref)).some((entry) => entry.startsWith(cut + '\t')))) {
+          possible.set(name, choice(created.ref, cut));
+        }
+      }
+      const named = possible.get(name);
+      if (named || possible.size === 1) return named || possible.values().next().value;
+      if (possible.size > 1) return cut ? unnamed(sha, [...possible.keys()]) : null;
+    }
+    return cut ? unnamed(cut) : null;
+  }
 
   return { branches, trunkRef, trunkSha, history, landed, log, parentOf };
 }
@@ -364,6 +375,11 @@ async function openCommitLists(repo, reads, bootstrap, missing) {
 
 const isOid = (oid) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(oid);
 const prKey = (number) => '#' + number;
+function prAtCut(cut, prs) {
+  const matches = prs.filter((p) => !p.isCrossRepository && p.state === 'OPEN'
+    && p.headRefOid === cut.sha && cut.candidates.includes(p.headRefName));
+  return matches.length === 1 ? matches[0] : null;
+}
 
 async function addCommitStack(root, kind, m, pr, repo, chain, stack, snapshot, refs, local, commitLists) {
   const trunk = chain.trunk;
@@ -489,10 +505,13 @@ async function addCommitStack(root, kind, m, pr, repo, chain, stack, snapshot, r
       if (!group.length) continue;
       if (oid === node.oid || !node.p && group.some((other) => !other.p) || group.length > 1) {
         const cut = await getNamed();
-        const matches = cut?.sha === oid ? group.filter((other) => refFor(other) === cut.ref
-          || (!other.item.crossRepo && other.item.branch === cut.branch)) : [];
+        const namedPR = cut?.sha === oid && cut.candidates?.length ? prAtCut(cut, chain.list) : null;
+        const matches = cut?.sha === oid ? group.filter((other) => cut.ref
+          ? refFor(other) === cut.ref || (!other.item.crossRepo && other.item.branch === cut.branch)
+          : namedPR && other.p?.number === namedPR.number) : [];
         const matched = matches.length === 1 ? matches[0] : matches.find((other) => !other.p);
         if (matched) return { node: matched, byCommits: true };
+        if (cut?.sha === oid && cut.candidates?.length) return null;
         // Branch-to-branch ordering retains the reflog, first-parent and patch-equivalence rules.
         if (oid === node.oid) continue;
         const prs = group.filter((other) => other.p || node.p);
@@ -598,8 +617,9 @@ export async function stackFor(ws, { fresh = false, snapshot, meta = ws.meta, gi
 
 async function resolve(ws, snapshot, m, github, commits) {
   const { gitDir } = ws;
-  // The GitHub refresh can lag a checkout. Its old PR cannot describe the newly checked-out branch.
-  let g = ws.rec.kind === 'local' && github?.pr && github.pr.headRefName !== m.branch
+  // The GitHub refresh can lag a checkout, and a branch name can outlive its closed PR.
+  const oldPR = github?.pr && github.pr.state !== 'OPEN' && m.headFull && github.pr.headRefOid !== m.headFull;
+  let g = ws.rec.kind === 'local' && github?.pr && (github.pr.headRefName !== m.branch || oldPR)
     ? { ...github, pr: null } : github;
   if (commits && ws.rec.kind === 'pr' && !g?.pr && ws.rec.pr) {
     g = { owner: ws.rec.owner, repo: ws.rec.repo, pr: { number: ws.rec.number, ...ws.rec.pr } };
@@ -649,7 +669,10 @@ async function resolve(ws, snapshot, m, github, commits) {
     }
     if (ws.rec.kind === 'local' && !g.pr && tip) {
       const chain = await prHistory();
-      const current = chain.changeFor(m.branch, tip);
+      local = await localGraph(gitDir, m.trunk || m.base, snapshot.refs);
+      const cut = await local?.parentOf(localPrefix + m.branch);
+      // At a recorded cut, an equal PR head may be the parent. It doesn't make this checkout that PR.
+      const current = cut?.sha === tip ? chain.fromBranch(m.branch) : chain.changeFor(m.branch, tip);
       if (current) g = { ...g, pr: current };
     }
   }
@@ -688,11 +711,20 @@ async function resolve(ws, snapshot, m, github, commits) {
   }
 
   if (ws.rec.kind === 'local' && m.branch && m.branch !== 'HEAD') {
-    local = await localGraph(gitDir, m.trunk || m.base, snapshot.refs);
+    local ||= await localGraph(gitDir, m.trunk || m.base, snapshot.refs);
     const ref = localPrefix + m.branch, tip = local?.branches.get(ref);
     if (tip && branchOf(local.trunkRef) !== m.branch && !await local.landed(tip)) {
+      const namedParent = async (ref) => {
+        const cut = await local.parentOf(ref);
+        if (!cut?.candidates?.length || !repo) return cut;
+        const p = prAtCut(cut, (await prHistory()).list);
+        if (!p) return cut;
+        const branch = p.headRefName;
+        const parentRef = [remotePrefix + branch, localPrefix + branch].find((ref) => refs.get(ref) === cut.sha);
+        return { ...cut, branch, ref: parentRef };
+      };
       const down = [], seen = new Set([m.branch]);
-      for (let p = await local.parentOf(ref); p && !seen.has(p.branch); p = await local.parentOf(p.ref)) {
+      for (let p = await namedParent(ref); p?.ref && !seen.has(p.branch); p = await namedParent(p.ref)) {
         seen.add(p.branch);
         down.unshift({ branch: p.branch, ref: p.ref });
       }
@@ -704,8 +736,8 @@ async function resolve(ws, snapshot, m, github, commits) {
       for (const [other, sha] of local.branches) {
         if (seen.has(branchOf(other))) continue;
         if (![...local.history(sha).keys()].some((at) => oldTips.has(at))) continue;
-        const p = await local.parentOf(other);
-        if (!p) continue;
+        const p = await namedParent(other);
+        if (!p?.ref) continue;
         if (!children.has(p.ref)) children.set(p.ref, []);
         children.get(p.ref).push(other);
       }
@@ -755,14 +787,19 @@ async function resolve(ws, snapshot, m, github, commits) {
     if (commits && repo) {
       const chain = await prHistory();
       const seen = new Set(v.items.filter((it) => it.pr).map((it) => it.pr));
-      v.items = v.items.flatMap((it) => {
-        if (it.pr) return [it];
-        const p = chain.changeFor(it.branch, refs.get(it.ref || localPrefix + it.branch));
-        if (!p) return [it];
-        if (seen.has(p.number)) return [];
+      const items = [];
+      for (const it of v.items) {
+        if (it.pr) { items.push(it); continue; }
+        const ref = it.ref || localPrefix + it.branch;
+        const oid = refs.get(ref);
+        const cut = local && await local.parentOf(ref);
+        const p = cut?.sha === oid ? chain.fromBranch(it.branch) : chain.changeFor(it.branch, oid);
+        if (!p) { items.push(it); continue; }
+        if (seen.has(p.number)) continue;
         seen.add(p.number);
-        return [{ ...it, ...prItem(p) }];
-      });
+        items.push({ ...it, ...prItem(p) });
+      }
+      v.items = items;
       // A missing GitHub source leaves whatever the declared stack and local graph already proved.
       v = await addCommitStack(gitDir, ws.rec.kind, m, g.pr, repo, chain, v, snapshot, refs, local, commitLists).catch(() => v);
     }

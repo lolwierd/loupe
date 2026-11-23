@@ -6,6 +6,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-stack-')));
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -14,10 +15,11 @@ process.env.LOUPE_GH = path.join(tmp, 'gh');
 fs.writeFileSync(process.env.LOUPE_GH, `#!${process.execPath}
 const fs = require('node:fs');
 const args = process.argv.slice(2);
+if (args[0] === 'api' && args[1] === 'user') { process.stdout.write('tester'); process.exit(0); }
 const option = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : null;
 const field = (name) => args.find((s) => s.startsWith(name + '='))?.slice(name.length + 1);
 const match = /^repos\\/(owner\\/[^/]+)\\/stacks\\?pull_request=(\\d+)$/.exec(args[1]);
-const repo = match?.[1] || option('--repo') || field('name') || args[2];
+const repo = match?.[1] || option('--repo') || field('name') || field('r') || args[2];
 const file = require('node:path').join(__dirname, repo.split('/').at(-1));
 const data = JSON.parse(fs.readFileSync(file + '.json'));
 fs.appendFileSync(file + '.calls', JSON.stringify(args) + '\\n');
@@ -38,6 +40,10 @@ else if (args[0] === 'api' && args[1] === 'graphql' && field('query')?.includes(
         .map(([, alias, number]) => [alias, history(open.find((p) => p.number === Number(number)))]));
   result = data.commitsError ? 'error' : { data: { repository } };
 }
+else if (args[0] === 'api' && args[1] === 'graphql' && field('r')) {
+  const empty = { nodes: [], pageInfo: { hasNextPage: false } };
+  result = { data: { repository: { pullRequest: { id: 'pr-' + field('n'), reviewThreads: empty, reviews: empty } } } };
+}
 else if (args[0] === 'pr' && args[1] === 'list' && option('--json')) {
   const state = option('--state');
   result = data.listError || (state === 'open' && data.openListError) ? 'error' : (data.prs || []).filter((p) => (!option('--head') || option('--head') === p.headRefName) &&
@@ -52,7 +58,8 @@ process.stdout.write(JSON.stringify(result));
 `, { mode: 0o755 });
 
 const { localParent, stackFor, stackSnapshot } = await import('../src/stacks.mjs');
-const { Workspace } = await import('../src/workspaces.mjs');
+const { Workspace, openTarget } = await import('../src/workspaces.mjs');
+const { ACTIONS, shipState } = await import('../src/actions.mjs');
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: {
   ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
@@ -88,6 +95,22 @@ const prWorkspace = (root, gh) => ({ id: root + '#pr-' + gh.pr.number, gitDir: r
 const numbers = (result) => result.items.map((item) => item.pr);
 const calls = (gh) => fs.readFileSync(path.join(tmp, gh.repo + '.calls'), 'utf8').trim().split('\n').map(JSON.parse);
 const commitQueries = (gh) => calls(gh).filter((args) => args[1] === 'graphql').map((args) => args[3]);
+function nextChange(ws, t, reason, open = false) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(Error(`missed workspace change: ${reason}`)), 10000);
+    const client = { write(line) {
+      if (!line.startsWith('event: changed\n')) return;
+      const data = JSON.parse(line.split('\n')[1].slice(6));
+      if (data.reason !== reason) return;
+      clearTimeout(timer);
+      ws.clients.delete(client);
+      resolve(data);
+    } };
+    t.after(() => { clearTimeout(timer); ws.clients.delete(client); });
+    if (open) ws.addClient(client);
+    else ws.clients.add(client);
+  });
+}
 
 test('trunk tip, old trunk commit and branches with only dirty work have no local stack', async () => {
   const root = repo();
@@ -132,9 +155,28 @@ test('contradictory creation records cannot make either twin its own ancestor', 
   cut(root, 'one', 'origin/main', 'work');
   sh(root, 'branch', 'two', 'one');
   const log = path.join(root, '.git/logs/refs/heads/one');
-  fs.writeFileSync(log, fs.readFileSync(log, 'utf8').replace('Created from origin/main', 'Created from two'));
-  assert.equal(await stack(root, 'one'), '');
-  assert.equal(await stack(root, 'two'), '');
+  fs.writeFileSync(log, fs.readFileSync(log, 'utf8').split('\n')[0]
+    .replace(hash(root, 'origin/main'), hash(root)).replace('Created from origin/main', 'Created from two') + '\n');
+  for (const branch of ['one', 'two']) {
+    assert.equal(await stack(root, branch), '');
+    const ws = local(root);
+    await ws.ready();
+    assert.equal(ws.range('all').old, hash(root, 'origin/main'));
+    assert.deepEqual((await ws.files()).map((f) => f.path), ['work']);
+  }
+});
+
+test('a recreated branch can start at the tip of a branch cut from its old name', async () => {
+  const root = repo();
+  cut(root, 'first', 'main');
+  cut(root, 'second', 'first', 'work');
+  sh(root, 'branch', '-D', 'first');
+  cut(root, 'first', 'second');
+  const ws = local(root);
+  await ws.ready();
+  assert.equal(ws.range('all').old, hash(root, 'second'));
+  assert.deepEqual(await ws.files(), []);
+  assert.equal(order(await stackFor(ws)), 'second / first*');
 });
 
 test('default trunk follows origin/HEAD, ignores stale local trunk, and uses local main without origin', async () => {
@@ -223,9 +265,10 @@ test('the nearest tracking ref wins if its local copy diverged; only matching co
   assert.equal((await stackFor(ws)).items[0].checkout, undefined);
 });
 
-test('a parent ref deleted after the snapshot falls back to the trunk diff', async () => {
+test('a parent ref deleted after the snapshot still compares with the cut commit', async () => {
   const root = repo();
   cut(root, 'parent', 'main', 'parent');
+  const cutSha = hash(root);
   cut(root, 'child', 'parent', 'child');
   const snapshot = await stackSnapshot(root);
   sh(root, 'branch', '-D', 'parent');
@@ -234,9 +277,9 @@ test('a parent ref deleted after the snapshot falls back to the trunk diff', asy
   assert.equal((await localParent(root, 'child', trunk, snapshot)).base, 'refs/heads/parent');
   const ws = local(root);
   await ws.sync(false, snapshot);
-  assert.equal(ws.meta.base, trunk);
-  assert.equal(ws.range('all').old, hash(root, trunk));
-  assert.deepEqual((await ws.files()).map((f) => f.path).sort(), ['child', 'parent']);
+  assert.equal(ws.meta.base, cutSha);
+  assert.equal(ws.range('all').old, cutSha);
+  assert.deepEqual((await ws.files()).map((f) => f.path), ['child']);
 });
 
 test('a topic merged in by a second parent is neither its base nor its child', async () => {
@@ -339,6 +382,337 @@ test('an open workspace refreshes for refs and worktree changes even inside the 
 test('a PR workspace whose metadata is still null has an empty stack', async () => {
   const ws = { rec: { kind: 'pr' }, meta: null };
   assert.deepEqual(await stackFor(ws), { kind: 'none', items: [] });
+});
+
+test('opening a local page catches unwatched edits and agrees with the live Commit count', async (t) => {
+  const root = repo();
+  const ws = await openTarget(root);
+  for (let i = 0; i < 2; i++) fs.writeFileSync(path.join(root, `file-${i}`), 'work');
+  assert.equal((await ws.ready()).dirty, 2);
+  for (let i = 2; i < 6; i++) fs.writeFileSync(path.join(root, `file-${i}`), 'work');
+  t.after(() => ws.stopWatching());
+  const changed = nextChange(ws, t, 'files changed', true);
+  await changed;
+  const meta = await ws.ready();
+  assert.equal(meta.dirty, 6);
+  assert.equal(meta.dirty, (await shipState(ws)).wip.length);
+  assert.equal((await ws.files('wip')).length, 6);
+  const version = ws.version;
+  assert.equal(await ws.ready(), meta);
+  assert.equal(ws.version, version);
+  await openTarget(root, undefined, { base: 'main~' });
+  assert.equal((await ws.ready()).base, 'main~');
+});
+
+test('ready without a page rereads files and invalidates worktree hunk caches', async () => {
+  const root = repo();
+  const ws = local(root);
+  const file = path.join(root, 'a');
+  fs.writeFileSync(file, 'before\n');
+  await ws.ready();
+  const previous = ws.scopeKey('wip');
+  const hunk = await ws.hunks('wip', 'a');
+  fs.writeFileSync(file, 'after\n');
+  fs.writeFileSync(path.join(root, 'dirty'), 'dirty');
+  assert.equal((await ws.ready()).dirty, 2);
+  assert.notEqual(ws.scopeKey('wip'), previous);
+  assert.notDeepEqual(await ws.hunks('wip', 'a'), hunk);
+});
+
+test('restoring a file after a sync reads its current patch and text', async () => {
+  const root = repo();
+  const ws = local(root);
+  const file = path.join(root, 'a');
+  const added = (diff) => diff.hunks.flatMap((hunk) => hunk.lines.filter((line) => line.t === '+').map((line) => line.s));
+  fs.writeFileSync(file, 'first\n');
+  await ws.ready();
+  const before = await ws.file('wip', 'a');
+  fs.writeFileSync(file, 'second\n');
+  assert.deepEqual(added(await ws.hunks('wip', 'a')), ['second']);
+
+  fs.writeFileSync(file, 'first\n');
+  await ws.sync();
+  assert.equal((await ws.file('wip', 'a')).blob, before.blob);
+  assert.deepEqual(added(await ws.hunks('wip', 'a')), ['first']);
+  assert.equal(await ws.text('wip', 'new', 'a'), 'first\n');
+});
+
+test('a watched force-tracked dependency refreshes, and ignored writes and identical saves emit nothing', async (t) => {
+  const root = repo();
+  fs.mkdirSync(path.join(root, 'node_modules'));
+  const tracked = path.join(root, 'node_modules/tracked');
+  fs.writeFileSync(tracked, 'initial');
+  fs.writeFileSync(path.join(root, '.gitignore'), 'node_modules/\n');
+  sh(root, 'add', '.gitignore');
+  sh(root, 'add', '-f', 'node_modules/tracked');
+  sh(root, 'commit', '-qm', 'tracked dependency');
+  const ws = local(root);
+  const events = [];
+  ws.addClient({ write(line) { if (line.startsWith('event: changed\n')) events.push(line); } });
+  t.after(() => ws.stopWatching());
+  await ws.ready();
+  assert.ok(ws.watch.fs, 'recursive filesystem watcher must be attached');
+  const changed = nextChange(ws, t, 'files changed');
+  fs.writeFileSync(tracked, 'edited');
+  await changed;
+  assert.deepEqual((await ws.files('wip')).map((f) => f.path), ['node_modules/tracked']);
+  const version = ws.version;
+  fs.writeFileSync(path.join(root, 'node_modules/ignored'), 'ignored');
+  await delay(650);
+  assert.equal(ws.version, version);
+  fs.writeFileSync(tracked, 'edited');
+  await delay(650);
+  assert.equal(events.length, 1);
+});
+
+test('a watched local workspace reports a missing root and recovers when it returns', async (t) => {
+  const root = repo();
+  const moved = root + '-moved';
+  const ws = local(root);
+  ws.addClient({ write() {} });
+  t.after(() => ws.stopWatching());
+  await ws.ready();
+  const unavailable = nextChange(ws, t, 'workspace unavailable');
+  fs.renameSync(root, moved);
+  await assert.rejects(ws.ready(), /is gone/);
+  await unavailable;
+  assert.equal(ws.status, 'error');
+  const available = nextChange(ws, t, 'workspace available');
+  fs.renameSync(moved, root);
+  await available;
+  assert.equal(ws.status, 'ready');
+  assert.equal(ws.progress, '');
+  assert.ok(ws.watch.fs);
+  const goneAgain = nextChange(ws, t, 'workspace unavailable');
+  fs.renameSync(root, moved);
+  await goneAgain; // connected pages learn about the loss without first calling ready()
+  assert.equal(ws.status, 'error');
+});
+
+test('index-only staging refreshes a watched diff and its untracked flags', async (t) => {
+  const root = repo();
+  fs.writeFileSync(path.join(root, '.gitignore'), 'ignored\n');
+  sh(root, 'add', '.gitignore');
+  sh(root, 'commit', '-qm', 'ignore a file');
+  fs.writeFileSync(path.join(root, 'ignored'), 'content');
+  const ws = local(root);
+  ws.startWatching();
+  t.after(() => ws.stopWatching());
+  assert.equal((await ws.ready()).dirty, 0);
+  await delay(500); // let filesystem events for setup drain before changing only the index
+  const changed = nextChange(ws, t, 'files changed');
+  sh(root, 'add', '-f', 'ignored');
+  await changed;
+  assert.deepEqual((await ws.files('wip')).map((f) => f.path), ['ignored']);
+  const added = nextChange(ws, t, 'files changed');
+  fs.writeFileSync(path.join(root, 'new'), 'content');
+  await added;
+  assert.equal((await ws.file('wip', 'new')).untracked, true);
+  const staged = nextChange(ws, t, 'files changed');
+  sh(root, 'add', 'new');
+  await staged;
+  assert.equal((await ws.file('wip', 'new')).untracked, undefined);
+});
+
+for (const moved of ['head', 'base', 'target']) {
+  test(`opening a PR checks its ${moved} against GitHub immediately`, async (t) => {
+    const root = repo();
+    cut(root, 'feat/a', 'main', 'first');
+    const head = hash(root), base = hash(root, 'main');
+    const ns = 'refs/loupe/pr/101/';
+    sh(root, 'push', '-q', 'origin', 'HEAD:refs/pull/101/head');
+    sh(root, 'update-ref', ns + 'head', head);
+    sh(root, 'update-ref', ns + 'base', base);
+    sh(root, 'update-ref', ns + 'trunk', base);
+    const target = moved === 'target' ? 'release' : 'main';
+    const before = pr(101, 'feat/a', 'main', { headRefOid: head, baseRefOid: base });
+    const gh = fixture(root, { prs: [before] }, before);
+    const wt = path.join(path.dirname(root), 'pr-worktree');
+    sh(root, 'worktree', 'add', '-q', '--detach', wt, head);
+    const ws = new Workspace({ id: gh.repo, kind: 'pr', owner: gh.owner, repo: gh.repo, number: 101, clone: root, worktree: wt, pr: before });
+    ws.github = { ...gh, at: Date.now() };
+    await ws.ready();
+    t.after(() => ws.stopWatching());
+    if (moved === 'head') {
+      commit(root, 'second');
+      sh(root, 'push', '-q', 'origin', 'HEAD:refs/pull/101/head');
+    } else if (moved === 'base') {
+      sh(path.join(path.dirname(root), 'up'), 'config', 'receive.denyCurrentBranch', 'updateInstead');
+      sh(root, 'push', '-q', 'origin', 'HEAD:refs/heads/main'); // the base reaches the unchanged head
+    } else {
+      sh(root, 'push', '-q', 'origin', 'main:refs/heads/release'); // a different target at exactly the same SHA
+    }
+    const current = { ...before, baseRefName: target, headRefOid: hash(root), baseRefOid: moved === 'base' ? head : base };
+    fixture(root, { prs: [current] }, current);
+    // Both OIDs are local. Any attempt to fetch them now would fail.
+    sh(root, 'remote', 'set-url', 'origin', path.join(root, 'missing-remote'));
+    const changed = nextChange(ws, t, moved === 'head' ? 'worktree ready' : 'the base moved', true);
+    await changed;
+    assert.equal(ws.meta.headFull, current.headRefOid);
+    assert.equal(ws.meta.baseFull, current.baseRefOid);
+    assert.equal(ws.meta.base, target);
+    assert.equal(hash(wt), current.headRefOid);
+    assert.deepEqual((await ws.files()).map((f) => f.path).sort(), moved === 'head' ? ['first', 'second'] : moved === 'base' ? [] : ['first']);
+    assert.equal(hash(root, ns + 'trunk'), moved === 'base' ? head : base);
+  });
+}
+
+test('refresh fetches an unseen PR tip and repairs a missing or stale same-head worktree locally', async () => {
+  const root = repo();
+  cut(root, 'topic', 'main', 'first');
+  const before = committedPR(root, 101, 'topic');
+  const clone = fetchedPR(root, before);
+  sh(clone, 'remote', 'add', 'origin', root);
+  sh(root, 'update-ref', 'refs/pull/101/head', before.headRefOid);
+  const gh = fixture(root, { prs: [before] }, before);
+  const wt = path.join(path.dirname(root), 'pr-worktree');
+  sh(clone, 'worktree', 'add', '-q', '--detach', wt, before.headRefOid);
+  const ws = new Workspace({ id: gh.repo, kind: 'pr', owner: gh.owner, repo: gh.repo, number: 101, clone, worktree: wt, pr: before });
+  ws.github = { ...gh, at: Date.now() };
+  await ws.ready();
+  commit(root, 'second');
+  const current = committedPR(root, 101, 'topic');
+  sh(root, 'update-ref', 'refs/pull/101/head', current.headRefOid);
+  assert.throws(() => sh(clone, 'cat-file', '-e', current.headRefOid));
+  await ws.prepareAgain(current);
+  assert.equal(ws.meta.headFull, current.headRefOid);
+  assert.equal(hash(wt), current.headRefOid);
+  sh(clone, 'remote', 'set-url', 'origin', path.join(root, 'missing-remote'));
+  fs.rmSync(wt, { recursive: true });
+  assert.equal(ws.rec.worktreeReady, true);
+  await ws.prepareAgain(current);
+  assert.equal(hash(wt), current.headRefOid);
+  sh(wt, 'checkout', '-q', '--detach', before.headRefOid);
+  await ws.prepareAgain(current);
+  assert.equal(hash(wt), current.headRefOid);
+  assert.equal(ws.rec.worktreeReady, true);
+});
+
+test('a checkout can be restored after its Git link is removed', async () => {
+  const root = repo();
+  cut(root, 'topic', 'main', 'work');
+  const current = committedPR(root, 101, 'topic');
+  const clone = fetchedPR(root, current);
+  const gh = fixture(root, { prs: [current] }, current);
+  const wt = path.join(path.dirname(root), 'pr-worktree');
+  sh(clone, 'worktree', 'add', '-q', '--detach', wt, current.headRefOid);
+  const ws = new Workspace({ ...gh, id: gh.repo, kind: 'pr', clone, worktree: wt });
+  ws.github = gh;
+  await ws.ready();
+  fs.unlinkSync(path.join(wt, '.git'));
+  fs.writeFileSync(path.join(wt, 'work'), 'keep me');
+
+  await ws.prepareAgain(current);
+  assert.notEqual(ws.root, wt);
+  assert.equal(path.dirname(ws.root), path.join(process.env.LOUPE_HOME, 'worktrees'));
+  assert.equal(ws.meta.root, ws.root);
+  assert.equal(hash(ws.root), current.headRefOid);
+  assert.equal(fs.readFileSync(path.join(wt, 'work'), 'utf8'), 'keep me');
+  assert.equal(fs.existsSync(path.join(wt, '.git')), false);
+});
+
+test('a new PR head keeps edits made in loupe’s checkout, and a page opening repairs a checkout that went', async (t) => {
+  const root = repo();
+  cut(root, 'topic', 'main', 'first');
+  const before = committedPR(root, 101, 'topic');
+  const clone = fetchedPR(root, before);
+  sh(clone, 'remote', 'add', 'origin', root);
+  sh(root, 'update-ref', 'refs/pull/101/head', before.headRefOid);
+  const gh = fixture(root, { prs: [before] }, before);
+  const wt = path.join(path.dirname(root), 'pr-worktree');
+  sh(clone, 'worktree', 'add', '-q', '--detach', wt, before.headRefOid);
+  const ws = new Workspace({ id: gh.repo, kind: 'pr', owner: gh.owner, repo: gh.repo, number: 101, clone, worktree: wt, pr: before });
+  ws.github = { ...gh, at: Date.now() };
+  await ws.ready();
+  fs.writeFileSync(path.join(wt, 'first'), 'edited by hand');
+  fs.writeFileSync(path.join(wt, 'second'), 'left untracked'); // the new head tracks this path
+  commit(root, 'second');
+  const current = committedPR(root, 101, 'topic');
+  sh(root, 'update-ref', 'refs/pull/101/head', current.headRefOid);
+  await ws.prepareAgain(current);
+  assert.notEqual(ws.root, wt);
+  assert.equal(hash(ws.root), current.headRefOid);
+  assert.equal(ws.meta.root, ws.root);
+  assert.equal(fs.readFileSync(path.join(wt, 'first'), 'utf8'), 'edited by hand');
+  assert.equal(fs.readFileSync(path.join(wt, 'second'), 'utf8'), 'left untracked');
+  assert.equal(hash(wt), before.headRefOid);
+  fixture(root, { prs: [current] }, current); // GitHub now agrees, so its check on each page open moves nothing
+  // a healthy checkout: the first page's check changes nothing and redraws nothing
+  const events = [];
+  const page = { write(line) { if (line.startsWith('event: changed\n')) events.push(line); } };
+  ws.addClient(page);
+  t.after(() => ws.stopWatching());
+  await ws.ensureWorktree();
+  await ws.fetchGithub(true);
+  assert.deepEqual(events, []);
+  ws.clients.delete(page);
+  // gone while nobody looked, with GitHub saying nothing moved: opening a page brings it back
+  fs.rmSync(ws.root, { recursive: true });
+  await nextChange(ws, t, 'worktree ready', true);
+  await ws.fetchGithub(true);
+  assert.equal(hash(ws.root), current.headRefOid);
+  assert.equal(ws.meta.root, ws.root);
+  ws.clients.clear();
+  // its .git pointer left but git's record of it gone: a fresh checkout, the folder left as it was
+  const broken = ws.root;
+  fs.rmSync(path.join(path.resolve(clone, sh(clone, 'rev-parse', '--git-common-dir')), 'worktrees'), { recursive: true });
+  await nextChange(ws, t, 'worktree ready', true);
+  assert.notEqual(ws.root, broken);
+  assert.equal(hash(ws.root), current.headRefOid);
+  assert.ok(fs.existsSync(path.join(broken, '.git')));
+});
+
+test('a new PR head never overwrites an ignored file left in loupe’s checkout', async () => {
+  const root = repo();
+  cut(root, 'topic', 'main', 'first');
+  const before = committedPR(root, 101, 'topic');
+  const clone = fetchedPR(root, before);
+  sh(clone, 'remote', 'add', 'origin', root);
+  const gh = fixture(root, { prs: [before] }, before);
+  const wt = path.join(path.dirname(root), 'pr-worktree');
+  sh(clone, 'worktree', 'add', '-q', '--detach', wt, before.headRefOid);
+  const ws = new Workspace({ id: gh.repo, kind: 'pr', owner: gh.owner, repo: gh.repo, number: 101, clone, worktree: wt, pr: before });
+  ws.github = { ...gh, at: Date.now() };
+  await ws.ready();
+  const common = path.resolve(clone, sh(clone, 'rev-parse', '--git-common-dir'));
+  fs.mkdirSync(path.join(common, 'info'), { recursive: true });
+  fs.appendFileSync(path.join(common, 'info', 'exclude'), 'second\n');
+  fs.writeFileSync(path.join(wt, 'second'), 'ignored, kept');
+  commit(root, 'second'); // the new head tracks the ignored path
+  const current = committedPR(root, 101, 'topic');
+  sh(root, 'update-ref', 'refs/pull/101/head', current.headRefOid);
+  await ws.prepareAgain(current);
+  assert.notEqual(ws.root, wt);
+  assert.equal(hash(ws.root), current.headRefOid);
+  assert.equal(fs.readFileSync(path.join(wt, 'second'), 'utf8'), 'ignored, kept');
+});
+
+test('a background PR refresh updates the stack range when only trunk advances', async () => {
+  const root = repo();
+  cut(root, 'landed', 'main', 'landed');
+  cut(root, 'parent', 'landed', 'parent');
+  cut(root, 'child', 'parent', 'child');
+  const current = committedPR(root, 2, 'child', 'parent');
+  const parent = committedPR(root, 1, 'parent', 'main');
+  const clone = fetchedPR(root, current, 'parent');
+  sh(clone, 'remote', 'add', 'origin', root);
+  const gh = fixture(root, { prs: [parent, current] }, current);
+  const wt = path.join(path.dirname(root), 'pr-worktree');
+  sh(clone, 'worktree', 'add', '-q', '--detach', wt, current.headRefOid);
+  const ws = new Workspace({ ...gh, id: gh.repo, kind: 'pr', clone, worktree: wt });
+  ws.github = gh;
+  await ws.ready();
+  assert.deepEqual((await ws.files('stack')).map((f) => f.path).sort(), ['child', 'landed', 'parent']);
+
+  sh(root, 'branch', '-f', 'main', 'landed');
+  fixture(root, { prs: [{ ...parent, baseRefOid: hash(root, 'main') }, current] }, current);
+  await ws.fetchGithubNow();
+  assert.equal(hash(clone, 'refs/loupe/pr/2/trunk'), hash(root, 'main'));
+  assert.equal(ws.meta.headFull, current.headRefOid);
+  assert.equal(ws.meta.baseFull, current.baseRefOid);
+  assert.equal(ws.range('stack').old, hash(root, 'main'));
+  assert.deepEqual((await ws.files('stack')).map((f) => f.path).sort(), ['child', 'parent']);
+  assert.deepEqual((await ws.files()).map((f) => f.path), ['child']);
 });
 
 test('GitHub stack order takes precedence, even from a bare clone, and preserves review states', async () => {
@@ -595,11 +969,194 @@ test('an anonymous cut above two independently named copies of one commit does n
   const root = repo();
   cut(root, 'one', 'origin/main', 'work');
   const same = hash(root);
-  sh(root, 'branch', 'two', same);
+  sh(root, 'update-ref', 'refs/heads/two', same); // an independent ref, without a branch creation record
   cut(root, 'child', same, 'child');
   assert.equal(await stack(root, 'child'), '');
+  const ws = local(root);
+  await ws.sync();
+  assert.equal(ws.meta.base, same);
+  assert.equal(ws.range('all').old, same);
+  assert.equal(ws.meta.baseLabel, same.slice(0, 9));
+  assert.deepEqual((await ws.files()).map((f) => f.path), ['child']);
   assert.equal(await stack(root, 'one'), '');
   assert.equal(await stack(root, 'two'), '');
+});
+
+test('a detached worktree cut keeps its dirty and committed diffs at the cut and prefers the matching open PR in the stack', async (t) => {
+  const root = repo();
+  cut(root, 'parent', 'origin/main', 'parent');
+  cut(root, 'feat/a', 'parent', 'feat-a');
+  sh(root, 'push', '-q', 'origin', 'parent', 'feat/a');
+  const tip = hash(root);
+  sh(root, 'branch', 'feat/a-copy', tip);
+  checkout(root, 'main');
+  sh(root, 'branch', '-D', 'feat/a', 'parent');
+  const wt = path.join(path.dirname(root), 'detached');
+  sh(root, 'worktree', 'add', '-q', '--detach', wt, 'origin/feat/a');
+  sh(wt, 'switch', '-q', '-c', 'child');
+  fs.writeFileSync(path.join(wt, 'dirty'), 'dirty');
+  const parent = pr(101, 'feat/a', 'parent', { headRefOid: tip });
+  const gh = fixture(root, { prs: [parent] });
+
+  for (const committed of [false, true]) {
+    if (committed) commit(wt, 'child');
+    const ws = local(wt);
+    ws.github = gh;
+    await ws.ready();
+    const cut = await localParent(wt, 'child', 'origin/main');
+    assert.equal(cut.ref, null);
+    assert.deepEqual(cut.candidates.toSorted(), ['feat/a', 'feat/a-copy']);
+    assert.equal(ws.meta.base, tip);
+    assert.equal(ws.meta.baseAuto, true);
+    assert.equal(ws.meta.trunkMergeBase, hash(wt, 'origin/main'));
+    assert.deepEqual((await ws.files()).map((f) => f.path).sort(), committed ? ['child', 'dirty'] : ['dirty']);
+    assert.equal(order(await stackFor(ws)), 'parent / feat/a / child*');
+    const rows = (await stackFor(ws)).items;
+    assert.equal(rows[1].pr, 101);
+    assert.equal(rows[1].ref, 'refs/remotes/origin/feat/a');
+    assert.equal(rows[2].pr, undefined);
+  }
+  const ws = local(wt);
+  ws.startWatching();
+  t.after(() => ws.stopWatching());
+  await ws.ready();
+  const moved = nextChange(ws, t, 'stack changed');
+  cut(root, 'feat/a', 'origin/feat/a', 'more');
+  sh(root, 'push', '-q', 'origin', 'feat/a');
+  sh(root, 'branch', '-D', 'feat/a-copy');
+  await moved;
+  assert.equal(ws.meta.base, tip);
+  assert.deepEqual((await ws.files()).map((f) => f.path).sort(), ['child', 'dirty']);
+});
+
+test('a commit comparison base is not prefilled as a GitHub PR base branch', async () => {
+  const root = repo();
+  cut(root, 'parent', 'main', 'parent');
+  const tip = hash(root);
+  cut(root, 'child', tip, 'child');
+  sh(root, 'branch', '-D', 'parent');
+  sh(root, 'push', '-q', '-u', 'origin', 'child');
+  const ws = local(root);
+  ws.github = { repoFull: 'owner/repo' };
+  await ws.ready();
+  assert.equal(ws.meta.base, tip);
+  assert.equal((await shipState(ws)).base, '');
+  await assert.rejects(ACTIONS.openpr.preview(ws, { title: 'Child' }), /name the base branch/);
+  assert.equal((await ACTIONS.openpr.preview(ws, { title: 'Child', base: 'main' })).guard.base, 'main');
+  sh(root, 'tag', 'point', tip);
+  checkout(root, 'main');
+  checkout(root, 'child');
+  for (const base of ['main~', 'main~0', '@', '@{-1}', 'point', tip.slice(0, 9)]) {
+    await ws.setBase(base);
+    assert.equal((await shipState(ws)).base, '', base);
+  }
+  for (const base of ['main', 'refs/heads/main', 'origin/main', 'refs/remotes/origin/main']) {
+    await ws.setBase(base);
+    assert.equal((await shipState(ws)).base, 'main', base);
+  }
+});
+
+test('a detached cut is a floor after rebasing onto a newer tracking tip', async () => {
+  const root = repo();
+  cut(root, 'parent', 'origin/main', 'parent');
+  cut(root, 'topic', 'parent', 'topic');
+  sh(root, 'push', '-q', 'origin', 'parent', 'topic');
+  const cutSha = hash(root);
+  const wt = path.join(path.dirname(root), 'detached');
+  sh(root, 'worktree', 'add', '-q', '--detach', wt, 'origin/topic');
+  cut(wt, 'child', undefined, 'child');
+  commit(root, 'more');
+  sh(root, 'push', '-q', 'origin', 'topic');
+  sh(root, 'fetch', '-q', 'origin');
+  sh(wt, 'rebase', '-q', 'origin/topic');
+  sh(wt, 'merge-base', '--is-ancestor', cutSha, 'HEAD');
+  const ws = local(wt);
+  await ws.ready();
+  assert.equal(ws.range('all').old, hash(root, 'origin/topic'));
+  assert.deepEqual((await ws.files()).map((f) => f.path), ['child']);
+  assert.equal(order(await stackFor(ws)), 'parent / topic / child*');
+
+  sh(root, 'update-ref', 'refs/heads/another', 'topic');
+  const nearer = hash(root, 'topic');
+  const result = await localParent(wt, 'child', 'origin/main');
+  assert.equal(result.ref, null);
+  assert.equal(result.sha, nearer);
+  assert.deepEqual(result.candidates.toSorted(), ['another', 'topic']);
+  await ws.ready();
+  assert.equal(ws.range('all').old, nearer);
+  assert.deepEqual((await ws.files()).map((f) => f.path), ['child']);
+  assert.equal(order(await stackFor(ws)), '');
+  sh(root, 'update-ref', 'refs/heads/uncut', hash(wt));
+  assert.equal(await localParent(root, 'uncut', 'origin/main'), null);
+  sh(root, 'update-ref', '-d', 'refs/heads/uncut');
+  ws.github = fixture(root, { prs: [pr(101, 'topic', 'parent', { headRefOid: nearer })] });
+  const named = await stackFor(ws, { fresh: true });
+  assert.equal(order(named), 'parent / topic / child*');
+  assert.equal(named.items[1].pr, 101);
+  checkout(root, 'main');
+  sh(root, 'branch', '-D', 'topic', 'another');
+  sh(root, 'update-ref', '-d', 'refs/remotes/origin/topic');
+  await ws.ready();
+  assert.equal(ws.range('all').old, cutSha); // the remaining parent branch is below the cut
+  assert.deepEqual((await ws.files()).map((f) => f.path).sort(), ['child', 'more']);
+});
+
+test('a branch cut from a commit can use its only branch name', async () => {
+  const root = repo();
+  cut(root, 'parent', 'main', 'work');
+  const tip = hash(root);
+  cut(root, 'child', tip, 'child');
+  assert.equal((await localParent(root, 'child', 'origin/main')).base, 'refs/heads/parent');
+  assert.equal(await stack(root, 'child'), 'parent / child*');
+});
+
+test('a tag or expression gives a cut commit, even when its only branch advances', async () => {
+  for (const start of ['tag', 'expression']) {
+    const root = repo();
+    cut(root, 'parent', 'origin/main', 'parent');
+    const tip = hash(root);
+    sh(root, 'tag', 'point', tip);
+    cut(root, 'child', start === 'tag' ? 'point' : 'parent~0', 'child');
+    const ws = local(root);
+    await ws.ready();
+    assert.equal(ws.meta.base, 'refs/heads/parent');
+    checkout(root, 'parent');
+    commit(root, 'more');
+    checkout(root, 'child');
+    await ws.ready();
+    assert.equal(ws.meta.base, tip);
+    assert.equal(order(await stackFor(ws)), '');
+    assert.deepEqual((await ws.files()).map((f) => f.path), ['child']);
+  }
+});
+
+test('an anonymous cut at a fork PR tip does not infer the fork as a same-tip parent', async () => {
+  const root = repo();
+  cut(root, 'parent', 'main', 'parent');
+  const tip = hash(root);
+  checkout(root, 'main');
+  sh(root, 'branch', '-D', 'parent');
+  cut(root, 'child', tip);
+  const fork = pr(101, 'parent', 'main', { headRefOid: tip, isCrossRepository: true });
+  const ws = local(root);
+  ws.github = fixture(root, { prs: [fork] });
+  await ws.ready();
+  assert.equal(ws.meta.base, tip);
+  assert.deepEqual(numbers(await stackFor(ws)), []);
+});
+
+test('a closed PR on a reused local branch does not override its new cut', async () => {
+  const root = repo();
+  cut(root, 'parent', 'origin/main', 'parent');
+  const tip = hash(root);
+  cut(root, 'child', tip, 'child');
+  const ws = local(root);
+  const old = pr(101, 'child', 'main', { state: 'CLOSED', headRefOid: hash(root, 'main') });
+  ws.github = fixture(root, { prs: [old], stacks: { 101: [{ number: 1, pull_requests: [pr(102, 'unrelated', 'main'), old] }] } }, old);
+  await ws.ready();
+  assert.equal(ws.range('all').old, tip);
+  assert.deepEqual((await ws.files()).map((f) => f.path), ['child']);
+  assert.equal(order(await stackFor(ws)), 'parent / child*');
 });
 
 test('multiple open PRs from one head cannot uniquely establish the base PR', async () => {
@@ -804,7 +1361,7 @@ test('a fork is only the parent of a same-repo branch when its precise head is i
   cut(root, 'unrelated', 'main', 'unrelated');
   const fork = committedPR(root, 1, 'fork', 'main', { isCrossRepository: true });
   sh(root, 'branch', '-D', 'fork');
-  sh(root, 'branch', 'fork', hash(root, 'unrelated'));
+  sh(root, 'update-ref', 'refs/heads/fork', hash(root, 'unrelated'));
   const gh = fixture(root, { prs: [fork] });
   const s = await stackFor(workspace(root, 'local-child', 'origin/main', gh));
   assert.deepEqual(numbers(s), [1, undefined]);

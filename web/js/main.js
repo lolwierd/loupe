@@ -177,6 +177,7 @@ async function readWorkspace(reason) {
   try { m = await api(`/api/w/${id}`); } catch (e) { if (S.id === id) showState('Could not open this', e.message, true); return; }
   if (S.id !== id) return;
   if (m.status !== 'ready' || !m.headFull && m.kind === 'pr') {
+    fileRequest++;
     S.opening = { ...m, id: S.id }; // what the state box can show while it waits: a pull request's size, the refs of one that failed
     $('#wsbtn').innerHTML = `${m.kind === 'pr' ? I.pr : I.branch}<span class="t">${esc(m.rec?.pr?.title || m.rec?.slug || '')}</span>`;
     return showState(m.status === 'error' ? 'Could not open this' : 'Opening…', m.progress || '', m.status === 'error');
@@ -550,7 +551,8 @@ function listenWs() {
     if (d.reason === 'files changed' && notesChange?.id === S.id) notesChange.quietAt = Date.now() + 20000;
     changedT = setTimeout(async () => {
       changedT = null;
-      await loadWorkspace(d.reason === 'files changed' || d.reason === 'worktree ready' ? '' : `${d.reason[0].toUpperCase()}${d.reason.slice(1)}: the diff is updated`);
+      await loadWorkspace(['files changed', 'worktree ready', 'workspace unavailable', 'workspace available'].includes(d.reason)
+        ? '' : `${d.reason[0].toUpperCase()}${d.reason.slice(1)}: the diff is updated`);
     }, 150);
   });
   on('settings', (st) => { S.app.settings = st; for (const f of S.files) updateCard(f.path); progress(); maybeAutoNotes(); });
@@ -707,7 +709,7 @@ function commands() {
     S.review.brief?.sections?.length && { group: 'READ', label: S.order === 'guide' ? 'Tree order' : 'Guide order', key: 'g', run: () => setOrder(S.order === 'guide' ? 'tree' : 'guide') },
     { group: 'READ', label: S.layout === 'split' ? 'Unified diff' : 'Split diff', key: 's', run: () => setLayout(S.layout === 'split' ? 'unified' : 'split') },
     ...scopes.map(([k, label]) => ({ group: 'COMPARE', label, run: () => setScope(k) })),
-    local && { group: 'COMPARE', label: 'Compare with another base', sub: m.base, run: () => { const b = $('[data-act="scopemenu"]'); if (b) baseMenu(b); } },
+    local && { group: 'COMPARE', label: 'Compare with another base', sub: m.baseLabel || m.base, run: () => { const b = $('[data-act="scopemenu"]'); if (b) baseMenu(b); } },
     ...m.commits.filter((x) => x.sha !== S.rangeKey).map((x) => ({ group: 'COMPARE', label: `Commit ${x.short.slice(0, 7)} ${x.subject}`, sub: ago(x.at), typed: true, run: () => setScope(x.sha) })),
     { group: 'REVIEW', label: 'Ask about the whole change', key: 'a', run: () => { setPane('panel', true); openChat(); } },
     { group: 'REVIEW', label: S.review.brief?.tldr ? 'Regenerate the guide and map' : 'Write the guide and map', run: () => { setPane('panel', true); setTab('overview'); hooks.rebrief?.(); } },
@@ -1105,8 +1107,8 @@ function keySheet() {
 async function baseMenu(btn) {
   let r;
   try { r = await api(`/api/w/${S.id}/refs`); } catch (e) { return toast(e.message, { fail: true }); }
-  const items = [{ header: 'COMPARE WITH' }, { label: 'The remote\'s default branch', sub: 'origin/HEAD', value: '' },
-    { sep: true }, ...r.refs.map((x) => ({ label: x.name, sub: ago(x.at), value: x.name, current: x.name === r.base }))];
+  const items = [{ header: 'COMPARE WITH' }, { label: 'Automatic base', value: '', current: r.automatic },
+    { sep: true }, ...r.refs.map((x) => ({ label: x.name, sub: ago(x.at), value: x.name, current: !r.automatic && x.name === (r.baseLabel || r.base) }))];
   menu(btn, items, async (it) => {
     try { await api(`/api/w/${S.id}/base`, { method: 'POST', body: { base: it.value } }); } catch (e) { toast(e.message, { fail: true }); }
   }, { width: 380 });
@@ -1120,7 +1122,7 @@ function scopeMenu(btn) {
     ...(m.kind === 'local' ? [{ label: 'Committed only', value: 'branch', current: S.rangeKey === 'branch' }, { label: 'Uncommitted only', sub: m.dirty ? plural(m.dirty, 'file') : 'none', value: 'wip', current: S.rangeKey === 'wip' }] : []),
     ...(m.sinceCount ? [{ label: 'Since you last looked', sub: plural(m.sinceCount, 'commit'), value: 'since', current: S.rangeKey === 'since' }] : []),
     ...(m.trunkMergeBase ? [{ label: 'Whole stack', sub: `from ${m.trunk || 'the trunk'}`, value: 'stack', current: S.rangeKey === 'stack' }] : []),
-    ...(m.kind === 'local' ? [{ sep: true }, { label: `Compare with ${m.base}`, sub: 'change…', value: '__base' }] : []),
+    ...(m.kind === 'local' ? [{ sep: true }, { label: `Compare with ${m.baseLabel || m.base}`, sub: 'change…', value: '__base' }] : []),
     ...(m.commits.length ? [{ sep: true }, { header: `COMMITS (${m.commits.length})` }, ...m.commits.map((c) => ({ two: [c.subject, `${c.short.slice(0, 7)} · ${c.author} · ${ago(c.at)}`], value: c.sha, current: S.rangeKey === c.sha }))] : []),
   ];
   menu(btn, items, (it) => (it.value === '__base' ? baseMenu(btn) : setScope(it.value)), { width: 420 });
