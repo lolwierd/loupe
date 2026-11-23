@@ -454,7 +454,12 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
    --gut is how far that edge is left of the code: both number columns in the unified view, one in split. */
 .fb { --gut: 96px; }
 .fb.split, .file:is(.allnew, .allgone) .fb { --gut: 48px; }
-.plus { position: absolute; left: calc(1px - var(--gut)); top: 2px; width: 16px; height: 16px; border: 0; border-radius: var(--r1); background: var(--act); box-shadow: var(--ink-raised); color: var(--on-act); padding: 0; cursor: pointer; opacity: 0; transition: opacity 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); z-index: 2; display: grid; place-items: center; }
+.fb { --nw: 2; } /* the digits of the file's widest line number (cards.js) */
+/* A number column is 48 px with 8 px after the number. The + (and a hidden mark's pin) sits centred in the room left of
+   the file's widest number: from the column's edge (past its 1 px rule, in split's right half: --rim) to its first
+   digit. ch is read in the numbers' own type, which both set. */
+.split .ln > .cd:last-child .plus { --rim: 1px; }
+.plus { --rim: 0px; position: absolute; left: calc(max(var(--rim), (24px + var(--rim) - var(--nw) * 1ch) / 2) - var(--gut)); top: 2px; width: 16px; height: 16px; font: var(--t-mono) var(--f-mono); border: 0; border-radius: var(--r1); background: var(--act); box-shadow: var(--ink-raised); color: var(--on-act); padding: 0; cursor: pointer; opacity: 0; transition: opacity 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); z-index: 2; display: grid; place-items: center; }
 .plus:hover { background: color-mix(in srgb, var(--act) 86%, var(--bg)); }
 .plus:active { background: color-mix(in srgb, var(--act) 90%, var(--bg)); box-shadow: var(--ink-pressed); transition-duration: 50ms; }
 .plus svg { width: 12px; height: 12px; }
@@ -1140,7 +1145,7 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
    and question is. The bare gutter tick stays only on the mark you have open. */
 .marks-hidden .fb .ln { position: relative; }
 .marks-hidden .ln.marked:not(.lit) .no:first-child { box-shadow: none; }
-.mpin { position: absolute; left: 1px; top: 2px; display: grid; place-items: center; width: 14px; height: 16px; padding: 0; border: 0; border-radius: var(--r1); background: none; box-shadow: var(--flat); cursor: pointer; transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
+.mpin { position: absolute; left: calc(max(0px, (24px - var(--nw) * 1ch) / 2) + 1px); top: 2px; font: var(--t-mono) var(--f-mono); display: grid; place-items: center; width: 14px; height: 16px; padding: 0; border: 0; border-radius: var(--r1); background: none; box-shadow: var(--flat); cursor: pointer; transition: background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .mpin:hover { background: var(--face); box-shadow: var(--raised-soft); }
 .mpin.lit, .mpin:active { background: var(--face-down); box-shadow: var(--pressed); }
 .mpin.done { opacity: 0.45; }

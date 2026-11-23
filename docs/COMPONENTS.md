@@ -151,8 +151,10 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
 - **List box** (files in a dialog, commits, home lists): 1 px `--rule`, `--r3`, rows divided by 1 px `--rule`.
 - **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`. A draft's words sit in a well that
   starts after its glyph, on the 20 px grid; its send is the primary.
-- **The + that starts a mark**: in the margin, on the empty left edge of its side's line-number gutter (where a hidden
-  mark's pin sits), 16 px, a small key of ink (`--ink-raised`), shown on the line's hover; never over a number or the diff's sign. A line whose pin is there
+- **The + that starts a mark**: in the margin, in the empty room left of its side's line number (where a hidden mark's
+  pin sits), centred in it: the room runs from the column's edge (past its rule) to the first digit of the file's widest
+  number, so the + keeps one place down a file. 16 px, a small key of ink (`--ink-raised`), shown on the line's hover;
+  never over a number or the diff's sign. A line whose pin is there
   keeps the pin; its number still selects it.
 - **Going back** after a jump (a definition, a cited line, a search result): `[`, and a slip at the foot of the diff's
   column, bottom left, that names where it goes (`‹ Back to middleware.go:13 [`, the line left from, else the file the

@@ -419,6 +419,10 @@ function drawBody(p) {
   if (!fb || !rows) return;
   const split = splitFile(fileOf(p));
   fb.classList.toggle('split', split);
+  // the widest line number here, in digits: the + and a hidden mark's pin sit centred in the room left of it (style.css)
+  let widest = 0;
+  for (const r of rows) widest = Math.max(widest, r.o || 0, r.n || 0);
+  fb.style.setProperty('--nw', String(widest).length);
   card.classList.toggle('split', split); // the guide head and used-by panel follow the code's edge too
   let plan = rowPlans.get(rows);
   if (!plan) {
