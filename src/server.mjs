@@ -30,6 +30,7 @@ const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
 const BOOT = Date.now().toString(36);
 let DISPLAY = `http://127.0.0.1:${PORT}`; // the address to hand out: set once the listeners are up
+let HTTPS_ORIGIN;
 const USER = (() => { try { return execFileSync(BIN.git, ['config', '--global', 'user.name']).toString().trim(); } catch { return ''; } })() || process.env.USER || 'you';
 
 // ------------------------------------------------------------------ request hygiene
@@ -121,6 +122,10 @@ async function route(req, res, url) {
 
   if (!p.startsWith('/api/')) {
     if (method !== 'GET') return send(res, 404, { error: 'not found' });
+    if (HTTPS_ORIGIN && !req.socket.encrypted && hostName(req.headers.host) === HOSTNAME) {
+      res.writeHead(302, { Location: HTTPS_ORIGIN + p + url.search, 'Cache-Control': 'no-store' });
+      return res.end();
+    }
     // "/" restores the last workspace; "/home" is the launcher; everything else is a workspace URL the page resolves.
     if (p === '/') {
       const last = W.get(W.registry.data.last);
@@ -714,8 +719,8 @@ export async function start() {
   const onTls = (process.env.LOUPE_TLS_PORT || (!flag('no-80') && process.env.LOUPE_NO_80 !== '1')) ? await startTls(tlsPort) : false;
   const mdnsOn = !flag('no-mdns') && process.env.LOUPE_NO_MDNS !== '1';
   if (mdnsOn) startMdns();
-  // The address handed out is the https one when it is up: that is what the certificate is for. http keeps working.
-  DISPLAY = !mdnsOn ? `http://127.0.0.1:${PORT}` : onTls ? `https://${HOSTNAME}${tlsPort === 443 ? '' : ':' + tlsPort}` : `http://${HOSTNAME}${on80 ? '' : ':' + PORT}`;
+  if (onTls) HTTPS_ORIGIN = `https://${HOSTNAME}${tlsPort === 443 ? '' : ':' + tlsPort}`;
+  DISPLAY = !mdnsOn ? `http://127.0.0.1:${PORT}` : HTTPS_ORIGIN || `http://${HOSTNAME}${on80 ? '' : ':' + PORT}`;
   console.log(`open ${DISPLAY}`);
   watchWeb();
   const stop = () => { stopAll(); for (const p of mdns) p.kill(); for (const ws of W.all()) ws.review.flush?.(); W.registry.flush(); process.exit(0); };

@@ -36,6 +36,9 @@ Right-click the toolbar button, then **Options**. Changes are saved as you make 
 | Where | Replace the GitHub tab | See below. |
 | Only for | empty (everyone) | Owners or `owner/repo`, separated by commas or spaces. |
 
+When the daemon has HTTPS running, page links opened at `http://loupe.local` redirect to its HTTPS address. To have
+the extension recognize pull requests already open in HTTPS tabs, save the HTTPS address in **Options** and grant access there.
+
 **Replace or beside.** With Replace, a tab that was opened for the pull request (its history is that one page: a link
 from Slack, mail or a notification) becomes loupe, so you do not collect a GitHub tab for every pull request. A tab
 you were browsing GitHub in is never replaced: loupe opens beside it, and the page you came from stays. Replace

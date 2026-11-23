@@ -25,8 +25,9 @@ so two daemons never fight over the name.
 If `~/.loupe/tls/cert.pem` and `~/.loupe/tls/key.pem` exist when the daemon starts, it also listens on port 443 for
 `loupe.local` and `l.local` (the same way it takes port 80: macOS lets a normal user bind it on the wildcard address, and
 the listener drops every connection that is not from this machine). With no files there, nothing changes. `--no-80` turns
-off 443 as well as 80. The daemon then hands out `https://loupe.local` as its address (the CLI opens it, the page shows it);
-`http://loupe.local` keeps working.
+off 443 as well as 80. The daemon then hands out `https://loupe.local` as its address (the CLI opens it, the page shows it).
+Page URLs on `http://loupe.local`, including links opened by the browser extension, redirect to HTTPS with their path
+and query intact. The HTTP API and loopback IP still work over HTTP.
 
 `./install.sh` asks whether to set this up and runs the steps below for you (`./install.sh --https` does it without
 asking, `--no-https` skips the question); a certificate already in `~/.loupe/tls` is left as it is.
