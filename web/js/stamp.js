@@ -121,10 +121,9 @@ const verdict = () => {
 export function impressionHTML() {
   const v = verdict(); if (!v) return '';
   const head = S.github.pr.headRefOid || '', moved = !!head && head !== v.head;
-  const read = v.head === S.ws?.headFull; // "the head you read" only when it is the diff this page has
-  const line = moved ? `You approved ${esc(short(v.head))}. The head is now <span class="moved">${esc(short(head))}</span>.` : `You approved ${esc(short(v.head))}${read ? ', the head you read' : ''}.`;
+  const line = moved ? `<span class="faint">The head is now <span class="moved">${esc(short(head))}</span>.</span>` : '';
   const title = moved ? 'New commits came after your approval: what you approved is not what is there now.' : `Approved ${day(v.at)}: your approval is of this head.`;
-  return `<span class="impressrow" title="${esc(title)}"><canvas class="impress-sm" data-head="${esc(v.head)}" data-moved="${moved ? 1 : ''}" data-at="${v.at}" aria-hidden="true"></canvas><span class="faint">${line}</span></span>`; // a span: it also sits inside a fact's line
+  return `<span class="impressrow" title="${esc(title)}"><canvas class="impress-sm" data-head="${esc(v.head)}" data-moved="${moved ? 1 : ''}" data-at="${v.at}" role="img" aria-label="Approved ${esc(short(v.head))}"></canvas>${line}</span>`; // a span: it also sits inside a fact's line
 }
 function paintSmall(cv) {
   if (cv.dataset.done) return;
