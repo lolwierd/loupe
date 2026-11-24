@@ -634,6 +634,7 @@ details.sect[open] > summary.sh::after { transform: none; }
    the right. Colour only where a state asks something of someone; the checks figures are the one control */
 .prhead .facts { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; column-gap: var(--s3); align-items: baseline; }
 .prhead .facts .k { font-size: var(--t-meta); line-height: 20px; color: var(--ink-3); }
+.prhead .facts .k:has(+ .v > .impressrow) { align-self: center; }
 .prhead .facts .v { font-size: var(--t-ui); line-height: 20px; color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
 .prhead .facts .v.sub { grid-column: 2 / 4; color: var(--ink-3); line-height: 18px; margin-top: -1px; }
 .prhead .facts .t { font: var(--t-meta)/20px var(--f-mono); color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }

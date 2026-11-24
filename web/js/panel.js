@@ -10,6 +10,7 @@ import { msgHTML, runBtn, briefRunBtn, runOf, grow, menu, shimmerSync, modelKind
 import { isViewed, lines, setResolved, deleteMark, cardEl, renderBody, oneLine } from './cards.js';
 import { hooks } from './hooks.js';
 import { impressionHTML } from './stamp.js';
+import { currentReviewEvent } from './review-state.js';
 import { spark, avatar } from './pixel.js';
 
 const TABS = ['overview', 'chat', 'review'];
@@ -76,15 +77,21 @@ function factsHTML(p, loading) {
   row('state', state, when);
   // review: GitHub's decision, then who made it or who is asked
   let review = wait;
+  let impression = v ? impressionHTML() : '';
   if (v) {
     const ok = who(p, 'approved'), asked = who(p, 'changes requested'), req = who(p, 'requested');
     if (p.reviewDecision === 'CHANGES_REQUESTED' || (!p.reviewDecision && asked.length)) review = `<span class="fv warn">changes asked</span> ${names(asked)}`;
-    else if (p.reviewDecision === 'APPROVED' || (!p.reviewDecision && ok.length)) review = `<span class="fv ok">approved</span> ${names(ok)}`;
+    else if (p.reviewDecision === 'APPROVED' || (!p.reviewDecision && ok.length)) {
+      if (impression && currentReviewEvent(p) === 'APPROVE' && ok.length === 1 && ok[0] === p.viewer) {
+        review = impression;
+        impression = '';
+      } else review = `<span class="fv ok">approved</span> ${names(ok)}`;
+    }
     else if (p.reviewDecision === 'REVIEW_REQUIRED' && p.state !== 'OPEN') review = '<span class="q">not approved</span>';
     else if (p.reviewDecision === 'REVIEW_REQUIRED') review = req.length ? `needs approval <span class="q">· asked</span> ${names(req)}` : 'needs approval <span class="q">· nobody asked</span>';
     else review = req.length ? `<span class="q">asked</span> ${names(req)}` : '<span class="q">not required</span>';
   }
-  row('review', review, '', v ? impressionHTML() : ''); // under GitHub's decision, your own: the impression of your approval
+  row('review', review, '', impression);
   // checks: every count that is not zero, the total at the right, the failing ones named underneath
   const total = c.pass + c.fail + c.run + c.skip;
   let checks = wait, failing = '';
