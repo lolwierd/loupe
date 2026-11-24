@@ -96,7 +96,9 @@ function factsHTML(p, loading) {
     if (bad.length) failing = esc(bad.length <= 3 ? bad.join(', ') : `${bad.slice(0, 3).join(', ')} and ${bad.length - 3} more`);
   }
   row('checks', checks, v && total ? String(total) : '', failing);
-  row('branch', `<span class="pair mono" title="${esc(p.headRefName)} into ${esc(p.baseRefName)}">${esc(p.headRefName)}<span class="ar">→</span>${esc(p.baseRefName)}</span>`);
+  for (const [label, ref] of [['from', p.headRefName], ['into', p.baseRefName]]) {
+    rows.push(`<span class="k">${label}</span><bdi dir="ltr" class="v mono ref" title="${esc(ref)}">${esc(ref)}</bdi>`);
+  }
   row('author', `${esc(p.author || '')}${p.viewerIsAuthor ? ' <span class="q">· you</span>' : ''}`, `#${p.number}`);
   const assigned = (p.assignees || []).filter((a) => a !== p.author);
   if (assigned.length) row('assigned', `${names(assigned)}${p.viewer && assigned.includes(p.viewer) ? ' <span class="q">· you</span>' : ''}`);

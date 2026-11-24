@@ -645,7 +645,7 @@ details.sect[open] > summary.sh::after { transform: none; }
 .prhead .facts .q, .prhead .facts .dot { color: var(--ink-3); }
 .prhead .facts .dot { padding: 0 var(--s2); }
 .prhead .facts .mono { font: var(--t-mono)/20px var(--f-mono); }
-.prhead .facts .pair .ar { padding: 0 var(--s2); color: var(--ink-3); font-family: var(--f-ui); }
+.prhead .facts .ref { grid-column: 2 / -1; }
 .prhead .facts .figs { all: unset; cursor: pointer; padding: 1px var(--off); margin: 0 calc(-1 * var(--off)); border-radius: var(--r1); box-shadow: var(--flat); transition: color 120ms var(--ease), background 120ms var(--ease), box-shadow 140ms var(--ease); }
 .prhead .facts .figs:hover { background: var(--face); box-shadow: var(--raised-soft); }
 .prhead .facts .figs:active { background: var(--face); box-shadow: var(--pressed); transition-duration: 50ms; } /* pressed by its well alone: the coloured counts keep their contrast */
