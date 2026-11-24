@@ -30,6 +30,15 @@ function check(c) {
   return { name, kind, state: state.toLowerCase().replace(/_/g, ' '), url: c.detailsUrl || c.targetUrl || null, workflow: c.workflowName || null };
 }
 
+export function viewerReview(reviews, login) {
+  if (!login) return null;
+  const latest = reviews.filter((r) => r.author?.login?.toLowerCase() === login.toLowerCase()
+    && ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(r.state))
+    .sort((a, b) => Date.parse(a.submittedAt) - Date.parse(b.submittedAt)).at(-1);
+  if (!latest?.commit?.oid || latest.state === 'DISMISSED') return null;
+  return { event: latest.state === 'APPROVED' ? 'APPROVE' : 'REQUEST_CHANGES', head: latest.commit.oid, at: Date.parse(latest.submittedAt) };
+}
+
 export async function pullRequest(owner, repo, number) {
   const [pr, me] = await Promise.all([ghJson(['pr', 'view', String(number), '--repo', `${owner}/${repo}`, '--json', PR_FIELDS]), viewer().catch(() => null)]);
   const checks = (pr.statusCheckRollup || []).map(check);
@@ -53,7 +62,7 @@ export async function pullRequest(owner, repo, number) {
     labels: (pr.labels || []).map((l) => l.name), additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changedFiles,
     createdAt: pr.createdAt, updatedAt: pr.updatedAt, mergedAt: pr.mergedAt, closedAt: pr.closedAt, crossRepo: pr.isCrossRepository,
     checks, checkSummary: { pass: checks.filter((c) => c.kind === 'pass').length, fail: checks.filter((c) => c.kind === 'fail').length, run: checks.filter((c) => c.kind === 'run').length, skip: checks.filter((c) => c.kind === 'skip').length },
-    reviewers, timeline, viewer: me, viewerIsAuthor: !!me && me === pr.author?.login,
+    reviewers, timeline, viewer: me, viewerReview: viewerReview(pr.reviews || [], me), viewerIsAuthor: !!me && me === pr.author?.login,
     assignees: (pr.assignees || []).map((a) => a.login).filter(Boolean),
     viewerIsAssignee: !!me && (pr.assignees || []).some((a) => a.login === me),
   };
@@ -129,7 +138,7 @@ export async function pendingReview(owner, repo, number) {
 // The pull request behind a local branch, if one is open (or the newest closed one).
 export async function prForBranch(owner, repo, branch) {
   if (!branch || branch === 'HEAD') return null;
-  const list = (await ghJson(['pr', 'list', '--repo', `${owner}/${repo}`, '--head', branch, '--state', 'all', '--limit', '10', '--json', 'number,state,headRefOid,updatedAt,headRepositoryOwner,headRepository,isCrossRepository']).catch(() => []))
+  const list = (await ghJson(['pr', 'list', '--repo', `${owner}/${repo}`, '--head', branch, '--state', 'all', '--limit', '10', '--json', 'number,state,headRefOid,updatedAt,headRepositoryOwner,headRepository,isCrossRepository']))
     // Only a PR from this repository's own branch: a fork can have a branch of the same name.
     .filter((p) => !p.isCrossRepository && (!p.headRepositoryOwner?.login || p.headRepositoryOwner.login.toLowerCase() === owner.toLowerCase()));
   const pick = list.find((p) => p.state === 'OPEN') || list.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0];

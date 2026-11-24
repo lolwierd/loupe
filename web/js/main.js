@@ -60,7 +60,7 @@ Object.assign(hooks, {
     if (S.tab !== 'chat') renderPanel();
   },
   threadsChanged: (p) => { updateCard(p); renderTree(); renderTabs(); renderGo(); if (S.tab === 'review') renderPanel(); },
-  githubChanged: () => { renderAllBodies(); renderTabs(); renderGo(); if (S.tab !== 'chat' && !document.activeElement?.closest?.('#pbody .composer')) renderPanel(); },
+  githubChanged: () => { hooks.reviewActionsChanged?.(); renderAllBodies(); renderTabs(); renderGo(); if (S.tab !== 'chat' && !document.activeElement?.closest?.('#pbody .composer')) renderPanel(); },
 });
 
 // ------------------------------------------------------------------ theme
@@ -684,7 +684,10 @@ function listenHome() {
 function commands() {
   if (!S.ws) return [];
   const m = S.ws;
-  const next = (S.acts || []).filter((a) => !a.disabled).map((a) => ({ group: 'NEXT', label: a.label, run: () => doAct(a) }));
+  const next = (S.acts || []).filter((a) => !a.disabled).map((a) => ({ group: 'NEXT', label: a.label, run: () => {
+    const current = S.acts?.find((x) => x.label === a.label && !x.disabled);
+    if (current) doAct(current); else toast('That step has changed: pick again.');
+  } }));
   const pr = S.github?.pr, isPr = m.kind === 'pr', local = m.kind === 'local';
   const cur = S.current && fileOf(S.current), name = S.current?.split('/').pop();
   const panel = (tab) => () => { setPane('panel', true); setTab(tab); };

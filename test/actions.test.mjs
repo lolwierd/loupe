@@ -43,6 +43,43 @@ function workspace() {
 const approval = { event: 'APPROVE' };
 const draft = { id: 'review', comments: [{ id: 1, nodeId: 'comment', body: 'draft', path: 'file', line: 1 }] };
 
+test('a fresh read prevents resubmitting either verdict on the same head', async () => {
+  for (const event of ['APPROVE', 'REQUEST_CHANGES']) {
+    const ws = workspace();
+    const payload = { event, body: 'review summary' };
+    const { guard } = await ACTIONS.review.preview(ws, payload);
+    ws.github.pr.viewerReview = { event, head: 'head' };
+    await assert.rejects(ACTIONS.review.run(ws, payload, guard), /already/);
+    await ACTIONS.review.preview(ws, { ...payload, event: 'COMMENT' });
+    await ACTIONS.review.preview(ws, { ...payload, event: event === 'APPROVE' ? 'REQUEST_CHANGES' : 'APPROVE' });
+    ws.github.pr.headRefOid = 'new head';
+    await ACTIONS.review.preview(ws, payload);
+  }
+});
+
+test('the viewer verdict follows GitHub reviews across comments, dismissal and a new verdict', async () => {
+  const { viewerReview } = await import('../src/github.mjs');
+  const row = (state, day, login = 'me') => ({ state, author: { login }, submittedAt: `2026-11-0${day}T00:00:00Z`, commit: { oid: `head-${day}` } });
+  const approved = row('APPROVED', 1);
+  const commented = row('COMMENTED', 2);
+  const unrelated = row('CHANGES_REQUESTED', 3, 'other');
+  assert.equal(viewerReview([unrelated, commented, approved], 'Me').head, 'head-1');
+  assert.equal(viewerReview([approved, commented, row('DISMISSED', 4)], 'me'), null);
+  assert.equal(viewerReview([approved, row('CHANGES_REQUESTED', 5)], 'me').event, 'REQUEST_CHANGES');
+});
+
+test('resolve and reopen reject a thread changed elsewhere after preview', async () => {
+  for (const resolved of [true, false]) {
+    const ws = workspace();
+    const thread = { id: 'thread', path: 'file', resolved: !resolved, canResolve: true, canUnresolve: true };
+    ws.github.threads = [thread];
+    const payload = { threadId: thread.id, resolved };
+    const { guard } = await ACTIONS.resolve.preview(ws, payload);
+    ws.fetchGithub = async () => { thread.resolved = resolved; return ws.github; };
+    await assert.rejects(ACTIONS.resolve.run(ws, payload, guard), /already/);
+  }
+});
+
 test('submit refuses stale GitHub data, changes to the PR head, and a changed verdict', async () => {
   for (const change of ['stale', 'head', 'verdict']) {
     const ws = workspace();

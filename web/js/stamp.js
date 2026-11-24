@@ -115,6 +115,7 @@ function stampBig(v) {
 // The verdict that belongs here: yours, an approval, on this pull request.
 const verdict = () => {
   const v = S.review?.verdict, p = S.github?.pr, repo = String(S.github?.repoFull || '').toLowerCase();
+  if (p?.viewer && 'viewerReview' in p) return p.viewerReview?.event === 'APPROVE' ? p.viewerReview : null;
   return v?.event === 'APPROVE' && p && v.number === p.number && v.head && (!v.repo || v.repo.toLowerCase() === repo) ? v : null;
 };
 export function impressionHTML() {

@@ -75,6 +75,9 @@ const review = {
     if (t.pr.state !== 'OPEN') throw fail(`#${t.number} is ${t.pr.state.toLowerCase()}`);
     if (event !== 'COMMENT' && t.pr.viewerIsAuthor) throw fail('GitHub does not let you approve or request changes on your own pull request');
     const head = t.pr.headRefOid;
+    if (head && t.pr.viewerReview?.head === head && t.pr.viewerReview.event === event) {
+      throw fail(event === 'APPROVE' ? 'you already approved this commit' : 'you already requested changes on this commit');
+    }
     if (ws.github.pendingError) await ws.fetchGithub(true).catch(() => {}); // one fresh read before refusing
     if (ws.github.pendingError) throw fail('GitHub could not confirm your pending review: try again');
     const pend = ws.github.pending;
@@ -213,11 +216,14 @@ const resolve = {
   async preview(ws, { threadId, resolved }) {
     const th = (ws.github?.threads || []).find((x) => x.id === threadId);
     if (!th) throw fail('that thread is not on the PR any more');
+    if (th.resolved === resolved) throw fail(resolved ? 'that thread is already resolved' : 'that thread is already open');
     if (resolved ? !th.canResolve : !th.canUnresolve) throw fail(`GitHub does not let you ${resolved ? 'resolve' : 'reopen'} that thread`);
     const t = target(ws);
     return { title: `${resolved ? 'Resolve' : 'Reopen'} the thread on ${th.path}`, where: 'on GitHub', confirm: resolved ? 'Resolve' : 'Reopen', items: [], guard: { repo: `${t.owner}/${t.repo}`, number: t.number } };
   },
   async run(ws, { threadId, resolved }, guard) {
+    const fresh = await ws.fetchGithub(true).catch(() => null);
+    if (!fresh?.pr || fresh.stale) throw fail('GitHub could not confirm the thread state: try again');
     sameTarget(ws, guard);
     await this.preview(ws, { threadId, resolved });
     await gh(['api', 'graphql', '-f', `query=${resolved ? RESOLVE : UNRESOLVE}`, '-f', `id=${threadId}`]);
@@ -335,6 +341,7 @@ const push = {
     const to = `${st.remote} ${st.dest.replace(/^refs\/heads\//, '')}`;
     const guard = { head: st.head, branch: st.branch, remote: st.remote, dest: st.dest, remoteSha: st.remoteSha };
     const diverged = st.behind > 0;
+    if (diverged && st.ahead === 0) throw fail(`${st.remoteRef} already contains this commit: pull the branch first`);
     if (diverged && !force) return { title: `Push ${st.branch}`, where: `to ${to}`, confirm: 'Push', needsForce: true, items: [], warnings: [`${st.remoteRef} has ${st.behind} commit${st.behind === 1 ? '' : 's'} your branch does not (a rebase or an amend). Pushing means overwriting them.`], guard };
     if (!diverged && st.ahead === 0 && st.remoteSha) throw fail(`${st.branch} is already up to date on ${st.remoteRef}`);
     // the commits that go: the ones no ref of that remote has, as this checkout last fetched it (a ref deleted there
@@ -355,6 +362,7 @@ const push = {
     const st = await shipState(local(ws));
     if (st.onDefault) throw fail(`refusing to push ${st.branch} from here`);
     for (const k of ['head', 'branch', 'remote', 'dest', 'remoteSha']) if (st[k] !== guard?.[k]) throw fail('the branch, its remote or its upstream moved since the preview: look again');
+    if (st.remoteSha && st.ahead === 0) throw fail('the remote already contains this commit');
     // The exact destination the preview named; an overwrite only with a lease on the exact commit it showed.
     // The local branch ref (so -u can track it), checked a moment ago to be at the previewed commit.
     const argv = ['push', ...(st.upstream ? [] : ['-u']), st.remote, `refs/heads/${st.branch}:${st.dest}`];
@@ -384,6 +392,8 @@ const openpr = {
     };
   },
   async run(ws, payload, guard) {
+    const fresh = await ws.fetchGithub(true).catch(() => null);
+    if (!fresh || fresh.stale || fresh.error) throw fail('GitHub could not confirm whether this branch already has a pull request: try again');
     const pv = await this.preview(ws, payload);
     for (const k of ['head', 'branch', 'remoteSha', 'base', 'repo']) if (pv.guard[k] !== guard?.[k]) throw fail('the branch moved since the preview: look again');
     const out = await exec(BIN.gh, ['pr', 'create', '--repo', guard.repo, '--head', guard.branch, '--base', guard.base, `--title=${payload.title.trim()}`, '--body-file', '-', ...(payload.draft === false ? [] : ['--draft'])], { cwd: ws.rec.root, input: payload.body || '', timeout: 120000 });
@@ -398,9 +408,16 @@ const stacklink = {
   modal: true,
   async preview(ws, { stackNumber, pr }) {
     if (!Number(stackNumber) || !Number(pr)) throw fail('which stack and which PR?', 400);
-    return { title: `Add #${pr} to GitHub stack #${stackNumber}`, where: `on GitHub (${ws.github?.repoFull || ''})`, confirm: 'Add to stack', items: [`#${pr} goes on top of the stack`], warnings: [], guard: {} };
+    const repo = ws.github?.repoFull;
+    if (!repo) throw fail('this checkout has no GitHub remote');
+    const stacks = await GH.ghJson(['api', `repos/${repo}/stacks?pull_request=${Number(pr)}`]);
+    const existing = stacks.find((s) => s.pull_requests?.some((p) => p.number === Number(pr)));
+    if (existing) throw fail(`#${pr} is already in stack #${existing.number}`);
+    return { title: `Add #${pr} to GitHub stack #${stackNumber}`, where: `on GitHub (${repo})`, confirm: 'Add to stack', items: [`#${pr} goes on top of the stack`], warnings: [], guard: { repo, stackNumber: Number(stackNumber), pr: Number(pr) } };
   },
-  async run(ws, { stackNumber, pr }) {
+  async run(ws, { stackNumber, pr }, guard) {
+    const pv = await this.preview(ws, { stackNumber, pr });
+    if (Object.keys(pv.guard).some((k) => pv.guard[k] !== guard?.[k])) throw fail('the stack or pull request changed since the preview: look again');
     await exec(BIN.gh, ['stack', 'link', String(Number(stackNumber)), String(Number(pr))], { cwd: ws.rec.root || ws.gitDir, timeout: 120000 });
     return { message: `#${pr} is in stack #${stackNumber} now.` };
   },

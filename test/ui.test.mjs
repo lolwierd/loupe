@@ -4,6 +4,29 @@ import fs from 'node:fs';
 import { attemptFileNotes, eligibleForNotes, fileNoteKey, filesNeedingNotes, resetNotesAttempt, currentNotes } from '../web/js/file-notes.js';
 import { buildSplit, rangeLabel, selText } from '../web/js/diff.js';
 import vm from 'node:vm';
+import { currentReviewEvent, hasPendingReview } from '../web/js/review-state.js';
+
+test('next actions advance past a verdict already given and still offer pending work', () => {
+  const source = fs.readFileSync(new URL('../web/js/acts.js', import.meta.url), 'utf8');
+  const code = source.slice(source.indexOf('export function nextActs()'), source.indexOf('// A disabled act')).replace('export ', '');
+  const pr = { state: 'OPEN', number: 7, headRefOid: 'head', viewerReview: { event: 'APPROVE', head: 'head' }, url: 'https://example.test' };
+  const S = { ws: { kind: 'pr' }, github: { pr } };
+  const next = vm.runInNewContext(code + '\nnextActs', { S, currentReviewEvent, hasPendingReview, canMerge: () => false });
+  const labels = () => Array.from(next(), (a) => a.label);
+  assert.deepEqual(labels(), ['Comment on #7', 'Request changes', 'Open on GitHub']);
+  S.github.pending = { body: 'Summary drafted on GitHub', comments: [] };
+  assert.deepEqual(labels(), ['Submit review', 'Comment on #7', 'Request changes', 'Open on GitHub']);
+  S.github.pending = null;
+  pr.viewerReview.event = 'REQUEST_CHANGES';
+  assert.deepEqual(labels(), ['Comment on #7', 'Approve', 'Open on GitHub']);
+  pr.headRefOid = 'next';
+  assert.deepEqual(labels(), ['Submit review', 'Comment on #7', 'Approve', 'Request changes', 'Open on GitHub']);
+  S.ws.kind = 'local';
+  pr.headRefName = 'topic';
+  pr.headRefOid = 'head';
+  S.ship = { branch: 'topic', head: 'head', remoteSha: 'remote', ahead: 0, behind: 1, repo: 'owner/repo' };
+  assert.deepEqual(labels(), ['Open #7', 'Approve']);
+});
 
 test('a preview finishing after navigation never sends its write to the next workspace', async () => {
   const source = fs.readFileSync(new URL('../web/js/actions.js', import.meta.url), 'utf8')

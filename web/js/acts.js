@@ -9,6 +9,7 @@ import { menu, canMerge } from './ui.js';
 import { icon } from './pixel.js';
 import { hooks } from './hooks.js';
 import { meter } from './meter.js';
+import { currentReviewEvent, hasPendingReview } from './review-state.js';
 
 export const liveConv = () => S.review.chats.map(convOf).find((c) => c?.linked?.live && !c.linked.offline) || null;
 
@@ -16,6 +17,8 @@ export const liveConv = () => S.review.chats.map(convOf).find((c) => c?.linked?.
 export function nextActs() {
   const m = S.ws, p = S.github?.pr, st = S.ship;
   const pend = S.github?.pending?.comments?.length || 0;
+  const pending = hasPendingReview(S.github);
+  const event = currentReviewEvent(p);
   const acts = [];
   const reviewAct = { label: pend ? `Submit review · ${pend}` : 'Submit review', sheet: ['review', {}] };
   // a pull request you wrote, or one assigned to you, is yours to answer, not to review: its review acts appear only to
@@ -26,21 +29,25 @@ export function nextActs() {
     // so that is the first act; someone else's is theirs to merge
     if (canMerge(p) && (p.viewerIsAuthor || p.viewerIsAssignee)) acts.push({ label: 'Merge on GitHub', run: () => window.open(p.url, '_blank', 'noopener') });
     if (p?.state === 'OPEN') {
-      if (!own || pend) acts.push(reviewAct);
-      if (!own) acts.push({ label: 'Approve', sheet: ['review', { event: 'APPROVE' }] }, { label: 'Request changes', sheet: ['review', { event: 'REQUEST_CHANGES' }] });
+      if (pending || (!own && !event)) acts.push(reviewAct);
       acts.push({ label: `Comment on #${p.number}`, run: () => hooks.focusComment?.() });
+      if (!own && event !== 'APPROVE') acts.push({ label: 'Approve', sheet: ['review', { event: 'APPROVE' }] });
+      if (!own && event !== 'REQUEST_CHANGES') acts.push({ label: 'Request changes', sheet: ['review', { event: 'REQUEST_CHANGES' }] });
     }
     if (p?.url) acts.push({ label: 'Open on GitHub', run: () => window.open(p.url, '_blank', 'noopener') });
     return acts;
   }
   // a checkout of an open PR's branch can review it from here too; pending comments put it first
-  if (p?.state === 'OPEN' && pend) acts.push(reviewAct);
+  if (p?.state === 'OPEN' && pending) acts.push(reviewAct);
   if (st && !st.error) {
     if (st.wip?.length) acts.push({ label: `Commit ${plural(st.wip.length, 'file')}`, sheet: ['commit', {}] });
-    if (!st.onDefault && st.head && (st.ahead > 0 || !st.remoteSha || st.behind > 0)) acts.push({ label: st.behind > 0 ? 'Overwrite the remote…' : !st.remoteSha ? 'Push the branch' : `Push ${plural(st.ahead, 'commit')}`, tone: st.behind > 0 ? 'danger' : '', sheet: ['push', {}] });
-    if (st.pr?.state === 'OPEN') acts.push({ label: `Open #${st.pr.number}`, run: () => hooks.openPrHere?.(st.pr.url) });
-    else if (st.repo && !st.onDefault) acts.push({ label: 'Open a pull request', sheet: ['openpr', {}], disabled: st.remoteSha && st.ahead === 0 ? '' : 'Push the branch first' });
-    if (p?.state === 'OPEN' && !pend && !own) acts.push(reviewAct);
+    if (!st.onDefault && st.head && (st.ahead > 0 || !st.remoteSha)) acts.push({ label: st.behind > 0 ? 'Overwrite the remote…' : !st.remoteSha ? 'Push the branch' : `Push ${plural(st.ahead, 'commit')}`, tone: st.behind > 0 ? 'danger' : '', sheet: ['push', {}] });
+    const pr = p?.headRefName === st.branch ? p : st.pr;
+    if (pr?.state === 'OPEN') acts.push({ label: `Open #${pr.number}`, run: () => hooks.openPrHere?.(pr.url) });
+    else if (st.repo && !st.onDefault) acts.push({ label: 'Open a pull request', sheet: ['openpr', {}], disabled: st.behind > 0 ? 'Pull the branch first' : st.remoteSha && st.ahead === 0 ? '' : 'Push the branch first' });
+    if (p?.state === 'OPEN' && !pending && !own && !event) acts.push(reviewAct);
+    if (pr?.state === 'OPEN' && !own && event === 'APPROVE') acts.push({ label: 'Request changes', sheet: ['review', { event: 'REQUEST_CHANGES' }] });
+    if (pr?.state === 'OPEN' && !own && event === 'REQUEST_CHANGES') acts.push({ label: 'Approve', sheet: ['review', { event: 'APPROVE' }] });
     if (S.lastPr && S.stack?.stackNumber && !S.stack.items.some((i) => i.pr === S.lastPr && !i.notInStack)) acts.push({ label: `Add #${S.lastPr} to stack #${S.stack.stackNumber}`, sheet: ['stacklink', { stackNumber: S.stack.stackNumber, pr: S.lastPr }] });
   }
   return acts;

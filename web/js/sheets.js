@@ -12,6 +12,7 @@ import { flipCommitId } from './receipt.js';
 import { hooks } from './hooks.js';
 import './plate.js'; // what opens over the page pulls a plate of it
 import { modelKind, runBtn, runOf } from './ui.js';
+import { reviewEventBlock } from './review-state.js';
 
 // ------------------------------------------------------------------ the branch, read from git (checkouts only)
 let loading = null;
@@ -58,6 +59,7 @@ function commitsHTML() {
 
 // ------------------------------------------------------------------ the dialogs
 const EVENTS = [['COMMENT', 'Comment'], ['REQUEST_CHANGES', 'Request changes'], ['APPROVE', 'Approve']];
+const reviewDraft = () => S.reviewDraft ?? S.github?.pending?.body ?? '';
 // How hard each write is to undo, which is how heavy the tone screen behind its dialog is: a commit stays on this
 // machine and can be amended; the rest go where other people read them; a push that overwrites the remote is
 // destructive, for as long as its latest preview says it will (refresh() sets it again on every preview).
@@ -69,10 +71,12 @@ const SHEETS = {
     title: (c) => { const n = S.github?.number || S.ws?.pr?.number, repo = S.github?.repoFull || S.ws?.repoFull, f = n && repo ? `${repo}#${n}` : 'the pull request'; return c.opts.event === 'APPROVE' ? `Approve ${f}` : `${EVENTS.find(([e]) => e === c.opts.event)?.[1] || 'Comment'} on ${f}`; }, focus: 'textarea',
     idle: (c) => EVENTS.find(([e]) => e === c.opts.event)?.[1] || 'Submit',
     form(c) {
-      const p = S.github?.pr, own = !!p?.viewerIsAuthor;
-      if (own || !c.opts.event) c.opts.event = own ? 'COMMENT' : c.opts.event || 'COMMENT';
-      return `<div class="seg verdict" id="shev" role="group" aria-label="Verdict">${EVENTS.map(([e, l]) => `<button data-ev="${e}" aria-pressed="${c.opts.event === e}"${own && e !== 'COMMENT' ? ' disabled title="Not on your own pull request"' : ''}>${l}</button>`).join('')}</div>` +
-        `<div class="box"><textarea class="body prose" rows="6" data-f="reviewDraft" placeholder="What you think of the change as a whole. GitHub needs it for Comment and Request changes." aria-label="Review summary">${esc(S.reviewDraft || '')}</textarea></div>` +
+      return `<div class="seg verdict" id="shev" role="group" aria-label="Verdict">${EVENTS.map(([e, l]) => {
+        const block = reviewEventBlock(S.github?.pr, e);
+        const label = block && !S.github?.pr?.viewerIsAuthor ? (e === 'APPROVE' ? 'Approved' : 'Changes requested') : l;
+        return `<button data-ev="${e}" aria-pressed="${c.opts.event === e}"${block ? ` disabled title="${esc(block)}"` : ''}>${label}</button>`;
+      }).join('')}</div>` +
+        `<div class="box"><textarea class="body prose" rows="6" data-f="reviewDraft" placeholder="What you think of the change as a whole. GitHub needs it for Comment and Request changes." aria-label="Review summary">${esc(reviewDraft())}</textarea></div>` +
         `<p class="note">${(() => { const n = S.github?.pending?.comments?.length || 0; return n ? `${plural(n, 'comment')} on lines go${n === 1 ? 'es' : ''} with it: your pending review on GitHub.` : 'No comments on lines yet: select lines and press c to add one.'; })()}</p>`;
     },
     bind(c, el) {
@@ -84,8 +88,8 @@ const SHEETS = {
         refreshSoon();
       });
     },
-    payload: (c) => ({ event: c.opts.event, body: S.reviewDraft || '' }),
-    after(r, c, payload) { S.reviewDraft = ''; if (payload.event === 'APPROVE') hooks.stamp?.({ head: r.head, at: Date.now() }); },
+    payload: (c) => ({ event: c.opts.event, body: reviewDraft() }),
+    after(r, c, payload) { S.reviewDraft = undefined; if (payload.event === 'APPROVE') hooks.stamp?.({ head: r.head, at: Date.now() }); },
   },
   commit: {
     title: () => `${S.shipAmend ? 'Amend the last commit' : `Commit ${plural(picked().length, 'file')}`} on ${(S.shipBranch || '').trim() || S.ship?.branch || 'this branch'}`, focus: '[data-m="subj"]',
@@ -182,6 +186,11 @@ const titleOf = (c) => (typeof c.def.title === 'function' ? c.def.title(c) : c.d
 export function openSheet(kind, opts = {}) {
   const def = SHEETS[kind];
   if (!def || !S.ws) return;
+  if (kind === 'review') {
+    if (S.github?.pr?.state !== 'OPEN') return;
+    if (!opts.event || reviewEventBlock(S.github.pr, opts.event)) opts = { ...opts, event: 'COMMENT' };
+    S.reviewDraft ??= reviewDraft();
+  }
   if ((kind === 'commit' || kind === 'openpr') && !S.ship?.wip) { loadShip().then(() => S.ship?.wip && openSheet(kind, opts)); return; }
   if (kind === 'commit' && cur?.kind !== 'commit') S.shipAmend = false;
   closeSheet();
@@ -212,6 +221,23 @@ export function closeSheet() {
   opener = null;
 }
 export const sheetOpen = () => !!cur;
+
+hooks.reviewActionsChanged = () => {
+  const c = cur;
+  if (c?.kind !== 'review' || c.sending) return;
+  const pr = S.github?.pr;
+  if (pr?.state !== 'OPEN') return closeSheet();
+  for (const [event, label] of EVENTS) {
+    const b = c.el.querySelector(`[data-ev="${event}"]`);
+    const block = reviewEventBlock(pr, event);
+    b.disabled = !!block;
+    b.title = block;
+    b.textContent = block && !pr.viewerIsAuthor ? (event === 'APPROVE' ? 'Approved' : 'Changes requested') : label;
+  }
+  if (reviewEventBlock(pr, c.opts.event)) {
+    c.el.querySelector('[data-ev="COMMENT"]').click();
+  }
+};
 
 // where it goes, said short: a checkout's path keeps its last two folders (the full path is in the title)
 // a sentence starts with a capital, except when it starts with the branch's name: that is a name, and names keep their case
@@ -263,7 +289,7 @@ async function refresh() {
 }
 async function go() {
   const c = cur;
-  if (!c?.pv || c.sending || S.id !== c.id) return;
+  if (!c?.pv || c.sending || S.id !== c.id || c.el.querySelector('[data-sh="go"]').disabled) return;
   if (c.pv.needsForce) { c.opts.force = true; return refresh(); }
   const payload = c.def.payload(c);
   if (JSON.stringify(payload) !== c.key) return refresh(); // changed since its preview: read it again, then you decide
