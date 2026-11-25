@@ -421,8 +421,8 @@ async function restoreSpot(s, current) {
 }
 // Which file you are reading: the last card whose top is above the line 90 px down, except when a guide heading sits
 // between it and the line, which means you are at the start of the heading's first file.
-let spyCards, centeredFile;
-hooks.cardVisibilityChanged = () => { spyCards = null; centeredFile = null; };
+let spyCards, centeredFile, pagedFile;
+hooks.cardVisibilityChanged = () => { spyCards = null; centeredFile = null; pagedFile = null; };
 function spyNow() {
   const c = $('#center');
   if (!c) return;
@@ -465,49 +465,71 @@ function onScroll() {
 }
 // ] passes the end of the current file before marking it. [ returns to the starting position.
 let advance;
-hooks.cancelAdvance = () => { advance?.abort(); centeredFile = null; };
+hooks.cancelAdvance = () => { advance?.abort(); centeredFile = null; pagedFile = null; };
 function scrollForReview(center, top, signal) {
   top = Math.max(0, Math.min(top, center.scrollHeight - center.clientHeight));
-  if (Math.abs(center.scrollTop - top) <= 1 || signal.aborted) return Promise.resolve(!signal.aborted);
+  const start = center.scrollTop, distance = top - start;
+  if (Math.abs(distance) <= 1 || signal.aborted) return Promise.resolve(!signal.aborted);
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
     center.scrollTo({ top, behavior: 'instant' });
     return Promise.resolve(true);
   }
+  const duration = Math.max(650, Math.min(4000, Math.abs(distance) / 0.65));
   return new Promise((resolve) => {
-    const abort = () => {
-      center.scrollTo({ top: center.scrollTop, behavior: 'instant' });
-      finish();
+    let frame, lastFrame, elapsed = 0;
+    const finish = (arrived) => {
+      cancelAnimationFrame(frame);
+      signal.removeEventListener('abort', cancel);
+      center.removeEventListener('wheel', cancel);
+      center.removeEventListener('touchstart', cancel);
+      center.removeEventListener('pointerdown', cancel);
+      resolve(arrived);
     };
-    const finish = () => {
-      clearTimeout(timeout);
-      center.removeEventListener('scrollend', finish);
-      signal.removeEventListener('abort', abort);
-      resolve(!signal.aborted && Math.abs(center.scrollTop - top) <= 1);
+    const cancel = () => finish(false);
+    const step = (now) => {
+      elapsed += Math.min(50, now - (lastFrame ?? now));
+      lastFrame = now;
+      const progress = Math.min(1, elapsed / duration);
+      const eased = progress * progress * (3 - 2 * progress);
+      center.scrollTo({ top: start + distance * eased, behavior: 'instant' });
+      if (progress === 1) return finish(Math.abs(center.scrollTop - top) <= 1);
+      frame = requestAnimationFrame(step);
     };
-    const timeout = setTimeout(finish, 1200);
-    center.addEventListener('scrollend', finish, { once: true });
-    signal.addEventListener('abort', abort, { once: true });
-    center.scrollTo({ top, behavior: 'smooth' });
+    signal.addEventListener('abort', cancel, { once: true });
+    center.addEventListener('wheel', cancel, { passive: true });
+    center.addEventListener('touchstart', cancel, { passive: true });
+    center.addEventListener('pointerdown', cancel);
+    frame = requestAnimationFrame(step);
   });
 }
 async function nextLeft() {
   if (advance) return;
-  const cur = S.current, f = cur && fileOf(cur);
-  const next = nextUnviewed();
+  const center = $('#center');
+  const priorPage = pagedFile && Math.abs(center.scrollTop - pagedFile.top) <= 1 ? pagedFile : null;
+  const cur = priorPage?.path || S.current, f = cur && fileOf(cur);
+  const files = visibleFiles(), index = files.indexOf(cur);
+  const to = files[index + 1];
   const marking = !!(f && !isViewed(f) && f.kind !== 'generated');
-  const to = next && next !== cur ? next : null;
-  if (!marking && !to) return toast('Every file is viewed.');
-  const from = cardEl(cur), target = cardEl(to), center = $('#center');
+  if (!marking && !to) return;
+  const from = cardEl(cur), target = cardEl(to), cards = $('#cards');
+  const fromWasFolded = from?.classList.contains('shut');
+  const priorPadding = cards.style.paddingTop;
   const targetWasFolded = target?.classList.contains('shut');
   const controller = new AbortController();
   const { signal } = controller;
-  const restoreFold = () => { if (targetWasFolded && cardEl(to) === target) toggleFold(to, true); };
+  let openedTarget = false;
+  const restoreFold = () => { if (openedTarget && cardEl(to) === target) toggleFold(to, true); };
   signal.addEventListener('abort', restoreFold, { once: true });
   let marked = false, arrived = false;
   const entry = remember(() => {
     controller.abort();
     centeredFile = null;
-    if (marked) return setViewed(cur, false, { fold: false });
+    pagedFile = priorPage;
+    if (marked) {
+      cards.style.paddingTop = priorPadding;
+      toggleFold(cur, fromWasFolded);
+      return setViewed(cur, false, { fold: false });
+    }
   });
   const request = fileRequest;
   const current = () => !signal.aborted && request === fileRequest && (!from || cardEl(cur) === from) &&
@@ -519,22 +541,41 @@ async function nextLeft() {
     closeViewer();
     if (from && !from.classList.contains('shut')) await loadFile(cur);
     if (!current()) return;
+    const destination = target ? midpoint() :
+      from ? position(from.getBoundingClientRect().bottom) - center.clientHeight / 2 : center.scrollTop;
+    const step = center.scrollTop + center.clientHeight * 0.8;
+    if (destination > step) {
+      arrived = await scrollForReview(center, step, signal) && current();
+      if (arrived) pagedFile = { path: cur, top: center.scrollTop };
+      return;
+    }
     if (target) {
-      if (targetWasFolded) toggleFold(to, false);
+      if (targetWasFolded) {
+        toggleFold(to, false);
+        openedTarget = true;
+      }
       await loadFile(to);
     }
     if (!current()) return;
-    if (from && (!target || target.getBoundingClientRect().top < from.getBoundingClientRect().top)) {
-      const end = position(from.getBoundingClientRect().bottom) - center.clientHeight / 2;
-      if (end > center.scrollTop && !await scrollForReview(center, end, signal)) return;
-    }
+    if (!target && destination > center.scrollTop &&
+        !await scrollForReview(center, destination, signal)) return;
     if (target && !await scrollForReview(center, midpoint(), signal)) return;
     if (!current()) return;
+    if (target && midpoint() > center.scrollTop + 1) {
+      pagedFile = { path: cur, top: center.scrollTop };
+      arrived = true;
+      return;
+    }
+    pagedFile = null;
     if (marking && !isViewed(f)) {
       marked = true;
+      toggleFold(cur, true);
       setViewed(cur, true, { fold: false });
     }
     if (target) {
+      if (marked && midpoint() < 0) {
+        cards.style.paddingTop = `${(parseFloat(priorPadding) || 0) - midpoint()}px`;
+      }
       center.scrollTo({ top: midpoint(), behavior: 'instant' });
       centeredFile = target;
       spyNow();
@@ -795,7 +836,7 @@ function commands() {
   const c = [
     ...next,
     { group: 'READ', label: 'Search the repository', key: 'f', run: openRepositorySearch },
-    { group: 'READ', label: 'Scroll to the next unread file and mark this one viewed', key: ']', run: () => nextLeft() },
+    { group: 'READ', label: 'Scroll through this file and mark it viewed', key: ']', run: () => nextLeft() },
     cur && { group: 'READ', label: `${isViewed(cur) ? 'Unmark' : 'Mark'} ${name} viewed`, key: 'v', run: () => setViewed(S.current, !isViewed(cur)) },
     { group: 'READ', label: 'Next file', key: 'j', run: () => stepFile(1) },
     { group: 'READ', label: 'Previous file', key: 'k', run: () => stepFile(-1) },
@@ -1185,7 +1226,7 @@ function keySheet() {
   const m = (mods, action, what) => `<div class="kr"><span class="k">${mods.map((x) => `<kbd>${x}</kbd>`).join('')}<span class="mouse">${action}</span></span><span class="w">${what}</span></div>`;
   const g = (title, rows) => `<section class="kg"><h3 class="sh">${title}</h3>${rows.join('')}</section>`;
   const scrim = h(`<div class="scrim"><div class="palette keysheet" role="dialog" aria-label="Keys"><div class="keys">
-    ${g('MOVING', [k(['j'], 'next file'), k(['k'], 'previous file'), k([']'], 'next unread file, then mark viewed'), k(['['], 'back: undo ], or a jump'), k(['/'], 'find a file'), k(['f'], 'search the repository'), k(['⌘', 'K'], 'do anything')])}
+    ${g('MOVING', [k(['j'], 'next file'), k(['k'], 'previous file'), k([']'], 'read on, then mark the file viewed'), k(['['], 'back: undo ], or a jump'), k(['/'], 'find a file'), k(['f'], 'search the repository'), k(['⌘', 'K'], 'do anything')])}
     ${g('REVIEWING', [k(['v'], 'viewed, or not'), k(['o'], 'fold or unfold'), k(['s'], 'split or unified'), k(['g'], 'guide or tree order'), k(['m'], 'hide or show the marks'), k(['r'], 'read the change again')])}
     ${g('ON SELECTED LINES', [k(['a'], 'ask there'), k(['c'], 'comment for your review'), k(['l'], 'add them to the chat'), k(['↵'], 'send the question'), k(['⇧', '↵'], 'new line'), k(['⌘', '↵'], 'add the review comment'), k(['esc'], 'cancel')])}
     ${g('PANELS', [k(['1'], 'overview'), k(['2'], 'chat'), k(['3'], 'marks'), k(['t'], 'files'), k(['p'], 'inspector'), k(['?'], 'these keys')])}
