@@ -15,10 +15,12 @@ import { fileNoteKey } from '../web/js/file-notes.js';
 export const registry = new JsonFile(path.join(STATE_DIR, 'state.json'), { workspaces: [], last: null, clones: {}, ownSessions: [] });
 // Daemon-wide preferences, shown in the page's settings menu.
 // hiddenOrgs: owners whose PRs home leaves out (the page filters; the daemon only keeps the list).
+// blockedRepos: repositories loupe never opens (blockEntry says what an entry is; openTarget refuses them).
 export const settings = () => {
   const st = (registry.data.settings ||= { autoView: true, autoBrief: false });
   st.autoNotes ??= true;
   if (!Array.isArray(st.hiddenOrgs)) st.hiddenOrgs = [];
+  if (!Array.isArray(st.blockedRepos)) st.blockedRepos = [];
   return st;
 };
 const live = new Map(); // id -> Workspace
@@ -41,9 +43,94 @@ export function parseTarget(input, cwd = HOME) {
   return { kind: 'local', path: p };
 }
 
+// owner/repo of a remote on github.com itself: https://, ssh:// or git:// (a user and port allowed), or user@github.com:
 function githubRepoOf(url) {
-  const m = /github\.com[:/]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i.exec(String(url || '').trim());
+  const m = /^(?:(?:https?|ssh|git):\/\/(?:[^@/]+@)?(?:www\.)?github\.com(?::\d+)?\/|(?:[^@/:]+@)?github\.com:)([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i.exec(String(url || '').trim());
   return m ? { owner: m[1], repo: m[2] } : null;
+}
+// A path's real spelling: on a case-insensitive disk realpathSync keeps the caller's case, the native call does not.
+const realPath = (p) => { try { return fs.realpathSync.native(p); } catch { return p; } };
+
+// ------------------------------------------------------------------ the block list: repositories loupe never opens
+// An entry is a folder or a GitHub repository. A folder (a path starting with /, ~ or .) keeps out the checkouts at
+// or under it; a path inside a repository stands for the whole repository, so a file or subfolder names its checkout.
+// owner/repo (or its github.com link) keeps out its pull requests and every checkout whose remotes point at it.
+// Nothing (or ".") is the folder in cwd. Answers the entry as kept, or null when it is neither.
+export async function blockEntry(input, cwd = HOME) {
+  const s = String(input ?? '').trim().replace(/(.)\/+$/, '$1');
+  if (s.length > 1000) return null;
+  const gh = /^(?:(?:https?:\/\/)?(?:www\.)?github\.com\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/pulls?\/\d+[^?#]*)?\/?(?:[?#]\S*)?$/i.exec(s);
+  if (gh && !/^[.~/]/.test(s) && !/^\.+$/.test(gh[1]) && !/^\.+$/.test(gh[2])) return `${gh[1]}/${gh[2]}`.toLowerCase();
+  if (s && !/^[.~/]/.test(s)) return null;
+  const p = s.startsWith('~') ? path.join(HOME, s.slice(1)) : path.resolve(cwd, s || '.');
+  // the nearest folder that exists, read the way opening the path reads it (a file by the folder it sits in, its
+  // link not followed), and what is left of the path below it
+  let dir = p, rest = '';
+  while (!fs.existsSync(dir) && path.dirname(dir) !== dir) { rest = path.join(path.basename(dir), rest); dir = path.dirname(dir); }
+  if (!fs.statSync(dir).isDirectory()) {
+    if (rest) return null; // a path through a file names nothing
+    dir = path.dirname(dir);
+  }
+  const top = (await git(dir, ['rev-parse', '--show-toplevel']).catch(() => '')).trim();
+  return top ? realPath(top) : path.join(realPath(dir), rest).replace(/(.)\/+$/, '$1');
+}
+const isFolder = (e) => e.startsWith('/');
+// The entry that keeps out a checkout at root (its real path) with these GitHub repositories (lower-case owner/repo),
+// or null.
+function blockedBy(root, repos = []) {
+  const under = (dir) => root === dir || root.startsWith(dir.endsWith('/') ? dir : dir + '/');
+  for (const e of settings().blockedRepos) if (isFolder(e) ? root && (under(e) || under(realPath(e))) : repos.includes(e)) return e;
+  return null;
+}
+async function githubReposOf(root) {
+  const remotes = await git(root, ['remote', '-v']).catch(() => '');
+  return [...new Set(remotes.split('\n').map((l) => githubRepoOf(l.split(/\s+/)[1])).filter(Boolean).map((g) => `${g.owner}/${g.repo}`.toLowerCase()))];
+}
+// A checkout's entry: its remotes are read only when some entry is a GitHub repository.
+async function checkoutBlocked(root) {
+  const list = settings().blockedRepos;
+  if (!list.length) return null;
+  return blockedBy(realPath(root), list.some((e) => !isFolder(e)) ? await githubReposOf(root) : []);
+}
+export class Blocked extends Error {
+  constructor(what, entry) {
+    super(`${what} is on loupe's block list${what === entry ? '' : ` (as ${entry})`}. \`loupe unblock ${entry}\` lets it in again.`);
+    this.status = 403;
+    this.blocked = entry;
+  }
+}
+// Add an entry (opening what it covers is refused from now on, and what is open of it closes) or take one off.
+// Answers { entry, closed } or throws when the input is not an entry, or not on the list to take off.
+export async function block(input, cwd) {
+  const entry = await blockEntry(input, cwd);
+  if (!entry) throw Object.assign(new Error(`${input} is neither a folder (start it with /, ~ or .) nor a GitHub owner/repo`), { status: 400 });
+  const st = settings();
+  if (!st.blockedRepos.includes(entry)) st.blockedRepos.push(entry);
+  registry.save(true); // on disk before it is answered: a restart right after keeps it
+  return { entry, closed: await closeBlocked() };
+}
+// Close every workspace the block list covers: after a block, and when the daemon starts (a restart in the middle of
+// a block's closing leaves the rest for then). Answers the ids closed.
+export async function closeBlocked() {
+  const closed = [];
+  if (!settings().blockedRepos.length) return closed;
+  for (const rec of [...registry.data.workspaces]) {
+    const hit = rec.kind === 'pr' ? blockedBy(null, [`${rec.owner}/${rec.repo}`.toLowerCase()]) : await checkoutBlocked(rec.root);
+    // one that cannot be cleaned up (its worktree unremovable) does not stop the rest
+    if (hit && (await close(rec.id).catch((e) => { console.log(`loupe: closing ${rec.id}: ${e.message}`); return false; }))) closed.push(rec.id);
+  }
+  if (closed.length) registry.save(true);
+  return closed;
+}
+export async function unblock(input, cwd) {
+  const st = settings();
+  // the entry as written first (a folder gone since it was blocked no longer resolves the same way)
+  const raw = String(input ?? '').trim();
+  const entry = st.blockedRepos.includes(raw) ? raw : await blockEntry(input, cwd);
+  if (!entry || !st.blockedRepos.includes(entry)) throw Object.assign(new Error(`${entry || input} is not on loupe's block list`), { status: 404 });
+  st.blockedRepos = st.blockedRepos.filter((e) => e !== entry);
+  registry.save(true);
+  return { entry };
 }
 
 // A clone of owner/repo on this machine: a main checkout (not a linked worktree) whose remote points at it.
@@ -101,6 +188,8 @@ export async function openTarget(input, cwd, opts = {}) {
     t = { kind: 'pr', owner: gh.owner, repo: gh.repo, number: t.number };
   }
   if (t.kind === 'pr') {
+    const hit = blockedBy(null, [`${t.owner}/${t.repo}`.toLowerCase()]);
+    if (hit) throw new Blocked(`${t.owner}/${t.repo}`, hit);
     const id = `pr-${slug(t.owner)}-${slug(t.repo)}-${t.number}`;
     let rec = registry.data.workspaces.find((w) => w.id === id);
     if (!rec) {
@@ -119,6 +208,8 @@ export async function openTarget(input, cwd, opts = {}) {
   const top = (await git(dir, ['rev-parse', '--show-toplevel']).catch(() => '')).trim();
   if (!top) throw new Error(`${t.path} is not inside a git repository`);
   const root = fs.realpathSync(top);
+  const hit = await checkoutBlocked(root);
+  if (hit) throw new Blocked(root, hit);
   let rec = registry.data.workspaces.find((w) => w.kind === 'local' && w.root === root);
   if (!rec) {
     const base = slug(path.basename(root));

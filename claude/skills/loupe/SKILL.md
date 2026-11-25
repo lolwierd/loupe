@@ -27,6 +27,19 @@ A GitHub pull request link with `github.com` swapped for `l.local` opens in loup
 loupe's `extension/` folder (loaded unpacked) does it from GitHub itself: `g` then `l` on a pull request opens it in
 loupe, and a pull request link's right-click menu has "Open link in loupe".
 
+## Keep a repository out
+
+```sh
+loupe block [<folder | owner/repo>]   # none: the repository you're in; what is open of it closes
+loupe unblock <entry>                 # entries as `loupe blocked` lists them
+loupe blocked
+```
+
+A folder entry covers the checkouts at or under it (a path inside a repository stands for the whole repository);
+`owner/repo` covers its pull requests and every checkout whose remote points at it. Opening a blocked repository
+answers 403 by any route, and the mod drops it from the session's list. Home's footer lists the entries ("Never
+opened here") with a × to unblock; a row's menu has "Never open … here".
+
 ## What it writes by itself
 
 - **File notes:** one or two lines above each file that needs them, saying its part in the change. They are written as

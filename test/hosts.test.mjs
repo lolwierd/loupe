@@ -113,6 +113,68 @@ test('settings: hiddenOrgs is a validated list, and a bad one changes nothing', 
   assert.deepEqual(JSON.parse((await post({ hiddenOrgs: [] })).body).hiddenOrgs, []);
 });
 
+test('block list: a blocked repository is never opened, what is open of it closes, and unblock lets it in', async (t) => {
+  const jsonReq = (method, p, b) => req(method, p, { headers: { 'X-Loupe': '1', 'Content-Type': 'application/json' }, body: b && JSON.stringify(b) });
+  const settings = (b) => jsonReq('POST', '/api/settings', b);
+  const open = (target) => jsonReq('POST', '/api/workspaces', { target });
+  const repo = (name, remote) => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `loupe-${name}-`)));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' };
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root, env });
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'initial'], { cwd: root, env });
+    if (remote) execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: root, env });
+    fs.mkdirSync(path.join(root, 'deep/er'), { recursive: true });
+    return root;
+  };
+  const kept = repo('kept'), mirrored = repo('mirrored', 'git@github.com:Acme/Widgets.git'), free = repo('free');
+  const overSsh = repo('ssh', 'ssh://git@github.com:22/acme/widgets.git'), lookalike = repo('lookalike', 'https://notgithub.com/acme/widgets.git');
+
+  // a folder inside a repository stands for the repository; blocking closes what is open of it
+  const first = await open(kept);
+  assert.equal(first.status, 200);
+  const blocked = await settings({ block: './deep/er', cwd: kept });
+  assert.equal(blocked.status, 200, blocked.body);
+  const b = JSON.parse(blocked.body);
+  assert.equal(b.entry, kept);
+  assert.deepEqual(b.closed, [JSON.parse(first.body).id]);
+  assert.deepEqual(b.blockedRepos, [kept]);
+  const refused = await open(path.join(kept, 'deep'));
+  assert.equal(refused.status, 403);
+  assert.equal(JSON.parse(refused.body).blocked, kept);
+  assert.ok(!JSON.parse((await req('GET', '/api/state')).body).workspaces.some((w) => w.root === kept));
+  // blocking twice keeps one entry
+  assert.deepEqual(JSON.parse((await settings({ block: kept })).body).blockedRepos, [kept]);
+
+  // a path not made yet inside a repository is the repository; on a case-insensitive disk, any spelling of it
+  assert.equal(JSON.parse((await settings({ block: path.join(kept, 'not/yet') })).body).entry, kept);
+  if (process.platform === 'darwin') assert.equal(JSON.parse((await settings({ block: kept.toUpperCase() })).body).entry, kept);
+
+  // owner/repo (any case, or a github.com link, a PR's too) covers its pull requests and any checkout whose remote
+  // points at it on github.com, however the remote is written
+  assert.equal(JSON.parse((await settings({ block: 'https://github.com/acme/widgets/pull/12/files' })).body).entry, 'acme/widgets');
+  assert.equal(JSON.parse((await settings({ block: 'https://github.com/acme/widgets?tab=readme-ov-file#setup' })).body).entry, 'acme/widgets');
+  assert.equal(JSON.parse((await settings({ block: 'https://github.com/acme/widgets.git' })).body).entry, 'acme/widgets');
+  assert.equal((await open(mirrored)).status, 403);
+  assert.equal((await open(overSsh)).status, 403);
+  assert.equal((await open('ACME/Widgets#12')).status, 403);
+  assert.equal((await open(lookalike)).status, 200);
+  assert.equal((await open(free)).status, 200);
+
+  // what is neither a folder nor owner/repo, both at once, or something off the list, changes nothing
+  fs.writeFileSync(path.join(free, 'marker'), '');
+  for (const bad of [{ block: 'not a repo' }, { block: 'a/b/c' }, { block: 7 }, { block: 'x/y', unblock: 'x/y' }, { block: path.join(free, 'marker/typo') }]) assert.equal((await settings(bad)).status, 400, JSON.stringify(bad));
+  assert.equal((await settings({ unblock: 'acme/other' })).status, 404);
+  assert.deepEqual(JSON.parse((await req('GET', '/api/state')).body).settings.blockedRepos, [kept, 'acme/widgets']);
+
+  // unblock takes the entry as listed, or anything that resolves to it
+  assert.equal((await settings({ unblock: '.', cwd: path.join(kept, 'deep') })).status, 200);
+  assert.equal((await settings({ unblock: 'Acme/Widgets' })).status, 200);
+  assert.deepEqual(JSON.parse((await req('GET', '/api/state')).body).settings.blockedRepos, []);
+  assert.equal((await open(kept)).status, 200);
+  assert.equal((await open(mirrored)).status, 200);
+});
+
 test('direct local diff API requests refresh even without a page or a metadata request', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-local-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

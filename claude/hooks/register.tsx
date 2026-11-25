@@ -4,7 +4,8 @@
 //   /loupe open   the same, opened in the browser
 //   /loupe live   the browser's chat sends questions INTO this session (they arrive as prompts here, and the
 //                 answer goes back); /loupe off stops it
-// The first edit in a repository also puts it on loupe's home, linked to this session (no command needed).
+// The first edit in a repository also puts it on loupe's home, linked to this session (no command needed), unless
+// it is on loupe's block list (`loupe block`): then the session leaves it alone.
 // A row above the prompt offers the links once the session has edited something. Nothing opens unasked.
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
@@ -21,6 +22,8 @@ const links = atom({ plugin: 'loupe', key: 'links' } as const, [] as LoupeLink[]
 
 // Module state: it starts over on a reload, which only forgets a cache and, while live, which turn is ours.
 const roots = new Map<string, string | null>() // a directory -> the repository it is in
+const blocked = new Set<string>() // repositories loupe refused: on its block list
+const claimed = new Set<string>() // repositories whose first edit has been seen (two edits at once announce once)
 let poll: { cancel: () => void } | null = null
 let asking: string | null = null // a live question submitted here, waiting for its turn to end
 let inTurn: string | null = null // the live question the running turn answers
@@ -33,7 +36,7 @@ async function json($: any, path: string, init: { method?: string; body?: unknow
   })
   if (r.status === 204) return null
   const j = r.text ? JSON.parse(r.text) : {}
-  if (!r.ok) throw new Error(j.error || `loupe answered ${r.status}`)
+  if (!r.ok) throw Object.assign(new Error(j.error || `loupe answered ${r.status}`), { status: r.status, blocked: j.blocked })
   return j
 }
 const daemonDown = 'loupe is not running. Start it with `loupe service install` (or `loupe serve`), then try again.'
@@ -54,11 +57,21 @@ async function sessionTitle($: any): Promise<string> {
 }
 
 // A repository this session started editing: loupe opens it as a workspace (or finds the one it has) and links a
-// chat to this session, so home lists it with the session's name. Errors stay quiet: this runs on its own.
+// chat to this session, so home lists it with the session's name. Errors stay quiet: this runs on its own. One on
+// loupe's block list leaves this session's list too, so the row and /loupe never offer it.
 async function announce($: any, root: string): Promise<void> {
   try {
-    await json($, '/api/workspaces', { method: 'POST', body: { target: root, link: { sessionId: await $.session.id(), cwd: await $.session.cwd(), title: await sessionTitle($) } } })
-  } catch { /* loupe is down or refused: home simply will not show it */ }
+    const link = { sessionId: await $.session.id(), cwd: await $.session.cwd(), title: await sessionTitle($) }
+    if (blocked.has(root)) return // refused while the above was read
+    await json($, '/api/workspaces', { method: 'POST', body: { target: root, link } })
+  } catch (err: any) {
+    if (err?.blocked) await refused($, root)
+    /* otherwise loupe is down or refused: home simply will not show it */
+  }
+}
+async function refused($: any, root: string): Promise<void> {
+  blocked.add(root)
+  await update($, repos, (list) => list.filter((r) => r !== root)).catch(() => null)
 }
 
 // The repositories to open: the ones this session edited, else the one it runs in.
@@ -89,6 +102,7 @@ async function openAll($: any, { browser }: { browser: boolean }): Promise<strin
       lines.push(`- **${root.split('/').pop()}**${ws?.branch ? ` (${ws.branch}${ws.dirty ? `, ${ws.dirty} uncommitted` : ''})` : ''}: ${url}${files !== undefined ? `, ${files} files` : ''}`)
       if (browser) await $.process.run(['open', url]).catch(() => null)
     } catch (err: any) {
+      if (err?.blocked) await refused($, root)
       lines.push(`- ${root}: ${err?.message || err}`)
     }
   }
@@ -103,16 +117,23 @@ const tagOf = (id: string) => `(loupe question ${id.slice(0, 8)})`
 
 async function registerLive($: any): Promise<any> {
   const sessionId = await $.session.id()
-  return json($, '/api/live', { method: 'POST', body: { sessionId, cwd: await $.session.cwd(), title: await sessionTitle($), repos: await targets($) } })
+  const r = await json($, '/api/live', { method: 'POST', body: { sessionId, cwd: await $.session.cwd(), title: await sessionTitle($), repos: await targets($) } })
+  for (const w of r?.workspaces || []) if (w.blocked && w.root) await refused($, w.root)
+  return r
 }
 async function goLive($: any): Promise<string> {
   const sessionId = await $.session.id()
   let r: any
   try { r = await registerLive($) } catch { return daemonDown }
+  // nothing it could link (every repository refused): not live
+  if (!(r.workspaces || []).some((w: any) => w.url)) {
+    await json($, `/api/live/${sessionId}`, { method: 'DELETE' }).catch(() => null)
+    return `Not live: loupe opened none of this session's repositories.\n${(r.workspaces || []).map((w: any) => `- ${w.root}: ${w.error}`).join('\n')}`
+  }
   await update($, live, () => true)
   startPolling($, sessionId)
   $.ui.status('loupe: live')
-  const urls = (r.workspaces || []).filter((w: any) => w.url).map((w: any) => `- ${r.display}${w.url}`).join('\n')
+  const urls = (r.workspaces || []).map((w: any) => (w.url ? `- ${r.display}${w.url}` : `- ${w.root}: ${w.error}`)).join('\n')
   return `Live: the "Live session" chat in loupe now sends its questions here, and each answer goes back to it.\n${urls}\n\nThey arrive as prompts marked [From loupe]. \`/loupe off\` stops it.`
 }
 function startPolling($: any, sessionId: string) {
@@ -168,7 +189,8 @@ export const register: Register = (on) => {
       const file = anyE.file_path || anyE.notebook_path
       if (typeof file === 'string' && file.startsWith('/')) {
         const root = await rootOf($, file)
-        if (root) {
+        if (root && !blocked.has(root) && !claimed.has(root)) {
+          claimed.add(root)
           const known = (await read($, repos)).includes(root)
           if (!known) {
             await update($, repos, (list) => (list.includes(root) ? list : [...list, root]))

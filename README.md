@@ -22,7 +22,7 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
 - **Ship your own work.** Commit the files you pick, push, and open the PR, with the message drafted in the
   repository's style.
 - **From Claude Code.** The plugin puts each repository a session edits on loupe's home, with a chat that knows what
-  the session did; `/loupe` prints the links.
+  the session did; `/loupe` prints the links. `loupe block` keeps a repository out of loupe, and the plugin with it.
 - **Keyboard first.** `⌘K` finds any file, change, commit or action; `?` lists the keys.
 
 Mote, the small beetle in the corner, shows what the desk is doing: working while an answer is written, looking it over
@@ -52,10 +52,15 @@ Then, in any repository:
 ```bash
 loupe                                          # this branch and its uncommitted work
 loupe https://github.com/owner/repo/pull/123   # a pull request
+loupe block                                    # never open this repository (loupe blocked lists them)
 ```
 
 Without the service, `loupe serve` runs it in a terminal at http://127.0.0.1:4500. To open a pull request from
 GitHub, swap `github.com` for `loupe.local` in its link. https is optional: [docs/HTTPS.md](docs/HTTPS.md).
+
+`loupe block` takes a folder (a path starting with `/`, `~` or `.`; a path inside a repository stands for the whole
+repository) or a GitHub `owner/repo`, which covers its pull requests and every checkout of it. Blocking closes what is
+open of it; `loupe unblock <entry>` or home's footer lets it back in.
 
 ## The browser extension
 

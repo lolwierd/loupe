@@ -958,12 +958,17 @@ function openPalette() {
 }
 
 // ------------------------------------------------------------------ home: whose move it is
+let homeRender = 0; // the newest home render: an older one's late answers paint nothing
 async function renderHome(error) {
   S.id = null;
+  const gen = ++homeRender;
   const st = await api('/api/state').catch(() => S.app);
   document.title = 'loupe';
   const host = esc(st.display.replace(/^https?:\/\//, ''));
   const hidden = new Set((st.settings?.hiddenOrgs || S.app?.settings?.hiddenOrgs || []).map((o) => o.toLowerCase()));
+  // the block list (a daemon that keeps one offers it): folders, and owner/repo names whose PRs home leaves out too
+  const blocked = st.settings?.blockedRepos || [];
+  const blockedGh = new Set(blocked.filter((e) => !e.startsWith('/')));
   const ownerOf = (repo = '') => repo.split('/')[0] || '';
   const short = (repo = '') => repo.split('/')[1] || repo;
   const here = new Map(st.workspaces.filter((w) => w.kind === 'pr').map((w) => [`${w.repo}#${w.number}`, w]));
@@ -988,11 +993,11 @@ async function renderHome(error) {
   };
   const prRow = (p, rail) => {
     const w = here.get(`${p.repo}#${p.number}`), [stage, tone] = stageOf(p);
-    return `<div class="hrow${rail ? ` rail ${rail}` : ''}" data-owner="${esc(ownerOf(p.repo))}" data-gh="${esc(p.url)}"${w ? ` data-ws="${esc(w.id)}"` : ''}><a class="hl" href="${esc(w ? w.url : `/${p.repo}/pull/${p.number}`)}">` +
+    return `<div class="hrow${rail ? ` rail ${rail}` : ''}" data-owner="${esc(ownerOf(p.repo))}" data-gh="${esc(p.url)}" data-repo="${esc(p.repo)}"${w ? ` data-ws="${esc(w.id)}"` : ''}><a class="hl" href="${esc(w ? w.url : `/${p.repo}/pull/${p.number}`)}">` +
       `<span class="hc who">${p.author ? avatar(p.author) : I.pr}</span><span class="hc ti"><b title="${esc(p.title)}"><span class="no">#${p.number}</span> ${esc(p.title)}</b><small title="${esc(p.repo)}">${esc(short(p.repo))}${p.author ? ` · ${esc(p.author)}` : ''}${p.head ? ` · <span class="br">${esc(p.head)}</span>` : ''}</small></span>` +
       `${stageCell(stage, tone, w)}${size(p)}<span class="hc age">${esc(ago(Date.parse(p.updatedAt)))}</span></a><button class="icon hm" data-hm aria-label="More">${I.more}</button></div>`;
   };
-  const wsRow = (w) => `<div class="hrow" data-ws="${esc(w.id)}"><a class="hl" href="${esc(w.url)}">` +
+  const wsRow = (w) => `<div class="hrow" data-ws="${esc(w.id)}" data-repo="${esc(w.kind === 'pr' ? w.repo : w.root || '')}"><a class="hl" href="${esc(w.url)}">` +
     `<span class="hc who">${w.kind === 'pr' && w.author ? avatar(w.author) : w.kind === 'pr' ? I.pr : I.branch}</span><span class="hc ti"><b title="${esc(w.title)}">${w.kind === 'pr' && !w.title.endsWith(`#${w.number}`) ? `<span class="no">#${w.number}</span> ` : ''}${esc(w.title)}</b><small>${esc(w.kind === 'pr' ? short(w.repo) : w.repo === w.title ? (w.root || w.repo).split('/').slice(-2).join('/') : w.repo)}${w.kind === 'pr' && w.author ? ` · ${esc(w.author)}` : ''}${w.session ? ` · <span class="sess" title="${esc(w.session.live ? 'A live Claude Code session' : 'The Claude Code session working on it')}: ${esc(w.session.title)}">${spark(12, !w.session.live)}${esc(w.session.title)}</span>` : ''}</small></span>` +
     `${stageCell(w.dirty ? plural(w.dirty, 'uncommitted file') : w.kind === 'pr' ? '' : 'Checkout', w.dirty ? 'warn' : 'quiet', w)}<span class="hc sz"></span><span class="hc age">${w.openedAt ? esc(ago(w.openedAt)) : ''}</span></a><button class="icon hm" data-hm aria-label="More">${I.more}</button></div>`;
   // PRs whose base is another's head in the same repo are one stack: drawn together, base first, joined by a rail
@@ -1012,14 +1017,15 @@ async function renderHome(error) {
   const section = (id, title, n, rows, empty) => `<section class="hsect" id="${id}"><h2 class="sh">${title}${n ? `<span class="n">${n}</span>` : ''}</h2>${rows ? `<div class="hlist">${rows}</div>` : `<div class="hempty">${empty}</div>`}</section>`;
   const draw = (ib) => {
     const rows = ib ? (ib.prs || []) : [];
-    const shown = rows.filter((p) => !hidden.has(ownerOf(p.repo).toLowerCase()));
+    const allowed = rows.filter((p) => !blockedGh.has(String(p.repo).toLowerCase()));
+    const shown = allowed.filter((p) => !hidden.has(ownerOf(p.repo).toLowerCase()));
     const humans = shown.filter((p) => !p.bot), bots = shown.length - humans.length;
     // review: what others asked you to read, longest waiting first; yours: your own and those assigned to you
     const review = humans.filter((p) => p.whose === 'review').sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
     const yours = humans.filter((p) => p.whose === 'mine' || p.whose === 'assigned');
     const listed = new Set(humans.map((p) => `${p.repo}#${p.number}`));
     const open = st.workspaces.filter((w) => w.kind !== 'pr' || !listed.has(`${w.repo}#${w.number}`));
-    const hiddenN = rows.length - shown.length;
+    const hiddenN = allowed.length - shown.length;
     // the section heads already count each list; the footer says only what they do not: what is left out
     const counts = bots ? plural(bots, 'bot PR') + ' not shown' : '';
     return `<div class="home"><div class="homein">
@@ -1031,6 +1037,7 @@ async function renderHome(error) {
       ${section('h-yours', 'Yours', yours.length, ib ? stacked(yours) : '', ib ? '<span class="calm">No open pull requests of yours.</span>' : '<span class="calm">Asking GitHub…</span>')}
       ${section('h-open', 'Open here', open.length, open.map(wsRow).join(''), '<span class="calm">Nothing else open. Paste a pull request above, or run <code>loupe</code> in a repository.</span>')}
       <footer class="homefoot">${counts || hidden.size ? `<p>${counts}${hidden.size ? `${counts ? ' · ' : ''}Hiding ${[...hidden].map((o) => `<button class="link unhide" data-unhide="${esc(o)}" title="Show ${esc(o)}'s pull requests again">${esc(o)} ×</button>`).join(' ')}${hiddenN ? ` (${hiddenN})` : ''}` : ''}</p>` : ''}
+      ${blocked.length ? `<p>Never opened here: ${blocked.map((e) => `<button class="link unhide" data-unblock="${esc(e)}" title="${esc(e)}: let loupe open it again">${esc(e.startsWith('/') ? e.split('/').pop() || e : e)} ×</button>`).join(' ')}</p>` : ''}
       <p>Swap <code>github.com</code> for <code>${host}</code> in a pull request link to open it here. <code>loupe</code> in a repository opens its branch and uncommitted work. <span class="nobr"><kbd>j</kbd> <kbd>k</kbd> move, <kbd>↵</kbd> opens.</span></p></footer>
     </div></div>`;
   };
@@ -1046,30 +1053,41 @@ async function renderHome(error) {
       try { const r = await api('/api/workspaces', { method: 'POST', body: { target: t } }); location.href = r.url; } catch (err) { renderHome(err.message); }
     });
   };
+  const setBlocked = async (body) => {
+    try { S.app.settings = await api('/api/settings', { method: 'POST', body }); } catch (e) { return toast(e.message, { fail: true }); }
+    renderHome();
+  };
   const setHidden = async (list) => {
     try { S.app.settings = await api('/api/settings', { method: 'POST', body: { hiddenOrgs: list } }); } catch (e) { return toast(e.message, { fail: true }); }
     renderHome();
   };
+  if (gen !== homeRender) return;
   paint(null);
   $('#root').onclick = async (e) => {
     const u = e.target.closest('[data-unhide]');
     if (u) return setHidden([...hidden].filter((o) => o !== u.dataset.unhide));
+    const ub = e.target.closest('[data-unblock]');
+    if (ub) return setBlocked({ unblock: ub.dataset.unblock });
     const m = e.target.closest('[data-hm]');
     if (!m) return;
-    const row = m.closest('.hrow'), owner = row.dataset.owner, ws = row.dataset.ws, gh = row.dataset.gh;
+    const row = m.closest('.hrow'), owner = row.dataset.owner, ws = row.dataset.ws, gh = row.dataset.gh, repo = row.dataset.repo;
+    const repoName = repo?.startsWith('/') ? repo.split('/').pop() : repo;
     menu(m, [
       ...(gh ? [{ label: 'Open on GitHub', value: 'gh' }] : []),
       // hiding needs a daemon that keeps the list (settings.hiddenOrgs); an older one does not offer it
       ...(owner && Array.isArray(st.settings?.hiddenOrgs) ? [{ label: `Hide ${owner}'s pull requests`, value: 'hide' }] : []),
+      // blocking needs a daemon that keeps the list (settings.blockedRepos)
+      ...(repo && Array.isArray(st.settings?.blockedRepos) ? [{ label: `Never open ${repoName} here`, sub: ws ? 'it closes; its marks stay' : 'its pull requests leave home', value: 'block', confirm: ws ? `Block ${repoName}? It closes here` : null }] : []),
       ...(ws ? [{ sep: true }, { label: 'Close it here', sub: 'its marks stay for next time', value: 'close', confirm: ws.startsWith('pr-') ? "Close it? loupe's checkout of it goes" : 'Close it? Its marks stay' }] : []),
     ], async (it) => {
       if (it.value === 'gh') open(gh, '_blank', 'noopener');
       if (it.value === 'hide') setHidden([...hidden, owner.toLowerCase()]);
+      if (it.value === 'block') setBlocked({ block: repo });
       if (it.value === 'close') { await api(`/api/w/${ws}`, { method: 'DELETE' }).catch((err) => toast(err.message, { fail: true })); renderHome(); }
     }, { align: 'right', width: 280 });
   };
   const ib = await api('/api/inbox').catch((e) => ({ error: e.message, prs: [] }));
-  if (!S.id && $('.home')) paint(ib);
+  if (gen === homeRender && !S.id && $('.home')) paint(ib);
 }
 // Home's keys: j and k move between the rows, Enter follows the focused one (it is a link), / goes to the box.
 document.addEventListener('keydown', (e) => {

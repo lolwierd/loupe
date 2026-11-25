@@ -16,6 +16,9 @@ repository puts it on loupe's home by itself, with the session's name beside it.
 - Once the session has edited something, a row above the prompt names the repositories, with Review (opens
   them) and Hide.
 
+A repository on loupe's block list (`loupe block`) is left alone: the first edit there finds it refused, and the
+session drops it from its list, so neither home nor the row offers it.
+
 **The skill** tells Claude how to open a PR, branch or path in loupe, and what to check when loupe misbehaves.
 
 Both need the loupe daemon running (`loupe service install`); without it the command says so and does nothing else.

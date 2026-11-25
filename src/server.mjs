@@ -161,6 +161,17 @@ async function route(req, res, url) {
   if (method === 'POST' && p === '/api/settings') {
     const b = await readBody(req);
     const st = W.settings();
+    // A repository on or off the block list, one per request and nothing else with it (a relative folder is read
+    // from cwd: the CLI's). A bad one changes nothing.
+    if (b.block !== undefined || b.unblock !== undefined) {
+      const one = b.block ?? b.unblock;
+      if (typeof one !== 'string' || (b.block !== undefined && b.unblock !== undefined)) return send(res, 400, { error: 'block or unblock takes one folder or owner/repo' });
+      const cwd = typeof b.cwd === 'string' && path.isAbsolute(b.cwd) ? b.cwd : undefined;
+      const r = b.block !== undefined ? await W.block(one, cwd) : await W.unblock(one, cwd);
+      homeEmit('workspaces', {}); // home redraws: its rows, the PRs it leaves out and its footer all follow the list
+      for (const ws of W.all()) ws.emit('settings', st);
+      return send(res, 200, { ...st, ...r });
+    }
     // The list is checked before anything changes, so a bad one leaves every setting as it was.
     const orgs = b.hiddenOrgs === undefined ? undefined : ownerList(b.hiddenOrgs);
     if (orgs === null) return send(res, 400, { error: 'hiddenOrgs must be a list of GitHub owner names' });
@@ -218,7 +229,7 @@ async function route(req, res, url) {
         await ws.ready().catch(() => {});
         const conv = linkChat(ws, { sessionId: s.sessionId, cwd: s.cwd, title: s.title || 'Live session', live: true });
         out.push({ url: ws.url, id: ws.id, chat: conv.id });
-      } catch (e) { out.push({ root, error: e.message }); }
+      } catch (e) { out.push({ root, error: e.message, ...(e.blocked ? { blocked: e.blocked } : {}) }); }
     }
     homeEmit('workspaces', {});
     return send(res, 200, { workspaces: out, display: DISPLAY });
@@ -665,7 +676,9 @@ function handler(req, res) {
   // CORS preflight, which loupe never answers.
   if (req.method !== 'GET' && req.method !== 'HEAD' && req.headers['x-loupe'] !== '1') return send(res, 403, { error: 'missing X-Loupe header' });
   route(req, res, url).catch((err) => {
-    if (!res.headersSent) send(res, 500, { error: String(err?.message || err) });
+    // an error that names its HTTP status (a refusal: 4xx) answers with it; anything else is loupe's own failure
+    const status = Number.isInteger(err?.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
+    if (!res.headersSent) send(res, status, { error: String(err?.message || err), ...(err?.blocked ? { blocked: err.blocked } : {}) });
     else res.end();
   });
 }
@@ -700,6 +713,7 @@ async function startTls(port) {
 
 export async function start() {
   await initHighlightCache();
+  await W.closeBlocked().catch((e) => console.log(`loupe: closing blocked workspaces: ${e.message}`));
   const server = http.createServer(handler);
   server.keepAliveTimeout = 65000;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(PORT, '127.0.0.1', resolve); });

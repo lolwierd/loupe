@@ -28,6 +28,10 @@ const HELP = `${bold('loupe')}: a local review desk for PRs, branches and uncomm
   ${bold('loupe')} <target>             open a PR link, owner/repo#123, #123 (in a clone), or a path
   ${bold('loupe ls')}                   the open workspaces and how much is left to review in each
   ${bold('loupe close')} <target|url>   close a workspace (a PR's worktree is removed)
+  ${bold('loupe block')} [<folder|owner/repo>]
+                            never open this repository (none: the one you're in); what is open of it closes
+  ${bold('loupe unblock')} <entry>      take it off the block list
+  ${bold('loupe blocked')}              the block list
   ${bold('loupe status')}               is the daemon up, and where
   ${bold('loupe doctor')}               check the tools, the sign-ins, the daemon, loupe.local and l.local
   ${bold('loupe service')} install|uninstall|restart|status|logs
@@ -102,6 +106,23 @@ async function cmdClose(target) {
   else { const r = await api('/api/workspaces', { method: 'POST', body: JSON.stringify({ target: target ?? '', cwd: process.cwd() }) }); id = r.id; }
   await api(`/api/w/${id}`, { method: 'DELETE' });
   console.log(`closed ${id}`);
+}
+
+// A folder (a path starting with /, ~ or .) or a GitHub owner/repo, read by the daemon from this directory.
+async function cmdBlock(target, on) {
+  if (!(await up())) throw new Error('the daemon is not running');
+  if (!on && !target) throw new Error('name the entry to take off (loupe blocked lists them)');
+  const r = await api('/api/settings', { method: 'POST', body: JSON.stringify({ [on ? 'block' : 'unblock']: target ?? '', cwd: process.cwd() }) });
+  if (has('--json')) return console.log(JSON.stringify({ entry: r.entry, closed: r.closed || [], blockedRepos: r.blockedRepos }));
+  console.log(on ? `blocked ${bold(r.entry)}${r.closed?.length ? dim(` (closed ${r.closed.join(', ')})`) : ''}` : `unblocked ${bold(r.entry)}`);
+}
+async function cmdBlocked() {
+  const s = await up();
+  if (!s) throw new Error('the daemon is not running');
+  const list = s.settings?.blockedRepos || [];
+  if (has('--json')) return console.log(JSON.stringify(list));
+  if (!list.length) return console.log(dim('nothing is blocked: loupe block <folder|owner/repo> keeps a repository out'));
+  for (const e of list) console.log(e);
 }
 
 async function cmdStatus() {
@@ -288,6 +309,7 @@ async function cmdServe() {
 const [cmd, ...rest] = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !== '--link' && argv[i - 1] !== '--base');
 const main = {
   serve: cmdServe, ls: cmdLs, list: cmdLs, close: () => cmdClose(rest[0]), status: cmdStatus, doctor: cmdDoctor,
+  block: () => cmdBlock(rest[0], true), unblock: () => cmdBlock(rest[0], false), blocked: cmdBlocked,
   service: () => cmdService(rest[0]), help: () => console.log(HELP), open: () => cmdOpen(rest[0]),
 }[cmd] || (() => (has('--help') || has('-h') ? console.log(HELP) : cmdOpen(cmd)));
 Promise.resolve().then(main).catch((e) => { console.error(red('loupe: ') + e.message); process.exit(1); });

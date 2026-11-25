@@ -1,6 +1,6 @@
 {
   "name": "loupe",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Review what this session changed in loupe (http://loupe.local): /loupe gives a link per repository it edited, with a chat linked to this session; /loupe live lets the browser send questions into it. Includes the loupe skill.",
   "author": {
     "name": "lolwierd"
