@@ -93,7 +93,7 @@ export function renderProgress() {
   paintMeter();
   const gen = S.files.filter((f) => f.kind === 'generated');
   el.title = `${left.toLocaleString()} of ${total.toLocaleString()} changed lines not yet viewed, in ${leftFiles.length} of ${plural(files.length, 'file')}.` +
-    (gen.length ? ` ${plural(gen.length, 'generated file')} are not counted.` : '') + (S.app.settings?.autoView ? ' Tests count as viewed until you untick one.' : '') + ' Click or press ] to read on.';
+    (gen.length ? ` ${plural(gen.length, 'generated file')} are not counted.` : '') + (S.app.settings?.autoView ? ' Tests count as viewed until you untick one.' : '') + ' Click for the next file left (]).';
 }
 // The meter's blocks, in reading order. A file you have scrolled through part of lights that share of its lamps: skimmed
 // half reads differently from untouched. Viewed turns it green; changed since, amber.

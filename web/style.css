@@ -332,7 +332,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .scopebtn:hover { background: var(--face-hi); box-shadow: var(--raised); }
 .scopebtn .l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scopebtn svg { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
-.cards { padding: 0 0 50vh; }
+.cards { padding: 0 0 30vh; }
 .banner { display: flex; gap: var(--s4); align-items: center; padding: var(--s3) var(--s5); border-bottom: 1px solid var(--rule); background: var(--chrome); font-size: var(--t-ui); }
 .banner.warn { background: var(--warn-tint); }
 /* a chapter: the guide's section, written once, where you read it; its checks tick in place */

@@ -106,7 +106,7 @@ function guideHeadHTML(sec, k) {
 
 let io = null;
 let preload;
-export function renderCards(keepFiles = false, bodyHeights = null) {
+export function renderCards(keepFiles = false) {
   hooks.cardVisibilityChanged?.();
   const order = orderedFiles();
   const sections = S.review.brief?.sections || [];
@@ -144,10 +144,6 @@ export function renderCards(keepFiles = false, bodyHeights = null) {
     }
   }, { root: $('#center'), rootMargin: '400px 0px' });
   for (const c of $$('.file', cards)) io.observe(c);
-  for (const [path, height] of bodyHeights || []) {
-    const placeholder = cardEl(path)?.querySelector('.fb > .loadd');
-    if (placeholder) placeholder.style.minHeight = `${height}px`;
-  }
   hooks.filterCards?.();
   mountScenes();
 }
@@ -712,9 +708,9 @@ $('#root').addEventListener('mouseover', (e) => {
 window.addEventListener('mouseup', () => { if (S.dragging) { S.dragging = false; paintSel(); } });
 
 // ------------------------------------------------------------------ actions on cards, drafts and threads
-export async function setViewed(p, on, { fold = true } = {}) {
+export async function setViewed(p, on) {
   const f = fileOf(p); if (!f) return;
-  const card = on && fold ? cardEl(p) : null;
+  const card = on ? cardEl(p) : null;
   const offset = card && card.getBoundingClientRect().top - $('#center').getBoundingClientRect().top;
   const key = viewKey(f);
   S.review.unviewed ||= {};
@@ -724,7 +720,7 @@ export async function setViewed(p, on, { fold = true } = {}) {
     if (list.length) map[p] = list; else delete map[p];
   }
   // viewed folds the file away; unviewed opens it again, since you are going back to read it
-  if (fold) toggleFold(p, on);
+  toggleFold(p, on);
   updateCard(p);
   hooks.progress?.(p);
   hooks.sound?.viewed(S.id); // a tick up the ladder (with desk sounds on)
@@ -732,7 +728,7 @@ export async function setViewed(p, on, { fold = true } = {}) {
   if (on) { hooks.mote?.viewed(); hooks.mote?.glance(() => document.querySelector(`.trow[data-p="${CSS.escape(p)}"]`), 420); }
   api(`/api/w/${S.id}/viewed`, { method: 'POST', body: { path: p, blob: key, viewed: on } }).catch((e) => toast(e.message, { fail: true }));
   if (on) {
-    if (card && offset < 44 && Math.abs(offset - 40) > 1) card.scrollIntoView({ block: 'start' });
+    if (offset < 44 && Math.abs(offset - 40) > 1) card?.scrollIntoView({ block: 'start' });
     toast(`${p.split('/').pop()} viewed`, { action: 'Undo', run: () => { setViewed(p, false); toggleFold(p, false); hooks.goLoc?.({ path: p, line: 0 }); } });
   }
 }

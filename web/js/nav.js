@@ -77,7 +77,6 @@ export async function goBack() {
 // A place to come back to with [, taken now: the scroll of every column, and what to undo on the way back. ] takes one
 // before it marks a file viewed and moves on, so [ un-views that file and returns to it.
 export function remember(restore) {
-  jump++;
   lookup++; // ] moves on: a definition still being looked up goes nowhere
   const scroll = ['#center', '#pbody', '#vbody'].flatMap((id) => { const el = $(id); return el ? [[id, el.scrollTop, el.scrollLeft, null]] : []; });
   const entry = { scroll, restore, view: S.view, filter: S.filter };
@@ -89,7 +88,6 @@ export function remember(restore) {
 // a place taken for something that then did nothing
 export function forget(entry) { const i = returns.lastIndexOf(entry); if (i >= 0) returns.splice(i, 1); paintReturn(); }
 export async function goLoc(loc, origin, restore, { remembered = false, back = null } = {}) {
-  hooks.cancelAdvance?.();
   if (loc.external && !loc.readable) return toast(`Defined outside the repository: ${loc.path}:${loc.line}`);
   const scope = S.scope, id = S.id;
   const request = ++jump;

@@ -343,7 +343,7 @@ test('jump history restores two origins and is cleared with the comparison', asy
   const back = {};
   const S = { id: 'one', scope: 'all', view: null };
   const nav = vm.runInNewContext(source.slice(source.indexOf('const returns'), source.indexOf('export async function goThread')).replace(/^export /gm, '') + '\n({ goLoc, goBack, clearReturns })', {
-    S, hooks: {}, $: (id) => ({ '#center': center, '#vback': back, '#viewer': S.view && {} })[id],
+    S, $: (id) => ({ '#center': center, '#vback': back, '#viewer': S.view && {} })[id],
     hideTip() {}, closeViewer() { S.view = null; },
     openViewer(v) { S.view = v; center.scrollTop = 0; },
     resolvePath: (p) => p, fileOf: () => null,
@@ -379,7 +379,7 @@ test('after a jump a slip names where [ goes back to, follows a chain of jumps, 
     return el;
   };
   const nav = vm.runInNewContext(source.slice(source.indexOf('const returns'), source.indexOf('export async function goThread')).replace(/^export /gm, '') + '\n({ goLoc, goBack, clearReturns, remember, paintReturn })', {
-    S, h, hooks: {}, I: { chevL: '' },
+    S, h, I: { chevL: '' },
     $: (id) => ({ '#center': center, '#viewer': viewer, '#backslip': slip, '.viewer-col': column })[id],
     hideTip() {}, closeViewer() {}, openViewer() {}, resolvePath: (p) => p, fileOf: () => null,
   });
