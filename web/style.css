@@ -39,8 +39,11 @@
      (--face, paler than the chrome; --face-hi under the pointer; --face-down pushed), a lit top edge where the theme is
      dark (--lit), and a skirt of solid shade below it (--shade; --ink-skirt on ink). --edge-in is the one line of shade
      under a well's lip and on a face pushed down; --floor a well's floor. On white paper a face cannot be paler than its
-     ground, so there it is a tint of ink (the -paper values). --float is the rule round what floats over the page. */
-  --lit: transparent; --shade: #c4c4cb; --shade-2: rgba(28, 28, 40, 0.075); --edge-in: #cfcfd6; --float: var(--ink-3);
+     ground, so there it is a tint of ink (the -paper values). Nothing is outlined: a thing is told from its ground by its
+     fill alone. --float-fill is what floats over the page with no backdrop behind it (menus, tips, the selection's
+     tools), a step off both the sheet and paper; --inlay is a block set into text (code, details), ink let through so it
+     reads on the sheet and on paper alike. */
+  --lit: transparent; --shade: #c4c4cb; --shade-2: rgba(28, 28, 40, 0.075); --edge-in: #cfcfd6; --float-fill: color-mix(in srgb, var(--ink) 10%, var(--bg)); --inlay: color-mix(in srgb, var(--ink) 5%, transparent);
   --face: color-mix(in srgb, var(--bg) 70%, transparent); --face-hi: var(--bg);
   --floor: color-mix(in srgb, var(--chrome) 95%, var(--ink)); /* a well's floor: a hair below the sheet, so it reads pressed in on white */
   --face-down: color-mix(in srgb, var(--chrome) 92%, var(--ink)); /* a plateau pushed down flush: out of the light, a touch dimmer */
@@ -68,7 +71,7 @@
   --hunk-bg: rgba(120, 140, 200, 0.08); --hunk-ink: #8a90a0;
   --sel-bg: rgba(214, 167, 32, 0.15); --sel-gutter: rgba(214, 167, 32, 0.32); --flash: rgba(214, 167, 32, 0.45);
   --scrim: rgba(0, 0, 0, 0.18); --scrim-flat: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
-  --lit: rgba(255, 255, 255, 0.13); --shade: #000000; --shade-2: rgba(0, 0, 0, 0.5); --edge-in: #000000; --float: var(--ink-3);
+  --lit: rgba(255, 255, 255, 0.13); --shade: #000000; --shade-2: rgba(0, 0, 0, 0.5); --edge-in: #000000; --float-fill: color-mix(in srgb, var(--ink) 11%, var(--bg)); --inlay: color-mix(in srgb, var(--ink) 5%, transparent);
   --face: color-mix(in srgb, var(--ink) 7%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 10%, var(--bg)); --floor: color-mix(in srgb, var(--chrome) 60%, #000000); --face-down: color-mix(in srgb, var(--ink) 3%, var(--bg));
   --face-paper: var(--face); --face-paper-hi: var(--face-hi); --face-paper-down: var(--face-down); --floor-paper: var(--floor);
   --ink-lit: rgba(255, 255, 255, 0.8); --ink-shade: rgba(0, 0, 0, 0.3); --ink-skirt: #8e8e9a;
@@ -85,7 +88,7 @@
     --hunk-bg: rgba(120, 140, 200, 0.08); --hunk-ink: #8a90a0;
     --sel-bg: rgba(214, 167, 32, 0.15); --sel-gutter: rgba(214, 167, 32, 0.32); --flash: rgba(214, 167, 32, 0.45);
     --scrim: rgba(0, 0, 0, 0.18); --scrim-flat: rgba(0, 0, 0, 0.5); --scrim-soft: rgba(0, 0, 0, 0.4);
-    --lit: rgba(255, 255, 255, 0.13); --shade: #000000; --shade-2: rgba(0, 0, 0, 0.5); --edge-in: #000000; --float: var(--ink-3);
+    --lit: rgba(255, 255, 255, 0.13); --shade: #000000; --shade-2: rgba(0, 0, 0, 0.5); --edge-in: #000000; --float-fill: color-mix(in srgb, var(--ink) 11%, var(--bg)); --inlay: color-mix(in srgb, var(--ink) 5%, transparent);
     --face: color-mix(in srgb, var(--ink) 7%, var(--bg)); --face-hi: color-mix(in srgb, var(--ink) 10%, var(--bg)); --floor: color-mix(in srgb, var(--chrome) 60%, #000000); --face-down: color-mix(in srgb, var(--ink) 3%, var(--bg));
     --face-paper: var(--face); --face-paper-hi: var(--face-hi); --face-paper-down: var(--face-down); --floor-paper: var(--floor);
     --ink-lit: rgba(255, 255, 255, 0.8); --ink-shade: rgba(0, 0, 0, 0.3); --ink-skirt: #8e8e9a;
@@ -123,15 +126,14 @@ b, strong { font-weight: 600; } /* weights are 400, 500 and 600: the browser's b
 kbd { font: 500 var(--t-mono)/16px var(--f-mono); min-width: 18px; text-align: center; display: inline-block; padding: 0 var(--s2); border: 1px solid transparent; border-bottom: 2px solid var(--shade); border-radius: var(--r1); background: var(--face); color: var(--ink-2); box-shadow: inset 0 1px 0 var(--lit); }
 kbd { transition: transform 110ms var(--ease), background 110ms var(--ease), color 110ms var(--ease), box-shadow 110ms var(--ease); }
 kbd.struck { transform: translateY(1px); background: var(--face-down); color: var(--ink); box-shadow: inset 0 1px 0 var(--edge-in); }
-.btn kbd.struck { transform: none; border-bottom-width: 1px; background: color-mix(in srgb, currentColor 18%, transparent); opacity: 1; }
+.btn kbd.struck { transform: none; border-bottom-width: 1px; background: color-mix(in srgb, currentColor 22%, transparent); opacity: 1; }
 .seg button.struck { background: var(--press); color: var(--ink); }
 .tab.struck { color: var(--ink); }
 
 /* ---------------------------------------------------------------- controls */
 /* Relief. What you press stands up out of the sheet as a key (buttons, chips, a select, a key, the chosen segment);
    what you write in or only read is sunk into it (fields, composers, a dialog's message box, the segmented control's
-   channel). No outlines, no blur: a key is its face and the skirt below it, a well its floor and one line of shade under
-   its lip. Pressing a key sends it down by its skirt. Every relief below is one list of five inset shadows and three
+   channel). No outlines, no blur: a key is its face and the skirt below it, a well its floor. Pressing a key sends it down by its skirt. Every relief below is one list of five inset shadows and three
    outer ones, in the same order, so a press moves from one to the other instead of jumping: the top edge, the sides (a
    field's focus mark), three spares, then the skirt and two spares. */
 :root {
@@ -139,14 +141,14 @@ kbd.struck { transform: translateY(1px); background: var(--face-down); color: va
   --raised: inset 0 1px 0 var(--lit), var(--t0), var(--t0), var(--t0), var(--t0), 0 2px 0 var(--shade), var(--o0), var(--o0);
   --raised-soft: inset 0 1px 0 var(--lit), var(--t0), var(--t0), var(--t0), var(--t0), 0 1px 0 var(--shade), var(--o0), var(--o0);
   --flat: var(--t0), var(--t0), var(--t0), var(--t0), var(--t0), var(--o0), var(--o0), var(--o0);
-  --well: inset 0 1px 0 var(--edge-in), var(--t0), var(--t0), var(--t0), var(--t0), var(--o0), var(--o0), var(--o0);
-  --well-in: inset 0 1px 0 var(--edge-in), inset 0 0 0 1px var(--ink-3), var(--t0), var(--t0), var(--t0), var(--o0), var(--o0), var(--o0);
+  --well: var(--flat); /* a well is its floor alone: no lip, no sides, writing in it or not */
   --pressed: inset 0 1px 0 var(--edge-in), var(--t0), var(--t0), var(--t0), var(--t0), 0 0 0 0 var(--shade), var(--o0), var(--o0);
   --ink-raised: inset 0 1px 0 var(--ink-lit), var(--t0), var(--t0), var(--t0), var(--t0), 0 2px 0 var(--ink-skirt), var(--o0), var(--o0);
   --ink-pressed: inset 0 1px 0 var(--ink-shade), var(--t0), var(--t0), var(--t0), var(--t0), 0 0 0 0 var(--ink-skirt), var(--o0), var(--o0);
 }
 /* white paper under a key: the diff column, the whole-file viewer, and what floats (menus, tips, the palette, dialogs) */
 :is(.viewer-col, .viewer, .menu, .seltools, .tip, .palette, .sheet, .mw) { --face: var(--face-paper); --face-hi: var(--face-paper-hi); --face-down: var(--face-paper-down); --floor: var(--floor-paper); --seg-on: var(--bg); --seg-floor: color-mix(in srgb, var(--ink) 9%, var(--bg)); }
+:is(.menu, .seltools, .tip, .backslip, .mw) { --face: color-mix(in srgb, var(--ink) 6%, var(--float-fill)); --face-hi: color-mix(in srgb, var(--ink) 9%, var(--float-fill)); --face-down: color-mix(in srgb, var(--ink) 3%, var(--float-fill)); }
 /* Four kinds: primary (the act: a key of ink, the one standing two pixels at rest), default, ghost (lies flat until the
    pointer lifts it) and danger (default with red text; together with primary, the red fill of a destructive confirm). 28
    high; .sm is 24 for actions inside a row; .lg is 32 in a dialog's footer. The viewed box, the title, the tally and the
@@ -174,11 +176,9 @@ kbd.struck { transform: translateY(1px); background: var(--face-down); color: va
 .btn.danger.primary:hover, .btn.danger.primary:active, .btn.danger.primary.struck { background: color-mix(in srgb, var(--danger) 86%, var(--bg)); }
 .btn svg { width: 14px; height: 14px; flex: none; }
 /* the key that sends sits inside the button that sends, after its label, drawn the same in every one */
-.btn kbd { margin-right: calc(-1 * var(--s1)); padding: 0 var(--s2); min-width: 0; border: 1px solid color-mix(in srgb, currentColor 45%, transparent); border-radius: var(--r1); background: none; color: color-mix(in srgb, currentColor 78%, transparent); line-height: 16px; box-shadow: inset 0 1px 0 var(--shade); } /* pressed into the button */
-.btn.primary kbd { box-shadow: inset 0 1px 0 var(--ink-shade), 0 1px 0 var(--ink-lit); }
+.btn kbd { margin-right: calc(-1 * var(--s1)); padding: 0 var(--s2); min-width: 0; border: 1px solid transparent; border-radius: var(--r1); background: color-mix(in srgb, currentColor 12%, transparent); color: color-mix(in srgb, currentColor 78%, transparent); line-height: 16px; box-shadow: none; } /* a chip of the button's own ink, set into it: no outline */
 .btn.ghost kbd { color: inherit; } /* ink-2 already: at 78% it fell under 4.5:1 */
-.btn kbd.struck { box-shadow: inset 0 2px 0 var(--shade); }
-.btn.primary kbd.struck { box-shadow: inset 0 2px 0 var(--ink-shade), 0 1px 0 var(--ink-lit); color: var(--on-act); background: color-mix(in srgb, var(--on-act) 12%, transparent); }
+.btn.primary kbd.struck { color: var(--on-act); }
 .icon { display: inline-grid; place-items: center; width: var(--h2); height: var(--h2); padding: 0; border: 0; border-radius: var(--r2); background: none; box-shadow: var(--flat); color: var(--ink-2); cursor: pointer; flex: none; transition: background 120ms var(--ease), color 120ms var(--ease), box-shadow 140ms var(--ease); }
 .icon:hover { background: var(--face); box-shadow: var(--raised-soft); color: var(--ink); }
 .icon:active, .icon.struck { background: var(--face-down); box-shadow: var(--pressed); transition-duration: 50ms; }
@@ -223,23 +223,22 @@ button.pill:active { box-shadow: var(--pressed); transition-duration: 50ms; }
 .pill.danger { color: color-mix(in srgb, var(--danger) 80%, var(--ink)); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 /* Input, select and scope button share one size: 28 high, 13 px. Large (the open box, a dialog's title) is .lg. An input is
    a well with the sheet's white floor; a select is pressed, so the scope button stands up like a button. Writing in a
-   well, its sides darken to ink-3; the keyboard's blue ring comes on top of it for the buttons. */
+   well, its caret is the focus mark; the keyboard's blue ring comes on top of it for the buttons. */
 .field, .scopebtn { height: var(--h2); padding: 0 var(--s3); border: 1px solid transparent; border-radius: var(--r2); background: var(--floor); box-shadow: var(--well); color: var(--ink); font-size: var(--t-ui); transition: border-color 120ms var(--ease), box-shadow 120ms var(--ease); }
 .field { width: 100%; }
 .field::placeholder { color: var(--ink-3); }
-.field:focus, .composer:focus-within, .sheet .box:focus-within { box-shadow: var(--well-in); }
-.field:focus-visible { outline: none; } /* a field shows its focus by its well (--well-in), from the pointer or the keyboard alike */
+.field:focus-visible { outline: none; } /* a field shows its focus by its caret, from the pointer or the keyboard alike */
 @media (forced-colors: active) { /* no shadows there: a field, a composer, the draft and the palette's row show focus with the system's ring */
   .field:focus-visible, .composer:focus-within, .sheet .box:focus-within, .mrow.draft textarea:focus, .palette .pfield:focus-within { outline: 2px solid Highlight; outline-offset: 1px; }
   .palette .pfield:focus-within { outline-offset: -2px; } /* the palette clips outside its row */
   .btn:not(.ghost), .scopebtn:not(.scopebar .scopebtn), .chip:not(code) { border-color: ButtonText; } /* their edge was a shadow: forced colours get a rule */
-  .field, .composer, .sheet .box, code.chip { border-color: CanvasText; }
+  .field, .composer, .sheet .box, code.chip, .menu, .seltools, .backslip, .tip, .palette, .sheet, .mlabel, .motefloat .mw, .hlist, .sheet .flist, .sheet .clist, .hempty, .lost, .quote, .mapcard, .md pre, .md details { border-color: CanvasText; }
   .seg button[aria-pressed="true"] { text-decoration: underline 2px; text-underline-offset: 3px; } /* the chosen segment, without its relief (forced colours drop shadows) */
 }
 .field.lg { height: var(--h4); padding: 0 var(--s4); font-size: var(--t-read); }
 .field.mono { font-family: var(--f-mono); }
 input[type="checkbox"] { accent-color: var(--act); margin: 0; }
-.menu { animation: rise 130ms var(--ease) 1; position: fixed; z-index: 80; min-width: 220px; max-width: 520px; max-height: 70vh; overflow: auto; padding: var(--s2); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); }
+.menu { animation: rise 130ms var(--ease) 1; position: fixed; z-index: 80; min-width: 220px; max-width: 520px; max-height: 70vh; overflow: auto; padding: var(--s2); background: var(--float-fill); border: 1px solid transparent; border-radius: var(--r3); }
 .menu .mi, .palette .mi { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: var(--s3); width: 100%; min-height: var(--h2); padding: 0 var(--s3); border-radius: var(--r1); cursor: pointer; }
 .menu .mi:has(.two), .palette .mi:has(.two) { padding-block: var(--s2); }
 .menu .mi .sub, .palette .mi .sub { color: var(--ink-3); font-size: var(--t-meta); margin-left: auto; white-space: nowrap; }
@@ -472,7 +471,7 @@ input[type="checkbox"] { accent-color: var(--act); margin: 0; }
 .hk .hx { display: flex; justify-content: center; align-items: center; }
 .hk .ht { padding: var(--s2) var(--s4); white-space: pre-wrap; overflow-wrap: anywhere; align-self: center; }
 body.cmd .golang .tx[data-r="new"] span[data-c]:hover { text-decoration: underline; cursor: pointer; color: var(--pencil-ink) !important; }
-.seltools { position: absolute; z-index: 31; /* above Mote (30), who floats over the diff's corner */ display: flex; gap: var(--s1); padding: var(--s2); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); }
+.seltools { position: absolute; z-index: 31; /* above Mote (30), who floats over the diff's corner */ display: flex; gap: var(--s1); padding: var(--s2); background: var(--float-fill); border: 1px solid transparent; border-radius: var(--r3); }
 .seltools .n { font: var(--t-meta)/1 var(--f-mono); color: var(--ink-3); padding: 0 var(--s3); display: inline-flex; align-items: center; border-right: 1px solid var(--rule); margin-right: var(--s1); }
 
 .msg { padding: var(--s2) 0; display: grid; gap: var(--s2); }
@@ -519,12 +518,12 @@ label.hint { display: inline-flex; align-items: center; gap: var(--s2); cursor: 
    text's own colour, no chip, so a paragraph reads as prose instead of a row of boxes */
 .mapcard :is(.mtext, .mplan, figcaption) code, .gsec :is(.gmain, .gcks) code, .tldr .md :not(pre) > code, .tldr .risk code, .msg:not(.me) .md :not(pre) > code, .mbcap code { background: none; padding: 0; font-size: var(--t-mono); color: inherit; }
 .tick code { font-family: var(--f-mono); font-size: 0.92em; background: var(--hover); border-radius: var(--r1); padding: 0 0.3em; }
-.md pre { background: var(--bg); border: 1px solid var(--rule); border-radius: var(--r3); padding: var(--s3) var(--s4); overflow-x: auto; margin: 0 0 var(--s3); font: var(--t-mono)/1.55 var(--f-mono); }
+.md pre { background: var(--inlay); border: 1px solid transparent; border-radius: var(--r3); padding: var(--s3) var(--s4); overflow-x: auto; margin: 0 0 var(--s3); font: var(--t-mono)/1.55 var(--f-mono); }
 .md pre code { background: none; padding: 0; font-size: inherit; }
 .md blockquote { margin: 0 0 var(--s3); padding-left: var(--s4); border-left: 2px solid var(--rule-strong); color: var(--ink-2); }
 .md table { border-collapse: collapse; margin: 0 0 var(--s3); font-size: var(--t-ui); display: block; overflow-x: auto; }
-.md th, .md td { border: 1px solid var(--rule); padding: var(--s2) var(--s3); text-align: left; vertical-align: top; }
-.md th { background: var(--chrome); font-weight: 600; }
+.md th, .md td { border: 0; border-bottom: 1px solid var(--rule); padding: var(--s2) var(--s3); text-align: left; vertical-align: top; }
+.md th { background: var(--inlay); font-weight: 600; }
 .md hr { border: 0; border-top: 1px solid var(--rule); margin: var(--s4) 0; }
 .md a.loc { font: var(--t-mono) var(--f-mono); color: var(--pencil-ink); cursor: pointer; white-space: nowrap; }
 a.loc.citation-check { text-decoration: underline dotted var(--warn); }
@@ -566,7 +565,6 @@ a.loc:focus-visible { outline: 2px solid var(--pencil); }
 .mrow.draft { align-items: flex-start; background: var(--hover); box-shadow: inset 0 -1px 0 var(--rule-strong); }
 
 .mrow.draft textarea { all: unset; flex: 0 1 calc(var(--measure) + 2 * var(--s2)); width: calc(var(--measure) + 2 * var(--s2)); min-width: 0; min-height: 20px; max-height: 40vh; overflow-y: auto; white-space: pre-wrap; word-break: break-word; font: var(--t-ui)/20px var(--f-ui); color: var(--ink); box-sizing: border-box; min-height: 24px; padding: 2px var(--s2); margin: -2px calc(-1 * var(--s2)) -2px 0; border-radius: var(--r1); background: var(--floor); box-shadow: var(--well); transition: box-shadow 120ms var(--ease); } /* the well stands out by its padding; the words stay on the code's text edge and the 20 px grid */
-.mrow.draft textarea:focus { box-shadow: var(--well-in); }
 @media (forced-colors: active) { .mrow.draft textarea:focus { outline: 2px solid Highlight; outline-offset: 1px; } } /* after its all: unset */
 .mrow.draft textarea::placeholder { color: var(--ink-3); }
 .mrow.draft .mdk { flex: none; display: inline-flex; align-items: center; gap: var(--s3); margin: calc((20px - var(--h1)) / 2) 0 calc((20px - var(--h1)) / 2) var(--s3); }
@@ -730,7 +728,7 @@ details.sect[open] > summary.sh::after { transform: none; }
 /* Going back after a jump (nav.js): a slip at the foot of the diff's column naming where [ returns to. It floats, so it
    is paper with the float rule and casts nothing; its words are a link button and its key a hint, each 12 px from the
    slip's edge; it rises in as a menu does. Bottom left: Mote keeps the bottom right and a toast the middle. */
-.backslip { position: absolute; z-index: 6; left: var(--s5); bottom: var(--s5); display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4) var(--s2) var(--s2); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r2); animation: rise 130ms var(--ease) 1; cursor: pointer; }
+.backslip { position: absolute; z-index: 6; left: var(--s5); bottom: var(--s5); display: flex; align-items: center; gap: var(--s2); padding: var(--s2) var(--s4) var(--s2) var(--s2); background: var(--float-fill); border: 1px solid transparent; border-radius: var(--r2); animation: rise 130ms var(--ease) 1; cursor: pointer; }
 .backslip .link { display: inline-flex; align-items: center; gap: var(--s1); height: 24px; font-size: var(--t-ui); padding: 0 var(--s3) 0 3px; margin: 0; } /* the chevron's ink starts 5 px into its box: 8 px off the ink both sides */
 .backslip .link svg { width: 16px; height: 16px; flex: none; }
 .backslip b { font-weight: 500; color: var(--ink); }
@@ -744,13 +742,13 @@ details.sect[open] > summary.sh::after { transform: none; }
 .vbody { overflow: auto; font: var(--t-code)/20px var(--f-mono); padding-bottom: 30vh; }
 .vbody .ln { grid-template-columns: 56px minmax(0, 1fr); }
 .vbody .ln .cd { padding-left: var(--s4); }
-.tip { position: fixed; z-index: 70; max-width: min(640px, 70vw); max-height: 50vh; overflow: auto; padding: var(--s3) var(--s4); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); }
+.tip { position: fixed; z-index: 70; max-width: min(640px, 70vw); max-height: 50vh; overflow: auto; padding: var(--s3) var(--s4); background: var(--float-fill); border: 1px solid transparent; border-radius: var(--r3); }
 .tip .md { font-size: var(--t-ui); }
 .tip .foot { margin-top: var(--s3); padding-top: var(--s2); border-top: 1px solid var(--rule); font-size: var(--t-meta); color: var(--ink-3); }
 .scrim { position: fixed; inset: 0; z-index: 85; background: var(--scrim-soft); display: grid; place-items: start center; padding-top: 12vh; }
 /* The palette's field, rows and heads keep the file list's columns: a 14 px glyph column 12 in from the box's edge, the
    text edge 34 in. The field is a row of the same kind, so what you type starts where every label starts. */
-.palette { animation: rise 150ms var(--ease) 1; --pal-g: calc(var(--s2) + var(--s3)); --pal-t: calc(var(--pal-g) + 14px + var(--s3)); width: min(640px, 92vw); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: 70vh; }
+.palette { animation: rise 150ms var(--ease) 1; --pal-g: calc(var(--s2) + var(--s3)); --pal-t: calc(var(--pal-g) + 14px + var(--s3)); width: min(640px, 92vw); background: var(--raise); border: 1px solid transparent; border-radius: var(--r3); overflow: hidden; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: 70vh; }
 .palette .pfield { display: flex; align-items: center; gap: var(--s3); height: var(--h4); padding: 0 var(--s5) 0 var(--pal-g); border-bottom: 1px solid var(--rule); background: var(--floor); } /* the row you write in is pressed into the panel */
 .palette .pfield > svg { width: 14px; height: 14px; flex: none; color: var(--ink-3); }
 .palette .pfield input { all: unset; box-sizing: border-box; flex: 1; min-width: 0; height: 100%; font-size: var(--t-read); color: var(--ink); }
@@ -799,7 +797,7 @@ details.sect[open] > summary.sh::after { transform: none; }
 .impressrow canvas { flex: none; width: 128px; height: 22px; image-rendering: pixelated; }
 .impressrow .moved { color: var(--warn); font-family: var(--f-mono); }
 .prcard .impressrow { margin-top: var(--s3); }
-.lens { position: fixed; z-index: 60; width: 300px; height: 150px; border-radius: 75px; overflow: hidden; pointer-events: none; background: var(--bg); box-shadow: 0 0 0 1px var(--float), 0 0 0 7px color-mix(in srgb, var(--chrome) 85%, transparent), 0 0 0 8px var(--float); }
+.lens { position: fixed; z-index: 60; width: 300px; height: 150px; border-radius: 75px; overflow: hidden; pointer-events: none; background: var(--bg); box-shadow: 0 0 0 8px var(--float-fill); }
 .lens .in { position: absolute; left: 0; transform-origin: 0 0; transform: scale(2); font: var(--t-code)/20px var(--f-mono); width: 1600px; }
 .lens .in .ln { grid-template-columns: 48px 48px minmax(0, 1fr); }
 .lens .in.of-mote { width: auto; } /* Mote under the glass: his sprite at 2×, its pixels kept whole */
@@ -843,7 +841,7 @@ details.sect[open] > summary.sh::after { transform: none; }
 .tally { position: relative; }
 .tally .meter { position: relative; display: block; width: 168px; height: 12px; }
 .tally .meter canvas { position: absolute; left: 0; bottom: 0; width: 100%; height: 28px; pointer-events: none; }
-.mlabel { position: fixed; transform: translateX(-50%); z-index: 90; white-space: nowrap; padding: 1px var(--s2); font: 500 var(--t-meta)/16px var(--f-mono); color: var(--ink-2); background: var(--bg); border: 1px solid var(--float); border-radius: var(--r1); pointer-events: none; }
+.mlabel { position: fixed; transform: translateX(-50%); z-index: 90; white-space: nowrap; padding: 1px var(--s2); font: 500 var(--t-meta)/16px var(--f-mono); color: var(--ink-2); background: var(--float-fill); border: 1px solid transparent; border-radius: var(--r1); pointer-events: none; }
 .mlabel b { color: var(--ink); font-weight: 500; }
 .mlabel .add { color: var(--add-ink); } .mlabel .del { color: var(--del-ink); }
 .top .go { display: inline-flex; flex: none; }
@@ -985,7 +983,7 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .md blockquote.alert.warning { --a: var(--warn); } .md blockquote.alert.caution { --a: var(--danger); }
 .md li:has(> input[type="checkbox"]) { list-style: none; margin-left: -18px; }
 .md li > input[type="checkbox"] { margin: 0 var(--s3) 0 0; vertical-align: -1px; }
-.md details { margin: 0 0 var(--s3); border: 1px solid var(--rule); border-radius: var(--r3); padding: var(--s2) var(--s3); }
+.md details { margin: 0 0 var(--s3); border: 1px solid transparent; background: var(--inlay); border-radius: var(--r3); padding: var(--s2) var(--s3); }
 .md details > summary { cursor: pointer; font-weight: 500; color: var(--ink-2); }
 .md details[open] > summary { margin-bottom: var(--s2); }
 .md img { max-width: 100%; height: auto; border-radius: var(--r1); vertical-align: middle; }
@@ -1003,7 +1001,7 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
    parts, 24 at the edges). */
 .sheetscrim { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: var(--s6); }
 @keyframes fadein { from { opacity: 0; } }
-.sheet { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; width: min(640px, 100%); max-height: min(88vh, 900px); background: var(--raise); border: 1px solid var(--float); border-radius: var(--r3); overflow: hidden; animation: rise 160ms var(--ease) 1; }
+.sheet { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto; width: min(640px, 100%); max-height: min(88vh, 900px); background: var(--raise); border: 1px solid transparent; border-radius: var(--r3); overflow: hidden; animation: rise 160ms var(--ease) 1; }
 .sheet.k-openpr { width: min(720px, 100%); }
 .sheet.small { width: min(520px, 100%); }
 @keyframes rise { from { transform: translateY(6px); opacity: 0; } }
@@ -1073,12 +1071,11 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .sheet .shf .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-ui); color: var(--ink-3); }
 
 /* while Claude writes, the box says so where its count was; when it lands, one flash of Claude's colour */
-.sheet .box.drafting { box-shadow: var(--well-in); }
 .sheet .box.drafting :is(.subj, .body), .sheet .field.drafting { color: var(--ink-3); }
 .sheet .box.drafting .cnt, .sheet .box.drafting .mdtabs .hint { display: none; }
 .sheet .box.drafting :is(.subjrow, .mdtabs)::after { content: "Claude is writing…"; align-self: center; font-size: var(--t-meta); color: var(--ink-3); white-space: nowrap; }
 .sheet .box.drafted { animation: drafted 700ms var(--ease) 1; }
-@keyframes drafted { 12% { box-shadow: inset 0 1px 0 var(--edge-in), inset 0 0 0 1px var(--ink-2), var(--t0), var(--t0), var(--t0), 0 0 0 3px var(--press), var(--o0), var(--o0); } }
+@keyframes drafted { 12% { background: color-mix(in srgb, var(--ink) 10%, var(--floor)); } } /* the draft lands: its floor flashes a step */
 @media (prefers-reduced-motion: reduce) { .sheet, .sheet .box.drafted { animation: none; } }
 
 /* ---------------------------------------------------------------- home: whose move it is
@@ -1089,7 +1086,9 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .homein .brand .host { font-size: var(--t-ui); font-weight: 400; color: var(--ink-3); }
 .hsect { display: grid; gap: var(--s3); }
 /* List box: the files and commits in a dialog, home's lists (and its empty and lost states): 1 px rule, r3, rows divided by a rule. */
-.hlist, .sheet .flist, .sheet .clist, .hempty, .lost, .quote { border: 1px solid var(--rule); border-radius: var(--r3); }
+.hlist, .sheet .flist, .sheet .clist, .hempty, .lost, .quote { border: 1px solid transparent; border-radius: var(--r3); }
+.hempty, .lost { background: var(--bg); } /* on home's sheet, a tile of paper like the lists */
+.sheet .flist, .sheet .clist { background: var(--floor); } /* in a dialog, a well like its message box */
 .hlist, .hempty, .lost, .quote { overflow: hidden; }
 .sheet .frow + .frow, .sheet .crow + .crow { border-top: 1px solid var(--rule); }
 .hlist { display: grid; }
@@ -1219,7 +1218,7 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
    The drawing first and full width, at the page's own type sizes; under it what this part does (left) and how to
    review it (right). The drawing uses the page's vocabulary: boxes like rows, the file tree's M / A / D letters, ink
    for the change and light lines for what is around it. */
-.mapcard { margin: var(--s5) var(--s5) var(--s6); border: 1px solid var(--rule); border-radius: var(--r3); background: var(--bg); }
+.mapcard { margin: var(--s5) var(--s5) var(--s6); border: 1px solid transparent; border-radius: var(--r3); background: var(--bg); }
 .mapcard > .mh { display: flex; align-items: center; gap: var(--s5); height: 40px; padding: 0 var(--s4); border-bottom: 1px solid var(--rule); font-size: var(--t-ui); }
 .mapcard.shut > .mh { border-bottom: 0; }
 .mapcard.shut .mapbody { display: none; }
@@ -1410,7 +1409,7 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 .motefloat.flying .mote { visibility: hidden; }
 body:has(#motedock.flying) .lens:has(.of-mote) { display: none; }
 .moteflight { position: absolute; top: -8px; left: -24px; width: 96px; height: 64px; image-rendering: pixelated; pointer-events: none; }
-.motefloat .mw { position: absolute; left: 52px; bottom: 16px; max-width: 280px; padding: var(--s1) var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--raise); border: 1px solid var(--float); border-radius: var(--r2); font-size: var(--t-meta); color: var(--ink-2); pointer-events: none; }
+.motefloat .mw { position: absolute; left: 52px; bottom: 16px; max-width: 280px; padding: var(--s1) var(--s3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--float-fill); border: 1px solid transparent; border-radius: var(--r2); font-size: var(--t-meta); color: var(--ink-2); pointer-events: none; }
 .motefloat .mw:empty { display: none; }
 .motefloat.flip .mw { left: auto; right: 52px; }
 .scopebar .what .ord { font-size: inherit; }

@@ -53,25 +53,30 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   press and the scope button stand one (`--raised-soft`) and rise to two (`--raised`) only under the pointer, so a page
   of secondary actions stays quiet and the act is the one thing standing. (The bin's scope picker is a ghost, read-only
   chips are sunk, and a latched Viewed box stays down.)
-- **A well** (`--well`): a floor a step darker than the sheet (`--floor`) and one line of shade under its lip
-  (`--edge-in`). Writing in it, its sides go to ink-3 (`--well-in`, 4.7:1): that is a field's focus mark, from the
-  pointer or the keyboard alike, so a field takes no blue ring.
+- **No outlines.** Nothing is told from its ground by a line drawn round it: a thing is its fill, a step off what it
+  sits on. The rules that stay divide (panes, headers, rows, a table's rows); none boxes a thing in. Checkboxes keep
+  their square, which is the control itself, and the map's parts are a drawing. With forced colours, which drop fills,
+  what lost its outline takes the system's rule back (its border is kept, transparent, so nothing moves).
+- **A well** (`--well`): its floor alone, a step darker than the sheet (`--floor`), no lip and no sides. Writing in it
+  changes nothing round it: the caret is the focus mark, from the pointer or the keyboard alike, so a field takes no
+  blue ring.
 - **On white paper** (the diff column, the whole-file viewer, and what floats: menus, tips, the palette, dialogs) a
   face cannot be paler than its ground, so there a key's face is a tint of ink and a well's floor a lighter one
   (`--face-paper`, `--floor-paper`); the chosen segment is paper itself in the tinted channel. In dark the same values
   serve both grounds.
-- **What floats** over the page (menus, tips, the palette, dialogs, the selection's tools, Mote's word and label, the
-  lens's rim) is paper with a rule of ink-3 (`--float`) and casts nothing. A toast is ink.
+- **What floats** over the page casts nothing and has no rule; its fill sets it apart. With nothing behind it (menus,
+  tips, the selection's tools, the back slip, Mote's word and label, the lens's rim) it is `--float-fill`, a step of ink
+  off both the sheet and paper (lighter than both in dark, a pale grey in light), and a key in it is a step off that
+  fill. On a backdrop (the palette, dialogs) it is paper, and the dimmed page behind it is the edge. A toast is ink.
 - **The frame** (top bar, files, inspector) is the sheet: `--chrome`, flat and opaque, with a thin rule where it meets
   the code. A file's header that sticks over its code is opaque paper with its rule.
-- **One list**: the composite reliefs (`--raised`, `--raised-soft`, `--flat`, `--well`, `--well-in`, `--ink-raised`,
-  `--pressed`, `--ink-pressed`, the split button's halves, the draft's landing flash) are the same eight shadows in
+- **One list**: the composite reliefs (`--raised`, `--raised-soft`, `--flat`, `--well`, `--ink-raised`,
+  `--pressed`, `--ink-pressed`, the split button's halves) are the same eight shadows in
   the same order (five inset: the top edge, the sides, three spares; three outer: the skirt and two spares), unused
   ones transparent (`--t0`, `--o0`), so a press moves from one to the other instead of jumping. None has a blur radius.
-- **Edges that stay**: list boxes, the map card, checkboxes and the map's parts are surfaces or marks and keep their
-  rules. A map part is paper with a thin rule; a part of the change takes an ink rule (`--ink-2`); a part outside this
-  repository is a floor with no rule. A quote you can press (above a mark's thread) is a list box whose rule turns to
-  ink under the pointer.
+- **Edges that stay**: checkboxes and the map's parts. A map part is paper with a thin rule; a part of the change takes
+  an ink rule (`--ink-2`); a part outside this repository is a floor with no rule. List boxes, the map card and a quote
+  you can press (above a mark's thread) are fills with no rule: paper on the sheet, a well in a dialog.
 - **A box under the pointer**: a control that lies flat until the pointer finds it (a link, a picker, a tab, the map's
   toggle, a toast's action, a row of Marks) shows a box that stands 8 px (`--off`) off its first and last ink, on both
   sides alike: an icon's ink, not its square, so a leading icon or a trailing chevron is pulled in by its own empty
@@ -90,7 +95,7 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   (`--raised`).
   *Ghost*: lies flat in the sheet, `--ink-2`; under the pointer it is a low key (`--face`, `--raised-soft`). *Danger*: default with
   red text; a destructive confirm is a red key. All 28 px (24 in rows, 32 in dialog footers), padding 0 12 (0 8 at
-  24), 13 px 500, `--r2` (`--r1` at 24). A key hint is a `<kbd>` inside the button, after the label, pressed into it.
+  24), 13 px 500, `--r2` (`--r1` at 24). A key hint is a `<kbd>` inside the button, after the label: a chip of the button's own ink, with no outline.
   *Pressed* (by the pointer, or by its key: `strike.js` gives it `.struck`): sent down by its skirt (`--pressed` on
   `--face-down`; a primary `--ink-pressed` on its ink mixed 90% with the sheet), travelling one pixel, two for the act. It
   lands at once (50 ms) and eases back (140 ms). A split button is one key scored between its halves (a line of
@@ -104,9 +109,8 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   low key shows round its words (`--raised-soft`; 8 px of padding, `--off`, with 8 px taken back by margin, so the words keep their place),
   a press sends it down. Used for actions inside text or section headers ("All", "Rewrite", "Back to this change alone").
 - **Input / select / scope button**: 28 px, `--r2`, padding 0 8, 13 px, no border. An input (and a composer, and a
-  dialog's message box) is a well on `--floor`; writing in it, its sides darken (`--well-in`, on the composer and the
-  message box while anything in them has focus); that is their focus mark, with no blue ring (with forced colours, which
-  drop shadows, the system's highlight ring). A select is pressed, so the scope button is a key; the bin's own lies flat until the pointer makes it one. Large
+  dialog's message box) is a well on `--floor`; writing in it, its caret is the focus mark, with no ring (with forced
+  colours, the system's highlight ring). A select is pressed, so the scope button is a key; the bin's own lies flat until the pointer makes it one. Large
   inputs (home Open box, dialog title): 40 px, 14 px.
 - **Segmented control**: 24 px buttons inside a 28 px channel sunk into the sheet (`--floor`, `--well`), `--r2`
   channel, `--r1` buttons; the chosen one is a low key in it (`--face`, `--raised-soft`; paper itself on white paper) with ink text. Same everywhere (verdict, Write/Preview tabs are tabs, not segments).
@@ -148,7 +152,8 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   token-bucket", "Approve acme/widgets#12"), from the moment it opens; the preview only makes it exact. The body is what
   you write, or, for a dialog with nothing to write, what will happen drawn as itself (a push: the branch → its remote
   ref as chips, and the commits that go), never a list of one bullet. The footer says what else comes of it.
-- **List box** (files in a dialog, commits, home lists): 1 px `--rule`, `--r3`, rows divided by 1 px `--rule`.
+- **List box** (files in a dialog, commits, home lists): a fill with no rule round it (paper on home's sheet, `--floor` in a
+  dialog), `--r3`, rows divided by 1 px `--rule`.
 - **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`. A draft's words sit in a well that
   starts after its glyph, on the 20 px grid; its send is the primary.
 - **The + that starts a mark**: in the margin, in the empty room left of its side's line number (where a hidden mark's
@@ -158,7 +163,7 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   keeps the pin; its number still selects it.
 - **Going back** after a jump (a definition, a cited line, a search result): `[`, and a slip at the foot of the diff's
   column, bottom left, that names where it goes (`‹ Back to middleware.go:13 [`, the line left from, else the file the
-  diff was on, the map or the search). It is what floats (paper, `--float`), its words a link button 8 px off their ink
+  diff was on, the map or the search). It is what floats (`--float-fill`), its words a link button 8 px off their ink
   and its key a hint, each 12 px from its edge. It shows while the newest place to go back to is a jump, so not after
   `]` (which `[` undoes first), and not over the whole-file viewer, which keeps its own Back in its header. Nothing goes
   back in the top bar. The mouse's back button and `⌘[` do what `[` does while there is somewhere to go, instead of
