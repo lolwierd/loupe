@@ -537,7 +537,9 @@ export class Workspace {
         threads.push({ id: `pending:${c.nodeId}`, resolved: false, outdated: c.outdated, canResolve: false, canUnresolve: false, canReply: false, path: c.path, line: c.line, startLine: c.startLine, side: 'new', pending: true,
           comments: [{ id: c.id, nodeId: c.nodeId, author: c.author || pr.viewer, body: c.body, at: c.at, pending: true }] });
       }
-      this.github = { at: Date.now(), pr, threads, owner, repo, number, repoFull: `${owner}/${repo}`, pending: pending?.review || null, pendingError: pending?.error, prId: pending?.prId || null };
+      const texts = [pr.body, ...pr.timeline.map((t) => t.body), ...threads.flatMap((t) => t.comments.map((c) => c.body))];
+      const images = await GH.imageProxies(owner, repo, number, texts, this.github?.images).catch(() => this.github?.images || {});
+      this.github = { at: Date.now(), pr, threads, images, owner, repo, number, repoFull: `${owner}/${repo}`, pending: pending?.review || null, pendingError: pending?.error, prId: pending?.prId || null };
       // A checkout's base follows its PR's base, once GitHub has said what that is.
       if (this.rec.kind === 'local' && this.meta && pr.headRefName === this.meta.branch) this.sync().catch(() => {});
       if (this.rec.kind === 'pr') {

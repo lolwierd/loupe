@@ -37,6 +37,19 @@ mk.use({
 const KEEP = new Set(['a', 'abbr', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'details', 'div', 'dl', 'dt', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'input', 'ins', 'kbd', 'li', 'mark', 'ol', 'p', 'picture', 'pre', 'q', 's', 'samp', 'source', 'span', 'strike', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'tt', 'u', 'ul', 'var']);
 const DROP = new Set(['script', 'style', 'iframe', 'object', 'embed', 'form', 'link', 'meta', 'svg', 'math', 'template', 'noscript', 'textarea', 'select', 'button', 'video', 'audio']);
 const ATTRS = { a: ['href', 'title', 'class', 'data-p', 'data-l'], img: ['src', 'alt', 'title', 'width', 'height'], source: ['srcset', 'media'], details: ['open'], td: ['align', 'colspan', 'rowspan'], th: ['align', 'colspan', 'rowspan'], input: ['type', 'checked', 'disabled'], code: ['data-lang'], ol: ['start'], div: ['align'], p: ['align'], span: [] };
+// An image's address as the page may load it: GitHub's own as written, any other through GitHub's image proxy when the
+// daemon has its proxy address (S.github.images), else none, and the image is its alt text. The page loads images only
+// from GitHub, as GitHub's own pages do.
+const GITHUB_IMAGE = /^https:\/\/(github\.com|([\w-]+\.)+githubusercontent\.com)\//i;
+const viaGithub = (u) => (!/^https:\/\//i.test(u || '') ? null : GITHUB_IMAGE.test(u) ? u : S.github?.images?.[u] || null);
+// An image that does not load (gone at its source: a bot's badge that now answers 404) is its alt text, as a link's
+// words when it is a link's picture, not a broken icon.
+document.addEventListener?.('error', (e) => { // (a page; the tests' stand-in document has no events)
+  const img = e.target;
+  if (img?.tagName !== 'IMG' || !img.closest('.md')) return;
+  const alt = img.getAttribute('alt') || '';
+  (img.closest('picture') || img).replaceWith(document.createTextNode(alt));
+}, true);
 function clean(html, images) {
   const t = document.createElement('template');
   t.innerHTML = html;
@@ -50,8 +63,12 @@ function clean(html, images) {
       if (!KEEP.has(tag)) { walk(el); el.replaceWith(...el.childNodes); continue; }
       for (const a of [...el.attributes]) if (!(ATTRS[tag] || []).includes(a.name)) el.removeAttribute(a.name);
       if (tag === 'a') { const h = el.getAttribute('href') || ''; if (h && !/^https?:\/\//i.test(h)) el.removeAttribute('href'); if (el.hasAttribute('href')) { el.target = '_blank'; el.rel = 'noopener noreferrer'; } }
-      if (tag === 'img') { if (!/^https:\/\//i.test(el.getAttribute('src') || '')) { el.replaceWith(document.createTextNode(el.getAttribute('alt') || '')); continue; } el.loading = 'lazy'; el.referrerPolicy = 'no-referrer'; }
-      if (tag === 'source' && !/^https:\/\//i.test(el.getAttribute('srcset') || '')) { el.remove(); continue; }
+      if (tag === 'img') {
+        const src = viaGithub(el.getAttribute('src'));
+        if (!src) { el.replaceWith(document.createTextNode(el.getAttribute('alt') || '')); continue; }
+        el.setAttribute('src', src); el.loading = 'lazy'; el.referrerPolicy = 'no-referrer';
+      }
+      if (tag === 'source') { const set = viaGithub(el.getAttribute('srcset')); if (!set) { el.remove(); continue; } el.setAttribute('srcset', set); }
       if (tag === 'input') { if (el.getAttribute('type') !== 'checkbox') { el.remove(); continue; } el.disabled = true; }
       walk(el);
     }

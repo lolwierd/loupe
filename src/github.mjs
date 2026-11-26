@@ -95,6 +95,47 @@ export async function reviewThreads(owner, repo, number) {
   return out;
 }
 
+// An image from outside GitHub shows the way GitHub shows it, through its image proxy (camo): the page loads images
+// only from GitHub, and the proxy keeps whoever posted one from learning who reads it. Only GitHub can sign a proxy
+// address, so they are read from the PR's comments as GitHub renders them, where each image carries the address it was
+// written with beside the proxy's. Asked only when some text has an outside image the last answer did not cover.
+export const GITHUB_IMAGE = /^https:\/\/(github\.com|([\w-]+\.)+githubusercontent\.com)\//i; // the page's img-src, exactly
+export function outsideImages(texts) {
+  const out = new Set();
+  for (const t of texts) {
+    for (const m of String(t || '').matchAll(/(?:!\[[^\]]*\]\(\s*<?|\b(?:src|srcset)\s*=\s*["']?)(https:\/\/[^\s)"'<>]+)/gi)) {
+      if (!GITHUB_IMAGE.test(m[1])) out.add(m[1].replace(/&amp;/g, '&'));
+    }
+  }
+  return out;
+}
+const entity = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" };
+const unescape = (s) => s.replace(/&(amp|lt|gt|quot|#39);/g, (m, k) => entity[k]);
+// written address -> proxy address, from GitHub's HTML
+export function proxiedImages(html) {
+  const out = {};
+  for (const [tag] of String(html || '').matchAll(/<(?:img|source)\b[^>]*>/gi)) {
+    const written = /\sdata-canonical-src="([^"]*)"/i.exec(tag)?.[1];
+    const proxy = /\s(?:src|srcset)="(https:\/\/camo\.githubusercontent\.com\/[^"\s]*)"/i.exec(tag)?.[1];
+    if (written && proxy) out[unescape(written)] = unescape(proxy);
+  }
+  return out;
+}
+const RENDERED = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){bodyHTML
+  comments(last:100){nodes{bodyHTML}} reviews(last:100){nodes{bodyHTML comments(first:50){nodes{bodyHTML}}}}}}}`;
+export async function imageProxies(owner, repo, number, texts, known = {}) {
+  const want = [...outsideImages(texts)];
+  if (want.every((u) => u in known)) return Object.fromEntries(want.map((u) => [u, known[u]]));
+  const d = await ghJson(['api', 'graphql', '-f', `query=${RENDERED}`, '-f', `o=${owner}`, '-f', `r=${repo}`, '-F', `n=${number}`]);
+  const pr = d.data?.repository?.pullRequest;
+  if (!pr) return {};
+  const html = [pr.bodyHTML, ...(pr.comments?.nodes || []).map((c) => c.bodyHTML),
+    ...(pr.reviews?.nodes || []).flatMap((r) => [r.bodyHTML, ...(r.comments?.nodes || []).map((c) => c.bodyHTML)])];
+  // one GitHub did not proxy (past the first hundred comments, or a URL written oddly) is kept as null, so it is not
+  // asked about again every minute
+  return { ...Object.fromEntries(want.map((u) => [u, null])), ...proxiedImages(html.join('\n')) };
+}
+
 // Your review on a PR that is started but not submitted (GitHub keeps one per person): its comments are drafts only
 // you can see. loupe adds to it and submits it, so a review begun on GitHub and one begun here are the same review.
 const DRAFT_COMMENTS = 'pageInfo{hasNextPage endCursor} nodes{id databaseId body path line startLine originalLine originalStartLine outdated createdAt author{login}}';
