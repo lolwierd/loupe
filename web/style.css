@@ -1271,7 +1271,7 @@ canvas.spark.landed { animation: landed 360ms var(--ease) 1; }
 .mapdock .dockbar { display: flex; align-items: stretch; gap: var(--s5); height: 36px; padding: 0 var(--s5); border-bottom: 1px solid var(--rule); min-width: 0; }
 .mapdock .dglegend { flex: 0 1 auto; flex-wrap: nowrap; align-self: center; min-width: 0; margin: 0; overflow: hidden; }
 .mapdock .dockbar > .link { align-self: center; flex-shrink: 0; }
-.mapdock .dockview { overflow: auto; overscroll-behavior: contain; padding: var(--s5); }
+.mapdock .dockview { overflow: auto; overscroll-behavior: contain; padding: var(--s4) var(--s5); } /* 12 above and below (map.js counts them), 16 at the sides */
 .mapdock .dgsvg { display: block; max-width: none; }
 .mapdock .dgsvg .nd.here rect { fill: var(--press); }
 .dockrz { position: absolute; left: 0; right: 0; top: -4px; height: 7px; cursor: row-resize; z-index: 5; }

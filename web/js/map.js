@@ -4,8 +4,9 @@
 // The drawing speaks loupe's own language, so it reads like the rest of the page. A part is a box drawn like a row:
 // its name, and under it the file it lives in. What the change touches carries the file tree's letters (M changed,
 // A new, D removed) and the ink; what it leaves alone is drawn light, so the change stands out against its context.
-// Parts outside this repository sit on the frame's grey. A flow is drawn as lanes: the parts across the top, the steps
-// down the page in order, one arrow each.
+// Parts outside this repository sit on the frame's grey. A flow is drawn as lanes, one per part, with one numbered
+// arrow per step, across (the parts down the left, the steps left to right, as tall as the flow has parts) or down (the
+// parts across the top, the steps down the page, as tall as it has steps): of the two that fit, the shorter.
 //
 // Claude places the parts of a map on a small grid; everything else is measured here. Boxes are as wide as their
 // names, columns as wide as their widest box, the gaps between columns as wide as the labels that sit in them, and
@@ -47,11 +48,11 @@ function wrapName(s, font, max) { // max 0: no limit, only the best break
   if (!max) return best ? [best.a, best.b] : [s];
   return best ? [fit(best.a, font, max), fit(best.b, font, max)] : [fit(s, font, max)];
 }
-function wrap(s, font, max) {
+function wrap(s, font, max, most = 3) {
   const lines = []; let cur = '';
   for (const w of s.split(/\s+/).filter(Boolean)) { const t = cur ? `${cur} ${w}` : w; if (cur && tw(t, font) > max) { lines.push(cur); cur = w; } else cur = t; }
   if (cur) lines.push(cur);
-  return lines.slice(0, 3);
+  return lines.slice(0, most);
 }
 
 // a part's box: as wide as its name or its file, with the change letter in front like a row of the file tree
@@ -376,15 +377,75 @@ function mapSVG(d, f, id, dir, limit = 0) {
   return sheet(x0, y0, x1 - x0, y1 - y0, d.title, `${markers(id)}${groups}${edges}${[...at.values()].map(partSVG).join('')}${labels}`);
 }
 
-// a flow as lanes: the parts across the top in the order the steps first reach them, a line down from each, and one
-// numbered arrow per step, each lane gap wide enough for the labels that cross it
-function flowSVG(d, f, id, width = 0) {
+// a flow's steps in order, and its parts in the order the steps first reach them (a part no step reaches comes last)
+function flowOrder(d) {
   const steps = d.edges.map((e, i) => ({ ...e, i, n: e.step || i + 1 })).sort((a, b) => a.n - b.n || a.i - b.i);
   const order = [];
   for (const e of steps) for (const k of [e.from, e.to]) if (!order.includes(k)) order.push(k);
   for (const n of d.nodes) if (!order.includes(n.id)) order.push(n.id);
-  const lane = new Map(order.map((k, i) => [k, i]));
-  const nodes = order.map((k) => d.nodes.find((n) => n.id === k));
+  return { steps, lane: new Map(order.map((k, i) => [k, i])), nodes: order.map((k) => d.nodes.find((n) => n.id === k)) };
+}
+
+// a flow across ('lr'): the parts down the left, a line across from each, and the steps in order left to right, one
+// column each: its numbered arrow runs from the part that acts to the part it reaches, and its number and words sit
+// beside the arrow's start, in the gap between that lane and the next, so they never lie on a lane's line. As tall as
+// the flow has parts and as wide as its steps' words, so it suits a wide, short place (the map under the code, a card
+// with room across); the lanes down ('tb', below) suit a narrow one. Given a width, it tightens until it fits: the
+// steps' words wrapped shorter, then the widest part's name on two lines (its file left to the tooltip), one at a time.
+const LANE = 56, STEP_GAP = 14;
+function flowAcrossSVG(d, f, id, width = 0) {
+  const { steps, lane, nodes } = flowOrder(d);
+  const full = nodes.map((n) => part(n, f)), two = nodes.map((n) => part(n, f, 'two'));
+  // a step's words in at most three lines (all a lane's gap holds), never losing one: wrapped at max where three lines
+  // hold them, else wider; past three lines even at the widest, the last ends in an ellipsis
+  const words3 = (s, max) => {
+    for (const m of [max, 80, LINE_MAX].filter((m) => m >= max)) { const l = wrap(s, f.edge, m, 99); if (l.length <= 3) return l; }
+    const l = wrap(s, f.edge, LINE_MAX, 99);
+    return [...l.slice(0, 2), fit(l.slice(2).join(' '), f.edge, LINE_MAX)];
+  };
+  const lay = (use, max) => {
+    const parts = nodes.map((n, i) => ({ ...n, ...use[i], x: 0, y: i * LANE }));
+    let x = Math.max(...parts.map((p) => p.w)) + 16;
+    const cols = steps.map((e) => {
+      const lines = e.label ? words3(e.label, max) : [];
+      const words = lines.length ? Math.max(...lines.map((l) => tw(l, f.edge))) : 0;
+      const c = { e, x: Math.round(x), lines, words };
+      x += 6 + 16 + (words ? 6 + words : 0) + STEP_GAP;
+      return c;
+    });
+    return { parts, cols, end: Math.ceil(x - STEP_GAP + 8) };
+  };
+  const use = full.slice(), fits = (L) => !width || L.end + PAD * 2 <= width;
+  let max = LINE_MAX, L = lay(use, max);
+  for (const m of [80, 64]) { if (fits(L)) break; max = m; L = lay(use, max); }
+  while (!fits(L)) { // the widest part that can narrow, narrowed; the column is as wide as its widest
+    let k = -1;
+    use.forEach((u, i) => { if (u !== two[i] && two[i].w < u.w && (k < 0 || u.w > use[k].w)) k = i; });
+    if (k < 0) break;
+    use[k] = two[k]; L = lay(use, max);
+  }
+  const { parts, cols, end } = L;
+  const mid = (k) => k * LANE + NODE_H / 2; // a lane's line runs through the middle of its part
+  const last = (parts.length - 1) * LANE + NODE_H;
+  const lines = parts.map((p, i) => `<path class="ll" d="M${p.w},${mid(i) + 0.5} L${end},${mid(i) + 0.5}"/>`).join('');
+  const arrows = cols.map(({ e, x: cx, lines: ls, words }) => {
+    const a = lane.get(e.from), b = lane.get(e.to), dir = Math.sign(b - a) || (a ? -1 : 1), ax = cx + 0.5;
+    const ya = mid(a), yb = mid(b), gap = mid(a) + (dir * LANE) / 2; // the gap beside the arrow's start
+    // a step from a part to itself: a short arrow from the gap to its own line
+    const path = a === b ? `M${ax},${gap} L${ax},${ya + dir}` : `M${ax},${ya + dir} L${ax},${yb - dir}`;
+    const h = Math.max(16, ls.length * LINE_H), top = gap - h / 2, tx = cx + 6;
+    const text = ls.map((l, k) => `<text x="${tx + 22}" y="${(gap - (ls.length * LINE_H) / 2 + k * LINE_H + 10.5).toFixed(1)}">${esc(l)}</text>`).join('');
+    return `<path class="ed ${e.change}" data-e="${e.i}" data-a="${esc(e.from)}" data-b="${esc(e.to)}" d="${path}" marker-end="url(#${id}-${e.change})"/>` +
+      `<g class="el ${e.change}" data-e="${e.i}"><rect class="bg" x="${tx - 3}" y="${(top - 2).toFixed(1)}" width="${Math.ceil(22 + (words ? 6 + words : 0)) + 3}" height="${h + 4}"/>` +
+      `<rect class="sb" x="${tx}" y="${(gap - 8).toFixed(1)}" width="16" height="16" rx="4"/><text class="sn" x="${tx + 8}" y="${(gap + 4).toFixed(1)}" text-anchor="middle">${e.n}</text>${text}</g>`;
+  }).join('');
+  return sheet(-PAD, -PAD, end + PAD * 2, last + PAD * 2, d.title, `${markers(id)}${lines}${arrows}${parts.map(partSVG).join('')}`);
+}
+
+// a flow as lanes down ('tb'): the parts across the top in the order the steps first reach them, a line down from
+// each, and one numbered arrow per step, each lane gap wide enough for the labels that cross it
+function flowSVG(d, f, id, width = 0) {
+  const { steps, lane, nodes } = flowOrder(d);
   const full = nodes.map((n) => part(n, f)), two = nodes.map((n) => part(n, f, 'two'));
   const need = (e) => 16 + (e.label ? 6 + tw(e.label, f.edge) : 0) + 28;
   const span = (e) => Math.abs(lane.get(e.from) - lane.get(e.to));
@@ -409,7 +470,9 @@ function flowSVG(d, f, id, width = 0) {
     if (k < 0) break;
     use[k] = two[k]; cx = centres(use);
   }
-  if (width && cx.length > 1) { // what is left over spreads evenly, so the lanes fill the column
+  // what is left over after narrowing spreads evenly, so the lanes fill the column; a flow that fits as it is keeps
+  // its own width rather than stretching across a wide one
+  if (width && cx.length > 1 && use.some((u, i) => u !== full[i])) {
     const spare = limit - (cx[cx.length - 1] + use[use.length - 1].w / 2);
     if (spare > 0) for (let k = 1; k < cx.length; k++) cx[k] += (spare * k) / (cx.length - 1);
   }
@@ -429,32 +492,44 @@ function flowSVG(d, f, id, width = 0) {
   return sheet(x0 - PAD, -PAD, x1 - x0 + PAD * 2, last + 16 + PAD * 2, d.title, `${markers(id)}${lines}${arrows}${heads}`);
 }
 
-const drawn = new Map(); // a drawing depends only on its diagram and its turn, and the card re-renders often
+const drawn = new Map(); // a drawing depends only on its diagram, its form, its room and its place; the card re-renders often
 let uid = 0;
-// a map turns ('lr' or 'tb'); a flow keeps its lanes and narrows its part names ('lr' or 'tb', which means compact)
+// Three ways to draw one: 'lr' as laid out (a map as Claude placed it, a flow with its steps across); 'fit' the same
+// but narrowed to the room across (a map's widest names on two lines, a flow's steps' words wrapped shorter, then its
+// widest names); 'tb' turned (a map read top to bottom, a flow's lanes down), also fitted to the room.
 // fits: the room it has across, the card's unless said (the map under the code has the whole column). where: the place
 // it is shown (the card, the dialog, the dock), each with its own copy: its arrowheads are markers found by id, so two
 // places sharing one would draw bare lines in the second while the first is folded away
 function draw(d, dir = 'lr', fits = room(), where = 'card') {
-  const width = dir === 'tb' ? Math.floor(fits / 8) * 8 : 0; // a turned map and narrow lanes fit the column
+  const width = dir === 'lr' ? 0 : Math.floor(fits / 8) * 8;
   const key = where + dir + width + JSON.stringify(d);
   if (!drawn.has(key)) {
     if (drawn.size > 24) drawn.clear();
-    const f = fonts(), id = `dg${++uid}`;
-    const svg = d.kind === 'flow' ? flowSVG(d, f, id, width) : mapSVG(d, f, id, dir, width);
-    drawn.set(key, { svg, w: Number(/ width="(\d+)"/.exec(svg)?.[1]) || 0 });
+    const f = fonts(), id = `dg${++uid}`, turn = dir === 'tb' ? 'tb' : 'lr';
+    const svg = d.kind !== 'flow' ? mapSVG(d, f, id, turn, width) : turn === 'lr' ? flowAcrossSVG(d, f, id, width) : flowSVG(d, f, id, width);
+    drawn.set(key, { svg, w: Number(/ width="(\d+)"/.exec(svg)?.[1]) || 0, h: Number(/ height="(\d+)"/.exec(svg)?.[1]) || 0 });
   }
   return drawn.get(key);
 }
 export const diagramSVG = (d, dir, fits, where) => draw(d, dir, fits, where).svg;
-// the room the drawing has inside the card; a map that does not fit across turns to read top to bottom
+// the room the drawing has inside the card; a drawing that does not fit across narrows, and turns only if that is not
+// enough (a turned drawing is much the taller)
 const room = () => { const c = $('#cards'); return c ? c.clientWidth - 2 * 16 - 2 - 2 * 16 : innerWidth - 700; };
 // opening it large helps only when the whole drawing, as Claude laid it out, fits the window but not the column
+// A map keeps Claude's layout while it can (as laid out, then narrowed, then turned). A flow takes, of the forms that
+// fit across, the shorter: across is the shorter while a flow has many steps for its parts, down while it has few.
+// When none fits, the narrowest, which scrolls the least. Only the forms it needs are drawn (each is a layout).
 function pickDir(d, fits = room()) {
-  const lr = draw(d, 'lr', fits).w;
-  if (lr <= fits) return 'lr';
-  return draw(d, 'tb', fits).w < lr ? 'tb' : 'lr';
+  const form = (dir, k) => ({ dir, k, ...draw(d, dir, fits) }), lr = form('lr', 0);
+  if (d.kind !== 'flow' && lr.w <= fits) return 'lr';
+  const forms = [lr, ...(lr.w <= fits ? [] : [form('fit', 1)]), form('tb', 2)];
+  const fitting = forms.filter((c) => c.w <= fits);
+  if (fitting.length) return (d.kind === 'flow' ? fitting.sort((a, b) => a.h - b.h || a.k - b.k) : fitting)[0].dir;
+  return forms.sort((a, b) => a.w - b.w || a.k - b.k)[0].dir;
 }
+// in the dialog a map is drawn as laid out (the reason to open it large); a flow the shorter way that fits the window
+const bigDir = (d) => (d.kind === 'flow' ? pickDir(d, bigRoom()) : 'lr');
+const bigRoom = () => Math.max(320, innerWidth - 96);
 
 // ------------------------------------------------------------------ the card
 // the key shows only what this drawing uses
@@ -559,7 +634,7 @@ function openLarge(focusNode, at) {
       ? `<div class="dgtabs big" role="tablist" aria-label="Drawings">${ds.map((x, j) => `<button role="tab" data-mb="tab" data-i="${j}" aria-selected="${j === i}"${j === i ? ' id="mapbigt"' : ''}>${esc(name(x))}</button>`).join('')}</div>`
       : `<h2 class="t" id="mapbigt">${esc(name(active))}</h2>`;
     scrim.innerHTML = `<div class="sheet k-map" role="dialog" aria-modal="true" aria-labelledby="mapbigt" id="mapbig"><header class="shh">${head}${legend(active)}<button class="icon" data-mb="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
-      `<div class="mbview">${diagramSVG(active, 'lr', undefined, 'big')}</div>${active.caption ? `<p class="mbcap">${inline(active.caption, { images: modelKind(b?.model) !== 'codex', citations: b?.citations })}</p>` : ''}</div>`;
+      `<div class="mbview">${diagramSVG(active, bigDir(active), bigRoom(), 'big')}</div>${active.caption ? `<p class="mbcap">${inline(active.caption, { images: modelKind(b?.model) !== 'codex', citations: b?.citations })}</p>` : ''}</div>`;
   };
   fill();
   const close = () => { scrim.remove(); document.removeEventListener('keydown', key, true); (opener?.isConnected ? opener : $('#mapcard [data-act="mapbig"]'))?.focus(); };
@@ -630,7 +705,7 @@ function watchWidth() {
   observer = new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => {
     const fig = $('#mapcard .dg'), items = tabsOf(S.review.brief), d = items[pickedTab(items)]?.d;
     if (!fig || !d) return;
-    const dir = pickDir(d), lanes = dir === 'tb' && Math.abs(room() - Number(fig.dataset.room)) >= 8;
+    const dir = pickDir(d), lanes = dir !== 'lr' && Math.abs(room() - Number(fig.dataset.room)) >= 8; // fitted to the room it had
     if (fig.dataset.dir !== dir || lanes) hooks.mapChanged?.();
   }, 120); });
   observer.observe(cards);
@@ -677,20 +752,32 @@ document.addEventListener('keydown', (e) => {
 // ------------------------------------------------------------------ the map under the code
 // The drawing kept at the foot of the code column, so the map and the code are in view at once (b, or its latch in the
 // top bar; remembered in this browser). A pane of the frame, as the files and the inspector are, with the code column's
-// width: the drawing reads left to right where it fits and turns where it does not, as on the card. It is as tall as
-// its drawing, up to two fifths of the column, until its top edge is dragged (a double-click there fits it again). A part
-// you click opens its lines above and the drawing stays; the part that holds the file you are reading is marked, and
-// kept in view. Drawings only: a scene has one player, and it plays in the card.
-const DOCK_MIN = 120, DOCK_PAD = 16, DOCK_BAR = 37; // its bar is 36 and a rule
+// width. It is the whole drawing wherever it can be: as tall as the drawing, up to what leaves the code 320 px, and of
+// a drawing's three forms it takes the one that shows the most of it, then the shorter. Dragging its top edge sets how
+// tall it may get, never taller than its drawing; a double-click there gives the default back. A part you click opens
+// its lines above and the drawing stays; the part that holds the file you are reading is marked, and kept in view.
+// Drawings only: a scene has one player, in the card.
+const DOCK_MIN = 120, DOCK_PAD = 12, DOCK_BAR = 37, CODE_MIN = 320; // its bar is 36 and a rule
 let dockKey = '', dockRO = null, dockT = 0;
 const dockDiagrams = () => S.review?.brief?.diagrams || [];
 export const dockOpen = () => !!pref.get('mapDock', false) && dockDiagrams().length > 0;
 const dockAt = (ds) => { const id = pref.get('dockTab', null), i = ds.findIndex((d) => (d.id ?? d.title) === id); return i >= 0 ? i : 0; };
 const refPath = (ref) => /^(.*?)(?::\d+)?$/.exec(ref || '')?.[1] || '';
 const holds = (ref, p) => { const r = refPath(ref); return !!r && !!p && (r === p || p.endsWith('/' + r)); };
-function dockHeight(main, natural) {
-  const most = Math.max(DOCK_MIN, main.clientHeight - 160), set = pref.get('dockH', null);
-  return Math.round(Math.min(most, Math.max(DOCK_MIN, set ?? Math.min(natural, main.clientHeight * 0.4))));
+// how tall the dock may get: what you dragged it to, else what leaves the code its 320 px; never past 160 px from the top
+const dockCap = (main) => {
+  const H = main.clientHeight, most = Math.max(DOCK_MIN, H - 160);
+  return Math.round(Math.min(most, Math.max(DOCK_MIN, pref.get('dockMax', null) ?? H - CODE_MIN)));
+};
+const dockNeeds = (h) => DOCK_BAR + h + DOCK_PAD * 2; // the dock that shows a drawing h tall whole
+// of the drawings it could show (as laid out; across but tightened to the column; turned), the one that shows the most
+// of the drawing without scrolling, then the shorter (more room for the code), then the earlier in that list
+function dockPick(d, fits, cap) {
+  const room = cap - dockNeeds(0), form = (dir, k) => ({ dir, k, ...draw(d, dir, fits, 'dock') }), lr = form('lr', 0);
+  const forms = [lr, ...(lr.w <= fits ? [] : [form('fit', 1)]), form('tb', 2)]; // narrowed is as laid out when that fits
+  const shown = (c) => Math.min(1, fits / Math.max(1, c.w)) * Math.min(1, room / Math.max(1, c.h));
+  return forms.map((c) => ({ ...c, shown: shown(c) })) // exact: a form a pixel too wide does not tie with one that fits
+    .sort((a, b) => (Math.abs(b.shown - a.shown) > 1e-9 ? b.shown - a.shown : 0) || a.h - b.h || a.k - b.k)[0];
 }
 export function renderDock() {
   const el = $('#mapdock'), main = $('#main'), latch = $('[data-act="toggledock"]');
@@ -712,9 +799,9 @@ export function renderDock() {
     });
     dockRO.observe(col); dockRO.observe(main);
   }
-  const i = dockAt(ds), d = ds[i], fits = Math.max(0, (col?.clientWidth || main.clientWidth) - 2 * DOCK_PAD);
-  const dir = pickDir(d, fits), drawn = draw(d, dir, fits, 'dock');
-  const key = JSON.stringify([ds.map((x) => [x.id, x.title]), i, dir, dir === 'tb' ? fits : 0, drawn.svg.length, d]);
+  const i = dockAt(ds), d = ds[i], fits = Math.max(0, (col?.clientWidth || main.clientWidth) - 2 * 16), cap = dockCap(main);
+  const drawn = dockPick(d, fits, cap), { dir } = drawn;
+  const key = JSON.stringify([ds.map((x) => [x.id, x.title]), i, dir, dir === 'lr' ? 0 : fits, drawn.svg.length, d]);
   if (key !== dockKey || !el.querySelector('.dockview')) { // or a fresh frame's empty dock
     const view = el.querySelector('.dockview'), keep = view && el.dataset.d === String(d.id ?? d.title) ? [view.scrollTop, view.scrollLeft] : null;
     const name = (x) => x.title || (x.kind === 'flow' ? 'Flow' : 'Map');
@@ -728,8 +815,9 @@ export function renderDock() {
     if (keep) { const v = el.querySelector('.dockview'); v.scrollTop = keep[0]; v.scrollLeft = keep[1]; }
     dockKey = key;
   }
-  const h = Number(/ height="(\d+)"/.exec(drawn.svg)?.[1]) || 0;
-  main.style.setProperty('--dock-h', dockHeight(main, DOCK_BAR + h + DOCK_PAD * 2) + 'px');
+  const need = dockNeeds(drawn.h);
+  el.dataset.need = need; // the drag stops here: past it there is nothing more to show
+  main.style.setProperty('--dock-h', Math.max(DOCK_MIN, Math.min(cap, need)) + 'px');
   dockHere();
 }
 // the part that holds the file you are reading, marked, and brought into view unless the pointer is on the drawing
@@ -770,8 +858,17 @@ document.addEventListener('mousedown', (e) => {
   const startY = e.clientY, start = $('#mapdock').getBoundingClientRect().height;
   rz.classList.add('drag');
   let moved = false; // a click that does not move keeps the height fitting the drawing
-  const move = (ev) => { if (ev.clientY === startY && !moved) return; moved = true; const h = Math.round(Math.min(Math.max(DOCK_MIN, main.clientHeight - 160), Math.max(DOCK_MIN, start + startY - ev.clientY))); main.style.setProperty('--dock-h', h + 'px'); };
-  const up = () => { rz.classList.remove('drag'); removeEventListener('mousemove', move); removeEventListener('mouseup', up); const h = parseInt(main.style.getPropertyValue('--dock-h'), 10); if (moved && h) pref.set('dockH', h); };
+  const need = Number($('#mapdock').dataset.need) || Infinity; // never taller than the drawing
+  const move = (ev) => { if (ev.clientY === startY && !moved) return; moved = true; const h = Math.round(Math.min(need, Math.max(DOCK_MIN, main.clientHeight - 160), Math.max(DOCK_MIN, start + startY - ev.clientY))); main.style.setProperty('--dock-h', h + 'px'); };
+  // let go: the height is the ceiling; pulled up until it stopped (the whole drawing shown) it asks for no ceiling lower
+  // than the default, so a taller drawing on another tab is not held to this one's height. The form is picked again.
+  const up = () => {
+    rz.classList.remove('drag'); removeEventListener('mousemove', move); removeEventListener('mouseup', up);
+    const h = parseInt(main.style.getPropertyValue('--dock-h'), 10);
+    if (!moved || !h) return;
+    pref.set('dockMax', h >= need ? Math.max(h, main.clientHeight - CODE_MIN) : h);
+    renderDock();
+  };
   addEventListener('mousemove', move); addEventListener('mouseup', up);
 });
-document.addEventListener('dblclick', (e) => { if (e.target.closest?.('[data-dockrz]')) { pref.set('dockH', null); renderDock(); } });
+document.addEventListener('dblclick', (e) => { if (e.target.closest?.('[data-dockrz]')) { pref.set('dockMax', null); renderDock(); } });

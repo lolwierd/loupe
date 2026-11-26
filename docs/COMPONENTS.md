@@ -168,14 +168,25 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   `]` (which `[` undoes first), and not over the whole-file viewer, which keeps its own Back in its header. Nothing goes
   back in the top bar. The mouse's back button and `⌘[` do what `[` does while there is somewhere to go, instead of
   leaving the review.
+- **A drawing** (in the map card, the map under the code and the dialog): a map is drawn as Claude laid it out where
+  that fits across, its widest names on two lines where that makes it fit, and turned to read top to bottom only when
+  even that does not, since a turned drawing is much the taller. A flow is a lane per part and a numbered arrow per
+  step, drawn across or down, whichever of the two that fit is the shorter. Across: the parts down the left, the steps
+  left to right, one column each, its number and words beside its arrow's start in the gap between two lanes (never on
+  a lane's line), so it is as tall as the flow has parts; short of room its words wrap shorter (three lines at most,
+  none lost), then its widest names go on two lines. Down: the parts across the top and the steps down the page, as
+  tall as it has steps, at its own width (it spreads across the room only once its names were narrowed to fit). When
+  no form fits, the narrowest is drawn, which scrolls the least.
 - **The map under the code**: the change's drawings kept at the foot of the code column, so the map and the code are
   in view at once. A pane of the frame, as the files and the inspector are: its latch sits between theirs in the top bar
   (the bottom-panel icon, `b`), shown only when the brief has a drawing, and it is remembered in this browser across both
   layouts. It is paper, as the code column is, with a rule where it meets the code; its bar is the map card's (the
-  drawings as tabs, the key, Open large) on a 36 px row with its rule. The drawing has the column's width: it reads left
-  to right where that fits and turns where it does not, as on the card, and scrolls both ways. It is as tall as the
-  drawing, up to two fifths of the column, until its top edge is dragged (a 1 px `--ink-3` line under the pointer, as on
-  the panes' sides); a double-click there fits it again. A part clicked opens its lines above and the drawing stays; `[`
+  drawings as tabs, the key, Open large) on a 36 px row with its rule. It shows the whole drawing wherever it can, so
+  nothing scrolls if that can be helped: it is as tall as the drawing, up to what leaves the code 320 px, and of the
+  drawing's three forms (as laid out; the same narrowed to the column; turned) it takes the one that shows the most of
+  it, then the shorter. A drawing is never scaled, so what still does not fit scrolls. Its top edge, dragged (a 1 px
+  `--ink-3` line under the pointer, as on the panes' sides), sets how tall it may get, never taller than its drawing; a
+  double-click there gives the default back. A part clicked opens its lines above and the drawing stays; `[`
   goes back to the file that was read. The part that holds the file being read has the current fill (`--press`) and is
   kept in view, unless the pointer is on the drawing. Drawings only: a scene has one player, in the card. The back slip
   and the whole-file viewer stay in the code above it, and Mote, in his own spot, stands above it.

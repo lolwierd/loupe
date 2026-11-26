@@ -304,6 +304,45 @@ test('the map routes a full grid with 24 edges and reuses a drawing at the same 
   assert.equal(measured, first);
 });
 
+test('a flow runs across as tall as its parts, keeps its words off the lanes, and narrows to fit', () => {
+  const source = fs.readFileSync(new URL('../web/js/map.js', import.meta.url), 'utf8')
+    .replace(/^import .*$/gm, '').replace(/^export /gm, '');
+  const parts = ['client', 'handler', 'limiter', 'store'];
+  const d = {
+    kind: 'flow', title: 'One request', groups: [],
+    nodes: parts.map((id) => ({ id, label: 'The ' + id + ' of this request path', ref: id + '/main.go', change: 'changed' })),
+    edges: [['client', 'handler'], ['handler', 'limiter'], ['limiter', 'store'], ['store', 'store'], ['store', 'handler'], ['handler', 'client']]
+      .map(([from, to], i) => ({ from, to, step: i + 1, label: 'step ' + (i + 1) + ' sends the request along', change: 'changed' })),
+  };
+  const context = vm.createContext({
+    d, $: () => ({ clientWidth: 2000 }), hooks: {}, esc: String,
+    document: { addEventListener() {}, createElement: () => ({ getContext: () => ({ measureText: (t) => ({ width: t.length * 7 }) }) }) },
+    getComputedStyle: () => ({ getPropertyValue: () => '' }),
+  });
+  vm.runInContext(source, context);
+  const size = (svg) => /width="(\d+)" height="(\d+)"/.exec(svg).slice(1).map(Number);
+  const across = vm.runInContext('diagramSVG(d, "lr")', context), down = vm.runInContext('diagramSVG(d, "tb", 2000)', context);
+  assert.equal((across.match(/class="ed /g) || []).length, 6);
+  assert.doesNotMatch(across, /NaN|Infinity/);
+  assert.equal(size(across)[1], (parts.length - 1) * 56 + 44 + 4); // a lane per part, not a row per step
+  assert.ok(size(across)[1] < size(down)[1]);
+  // every step's words sit between two lanes' lines, never on one
+  const lanes = [...across.matchAll(/class="ll" d="M[\d.]+,([\d.]+)/g)].map((m) => Number(m[1]));
+  for (const m of across.matchAll(/<rect class="bg" x="[\d.-]+" y="([\d.-]+)" width="[\d.]+" height="([\d.]+)"/g)) {
+    const top = Number(m[1]), bottom = top + Number(m[2]);
+    assert.ok(lanes.every((y) => y <= top || y >= bottom), `a step's words cross a lane at ${top}..${bottom}`);
+  }
+  // given less room across, it fits it: the words wrapped shorter, then the names on two lines; no step loses a word
+  const room = size(across)[0] - 40, fit = vm.runInContext(`diagramSVG(d, "fit", ${room})`, context);
+  assert.ok(size(fit)[0] <= Math.floor(room / 8) * 8, `${size(fit)[0]} > ${room}`);
+  for (const e of d.edges) for (const w of e.label.split(' ')) assert.ok(fit.includes(w), `"${w}" of "${e.label}" is gone`);
+  // a flow with few steps for its parts is shorter down, and there keeps its own width rather than filling the room
+  const short = { ...d, edges: d.edges.slice(0, 2) };
+  context.short = short;
+  assert.equal(vm.runInContext('pickDir(short, 2000)', context), 'tb');
+  assert.equal(size(vm.runInContext('diagramSVG(short, "tb", 2000)', context))[0], size(vm.runInContext('flowSVG(short, fonts(), "n", 0)', context))[0]);
+});
+
 test('a file refresh keeps a brief event newer than its review snapshot', async () => {
   const source = fs.readFileSync(new URL('../web/js/main.js', import.meta.url), 'utf8');
   const load = source.slice(source.indexOf('let fileRequest'), source.indexOf('  S.github ||='));
