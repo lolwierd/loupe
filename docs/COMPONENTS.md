@@ -42,17 +42,17 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   and for anything under the pointer. In dark it also has a lit line inside its top (`--lit`); in light the paper's own
   contrast is enough. Pressing a key sends it down by its skirt: the skirt goes, the face dims a touch (`--face-down`),
   one line of shade shows under its top edge (`--edge-in`), and the key travels one pixel (two for the act). A latch
-  stays down while it is on: the top bar's Files and Inspector toggles, and a file's Viewed box once the file is viewed.
+  stays down while it is on: the top bar's Files, Map and Inspector toggles.
   Halves of a split button, segments, tabs and the tally do not travel, so no seam opens between neighbours.
 - **Ghosts**: everything else you can press lies flat in the page until the pointer makes it a key: ghost and icon
-  buttons, link buttons (a key round their words, standing out by its padding so the words keep their place), the model
-  picker, the map card's title, an open mark's place (`file · line`), a pull request's figures, "N more lines", a
-  hidden mark's pin, a toast's action (on the ink, keeping its underline), and tabs (a key shows behind the word; the
-  selected tab keeps its ink underline).
+  buttons, a file's Viewed box (viewed or not: its box says which), link buttons (a key round their words, standing
+  out by its padding so the words keep their place), the model picker, the map card's title, an open mark's place
+  (`file · line`), a pull request's figures, "N more lines", a hidden mark's pin, a toast's action (on the ink,
+  keeping its underline), and tabs (a key shows behind the word; the selected tab keeps its ink underline).
 - **Two heights**: the act (a primary, ink) stands two pixels at rest; a default (secondary) button, a chip you can
-  press and the scope button stand one (`--raised-soft`) and rise to two (`--raised`) only under the pointer, so a page
-  of secondary actions stays quiet and the act is the one thing standing. (The bin's scope picker is a ghost, read-only
-  chips are sunk, and a latched Viewed box stays down.)
+  press and the scope button stand one (`--raised-soft`) and rise to two (`--raised`) only under the pointer, so a
+  page of secondary actions stays quiet and the act is the one thing standing. (The bin's scope picker and a file's
+  Viewed box are ghosts, and read-only chips are sunk.)
 - **No outlines.** Nothing is told from its ground by a line drawn round it: a thing is its fill, a step off what it
   sits on. The rules that stay divide (panes, headers, rows, a table's rows); none boxes a thing in. Checkboxes keep
   their square, which is the control itself, and the map's parts are a drawing. With forced colours, which drop fills,
@@ -65,7 +65,7 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   (`--face-paper`, `--floor-paper`); the chosen segment is paper itself in the tinted channel. In dark the same values
   serve both grounds.
 - **What floats** over the page casts nothing and has no rule; its fill sets it apart. With nothing behind it (menus,
-  tips, the selection's tools, the back slip, Mote's word and label, the lens's rim) it is `--float-fill`, a step of ink
+  tips, the selection's tools, the back slip, Mote's word and label) it is `--float-fill`, a step of ink
   off both the sheet and paper (lighter than both in dark, a pale grey in light), and a key in it is a step off that
   fill. On a backdrop (the palette, dialogs) it is paper, and the dimmed page behind it is the edge. A toast is ink.
 - **The frame** (top bar, files, inspector) is the sheet: `--chrome`, flat and opaque, with a thin rule where it meets
@@ -168,6 +168,17 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   `]` (which `[` undoes first), and not over the whole-file viewer, which keeps its own Back in its header. Nothing goes
   back in the top bar. The mouse's back button and `⌘[` do what `[` does while there is somewhere to go, instead of
   leaving the review.
+- **The map under the code**: the change's drawings kept at the foot of the code column, so the map and the code are
+  in view at once. A pane of the frame, as the files and the inspector are: its latch sits between theirs in the top bar
+  (the bottom-panel icon, `b`), shown only when the brief has a drawing, and it is remembered in this browser across both
+  layouts. It is paper, as the code column is, with a rule where it meets the code; its bar is the map card's (the
+  drawings as tabs, the key, Open large) on a 36 px row with its rule. The drawing has the column's width: it reads left
+  to right where that fits and turns where it does not, as on the card, and scrolls both ways. It is as tall as the
+  drawing, up to two fifths of the column, until its top edge is dragged (a 1 px `--ink-3` line under the pointer, as on
+  the panes' sides); a double-click there fits it again. A part clicked opens its lines above and the drawing stays; `[`
+  goes back to the file that was read. The part that holds the file being read has the current fill (`--press`) and is
+  kept in view, unless the pointer is on the drawing. Drawings only: a scene has one player, in the card. The back slip
+  and the whole-file viewer stay in the code above it, and Mote, in his own spot, stands above it.
 - **Meter**: one block of lamps per file; the gap between two blocks is empty, never a dim lamp, so a board that is all
   viewed reads all lit.
 - **Chat**: in your own checkout (a local workspace) it is Claude Code or Codex at work there: it reads, edits and runs
@@ -191,6 +202,12 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
 - **Motion**: background and colour 120 ms `--ease`; nothing slides except dialogs (160 ms rise) and menus (none). A
   press is 50 ms in and 140 ms out. After a write the top bar's next step turns over to the one after it in the
   odometer's roll (three steps, 200 ms).
+- **Reduced motion** is asked of the system (`prefers-reduced-motion`) or of loupe itself: the view menu's Motion row and
+  ⌘K ("Turn reduced motion on"), kept in this browser, followed by its other tabs, and set before the first paint as
+  `data-motion="reduce"` on the page. Either one stills everything the other does, and loupe's switch cannot undo the
+  system's (its row is then checked and greyed, "your system asks for it"). Code asks `reducedMotion()` and listens with
+  `onMotion()` (`core.js`), never the media query alone; each `prefers-reduced-motion` block in the style sheet has its
+  `:root[data-motion="reduce"]` twin beside it. Turning it on or off says so in a toast.
 - **Mote's look**: he looks with his eyes, never by turning his head: his idle face with the pupils a pixel toward what he
   looks at, in eight directions, jumping at most every 120 ms and only when the direction has really changed, with a
   blink before a jump across his face. He looks at the pointer when it comes within 480 px, and at what just happened
@@ -212,7 +229,9 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   away; nothing of loupe's in reach). loupe hands it material, not rules: its colour and type tokens as CSS variables,
   the plate engine (`web/js/scene-kit.js`) as an optional global, and `loupe.open('file.go:120')`, which opens a line of
   the change (from the large view: it closes, and Back opens it again). Under the frame: the scene's why (13 px). What
-  the scene shows and how it moves are its writer's, its own controls included; with reduced motion it starts still.
+  the scene shows and how it moves are its writer's, its own controls included; with reduced motion it starts still. A scene's frame hears only the system's request, so
+  when only loupe was asked it waits for "Play the scene" instead (a scene that started by itself stops and waits when
+  the switch turns on, and starts when it turns off; one you played keeps playing).
   Before a scene is kept loupe renders it in a headless Chrome as the card shows it (680 px wide, light and dark):
   errors, loads its frame refused, content cut off or a frame with nothing in it go back to the writer with its own
   stills, which it reads and fixes (`src/scene-render.mjs`). A scene that stops answering for eight seconds is stopped
@@ -233,10 +252,9 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   chat edit?" on the faint red, 3 s).
 
 ## Easter eggs
-Small things for whoever plays, and only things from loupe's own world: the loupe itself, and Mote being a beetle. Each
+Small things for whoever plays, and only things from loupe's own world: Mote being a beetle. Each
 is found by doing something a person might do anyway, never by a code; none fires during work (a dialog, an answer
 being written), none makes a sound, and with reduced motion none happens. They are not in the README.
-- Hold ⌥ over code: a 2× lens follows the pointer (`eggs.js`). Over Mote, he is under the lens too, and waves back. The lens is paper with a ruled rim; it has no shine.
 - Throw Mote (let go of him mid-swing, faster than 1.4 px/ms): he flies on, skids, lands on his back with his legs at
   the air, rocks, and heaves himself over with a hop.
 

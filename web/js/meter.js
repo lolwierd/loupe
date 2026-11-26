@@ -9,7 +9,7 @@
 // - touching it wakes it: the block under the pointer lights, the rest dim, the lamps flicker, and the label below names
 //   the file; a click goes there.
 // With reduced motion every one of these is its end state at once.
-import { reducedMotion } from './core.js';
+import { reducedMotion, onMotion } from './core.js';
 import { BAYER4, dpr, fit, rgba, isDark, lerp, smooth } from './dither.js';
 
 const PITCH = 3; // CSS px between lamp centres
@@ -157,8 +157,7 @@ export function meter(host, { onPick, onHover } = {}) {
     else kick();
   };
   mq.addEventListener('change', retheme);
-  const motion = matchMedia('(prefers-reduced-motion: reduce)');
-  motion.addEventListener('change', kick);
+  const unmotion = onMotion(kick);
   const mo = new MutationObserver(retheme); mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   const ro = new ResizeObserver(() => { geometry = null; kick(); }); ro.observe(cv);
 
@@ -185,6 +184,6 @@ export function meter(host, { onPick, onHover } = {}) {
     },
     glint() { if (!reducedMotion()) { glint = 0; kick(); } },
     get settled() { return settled; },
-    destroy() { cancelAnimationFrame(raf); raf = 0; mq.removeEventListener('change', retheme); motion.removeEventListener('change', kick); mo.disconnect(); ro.disconnect(); onHover?.(null); },
+    destroy() { cancelAnimationFrame(raf); raf = 0; mq.removeEventListener('change', retheme); unmotion(); mo.disconnect(); ro.disconnect(); onHover?.(null); },
   };
 }

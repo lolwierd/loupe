@@ -1,6 +1,6 @@
 // The diff column: every changed file as a card in one scroll (tree order, or the guide's), loaded as it nears the
 // viewport. Selecting lines, the composer under them, and the threads anchored to them live here.
-import { S, $, $$, esc, tick, h, api, wsApi, I, pref, toast, fileOf, convOf, threadsAt, lastRun, rememberRun, plural, ago, reducedMotion } from './core.js';
+import { S, $, $$, esc, tick, h, api, wsApi, I, pref, toast, fileOf, convOf, threadsAt, lastRun, rememberRun, plural, ago, reducedMotion, onMotion } from './core.js';
 import { buildRows, buildSplit, wordRanges, rowPlans, findRow, findLine, revealAround, expandGap, loadTokens, tokHTML, headText, rangeLabel, selText } from './diff.js';
 import { md } from './md.js';
 import { modelKind, msgHTML, runBtn, runOf, grow, menu, shimmerSync } from './ui.js';
@@ -84,7 +84,7 @@ function cardHTML(f) {
     `<span class="stat"><span class="add">+${f.added}</span><span class="del">−${f.deleted}</span></span>${tags}<span class="sp"></span>` +
     `<span class="faint" data-cc>${n ? `${I.cmt} ${n}` : ''}</span>` +
     `<button class="icon sm" data-act="filemenu" aria-label="More" title="More">${I.more}</button>` +
-    `<button class="btn sm viewedbox${countedOnly(f) ? ' counted' : ''}" data-act="viewed" aria-pressed="${isViewed(f)}" title="${isStale(f) ? 'Changed since you viewed it' : countedOnly(f) ? `Counted as viewed: ${f.kind} files are, until you untick one. Turn it off in ⌘K or the View menu.` : 'Mark viewed (v)'}"><span class="box">${icon('check', '--on-act')}</span>${isStale(f) ? 'Changed' : 'Viewed'}</button></div>` +
+    `<button class="btn sm ghost viewedbox${countedOnly(f) ? ' counted' : ''}" data-act="viewed" aria-pressed="${isViewed(f)}" title="${isStale(f) ? 'Changed since you viewed it' : countedOnly(f) ? `Counted as viewed: ${f.kind} files are, until you untick one. Turn it off in ⌘K or the View menu.` : 'Mark viewed (v)'}"><span class="box">${icon('check', '--on-act')}</span>${isStale(f) ? 'Changed' : 'Viewed'}</button></div>` +
     `<p class="file-note">${fileNoteHTML(f)}</p><div class="relp" hidden></div><div class="fb${S.layout === 'split' ? ' split' : ''}" data-p="${esc(f.path)}"><div class="loadd">${f.binary ? 'Binary file: no text diff.' : 'Loading…'}</div></div></section>`;
 }
 
@@ -403,6 +403,7 @@ export function flashLines(p, side, lines) {
 function reflash(p) {
   const f = S.flash, card = cardEl(p);
   if (!f || f.path !== p || !card) return;
+  if (reducedMotion()) { S.flash = null; return; } // still: nothing would run, and a class left on would run later
   const at = performance.now() - f.t0;
   if (at >= FLASH_MS) { S.flash = null; return; }
   const rows = S.rows.get(p), items = S.items.get(p);
@@ -425,6 +426,8 @@ document.addEventListener('animationend', (e) => {
   const ln = e.target.closest?.('.ln.flash');
   if (ln) unflash(ln);
 });
+// reduced motion turned on mid-flash: the animation stops without ending, so its class goes now
+onMotion(() => { if (reducedMotion()) { S.flash = null; for (const ln of $$('.ln.flash')) unflash(ln); } });
 export function renderBody(p) { drawBody(p); reflash(p); }
 function drawBody(p) {
   const card = cardEl(p), fb = card?.querySelector('.fb');

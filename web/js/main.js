@@ -1,6 +1,6 @@
 // The page: which change this URL is, the frame around it (top bar; bin | diff | inspector), live
 // updates from the daemon, keys, the palette and home. One URL per change; "/" goes back to the last one.
-import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, briefRun, notesRun } from './core.js';
+import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, briefRun, notesRun, systemStill, motionAsked, setReducedMotion } from './core.js';
 import { renderCards, renderBody, renderAllBodies, renderLayout, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment, statusGlyph, updateFileNotes, viewKey, introStale } from './cards.js';
 import { attemptFileNotes, filesNeedingNotes, resetNotesAttempt, currentNotes } from './file-notes.js';
 import { renderTree, updateTreeViewed, markCurrent, nextUnviewed } from './tree.js';
@@ -11,7 +11,6 @@ import { menu, closeMenu, shimmerSync, refreshRunButtons, pickRun, runLabel } fr
 import { hooks } from './hooks.js';
 import './actions.js';
 import { loadShip, sheetOpen, closeSheet } from './sheets.js';
-import './eggs.js';
 import './strike.js';
 import './stamp.js';
 import './sound.js';
@@ -80,6 +79,11 @@ renderTheme(effectiveTheme(themeChoice));
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   if (themeChoice === 'system') applyTheme('system', themeOrigin($('[data-act="theme"]')));
 });
+// reduced motion asked of loupe (core.js keeps it): said, since much of what it stills only moves now and then
+function setMotion(still) {
+  setReducedMotion(still);
+  toast(still ? 'Reduced motion on.' : 'Reduced motion off.');
+}
 
 // ------------------------------------------------------------------ boot
 async function boot() {
@@ -127,11 +131,12 @@ function frame() {
     <button class="btn ghost tally" id="tally" data-act="nextleft"></button>
     <span class="go" id="go"></span>
     <span class="tools"><a class="icon" id="ghlink" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open on GitHub" hidden>${I.github}</a><button class="icon" data-act="refresh" title="Read the change again (r)">${I.refresh}</button><button class="icon" data-act="theme" title="View: theme, layout, settings">${document.documentElement.dataset.theme === 'dark' ? I.moon : I.sun}</button>
-    <span class="layout-toggles"><button class="icon" data-act="togglebin" title="Files (t)">${I.sidebarL}</button><button class="icon" data-act="togglepanel" title="Inspector (p)">${I.sidebarR}</button></span></span>
+    <span class="layout-toggles"><button class="icon" data-act="togglebin" title="Files (t)">${I.sidebarL}</button><button class="icon" data-act="toggledock" title="The map under the code (b)" hidden>${I.sidebarB}</button><button class="icon" data-act="togglepanel" title="Inspector (p)">${I.sidebarR}</button></span></span>
   </header>
   <div class="main" id="main">
     <aside class="bin" id="bin"><div class="scopebar" id="scopebar"></div><div class="tree-head"><span class="fwrap">${I.search}<input class="field" id="filter" type="search" placeholder="Find a file" aria-label="Find a file" autocomplete="off"><kbd class="fkey" aria-hidden="true">/</kbd></span><span id="ordseg"></span></div><nav class="tlist" id="tlist" aria-label="Changed files"></nav><div class="resizer" data-resize="bin"></div></aside>
     <main class="viewer-col"><div class="scroller" id="center"><div class="cards" id="cards"><div class="loadd">Loading…</div></div></div></main>
+    <section class="mapdock" id="mapdock" aria-label="The map, under the code" hidden></section>
     <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon" data-act="keys" title="Keys (?)" aria-label="Keys">${I.keys}</button></div><div class="pbody" id="pbody"></div></aside><div class="motefloat" id="motedock"></div>
   </div></div>`;
   applyMode(S.mode, true);
@@ -795,8 +800,10 @@ function commands() {
     { group: 'VIEW', label: S.marksHidden ? 'Show the marks in the code' : 'Hide the marks in the code', key: 'm', run: () => setMarksHidden(!S.marksHidden) },
     hooks.mote?.isAway && { group: 'VIEW', label: hooks.mote.isAway() ? 'Show Mote' : 'Hide Mote', sub: hooks.mote.isAway() ? 'he flies back in' : 'the beetle in the corner flies off', also: 'pet sprite beetle bug mascot helper', run: () => hooks.mote.away(!hooks.mote.isAway()) },
     { group: 'VIEW', label: hooks.sound?.on() ? 'Turn desk sounds off' : 'Turn desk sounds on', sub: 'a tick per file viewed, a stamp, a typebar', run: () => hooks.sound?.set(!hooks.sound.on()) },
+    !systemStill() && { group: 'VIEW', label: motionAsked() ? 'Turn reduced motion off' : 'Turn reduced motion on', sub: 'Mote, the meter, the stamp and the theme hold still', also: 'animation accessibility calm still', run: () => setMotion(!motionAsked()) },
     { group: 'VIEW', label: paneOpen('bin') ? 'Hide the files' : 'Show the files', key: 't', run: () => setPane('bin', !paneOpen('bin')) },
     { group: 'VIEW', label: paneOpen('panel') ? 'Hide the inspector' : 'Show the inspector', key: 'p', run: () => setPane('panel', !paneOpen('panel')) },
+    hooks.dockable?.() && { group: 'VIEW', label: hooks.dockOpen?.() ? 'Hide the map under the code' : 'Show the map under the code', sub: 'the drawing and the code at once', also: 'dock bottom sheet split side by side diagram flow', key: 'b', run: () => hooks.toggleDock?.() },
     ...['system', 'light', 'dark'].filter((t) => t !== pref.get('theme', 'system')).map((t) => ({ group: 'VIEW', label: `Theme: ${t}`, run: (origin) => { pref.set('theme', t); applyTheme(t, origin); } })),
     setting('autoView', !!S.app.settings?.autoView, 'Count tests and generated files as viewed'),
     setting('autoBrief', !!S.app.settings?.autoBrief, 'Write the brief when a PR opens'),
@@ -1173,8 +1180,8 @@ function keySheet() {
     ${g('MOVING', [k(['j'], 'next file'), k(['k'], 'previous file'), k([']'], 'viewed, then the next file left'), k(['['], 'back: undo ], or a jump'), k(['/'], 'find a file'), k(['f'], 'search the repository'), k(['⌘', 'K'], 'do anything')])}
     ${g('REVIEWING', [k(['v'], 'viewed, or not'), k(['o'], 'fold or unfold'), k(['s'], 'split or unified'), k(['g'], 'guide or tree order'), k(['m'], 'hide or show the marks'), k(['r'], 'read the change again')])}
     ${g('ON SELECTED LINES', [k(['a'], 'ask there'), k(['c'], 'comment for your review'), k(['l'], 'add them to the chat'), k(['↵'], 'send the question'), k(['⇧', '↵'], 'new line'), k(['⌘', '↵'], 'add the review comment'), k(['esc'], 'cancel')])}
-    ${g('PANELS', [k(['1'], 'overview'), k(['2'], 'chat'), k(['3'], 'marks'), k(['t'], 'files'), k(['p'], 'inspector'), k(['?'], 'these keys')])}
-    ${g('POINTER', [m([], 'hover', 'Go docs'), m(['⌘'], 'click', 'definition'), m(['⇧', '⌘'], 'click', 'references'), k(['⌥'], 'hold over code: the loupe')])}
+    ${g('PANELS', [k(['1'], 'overview'), k(['2'], 'chat'), k(['3'], 'marks'), k(['t'], 'files'), k(['b'], 'the map under the code'), k(['p'], 'inspector'), k(['?'], 'these keys')])}
+    ${g('POINTER', [m([], 'hover', 'Go docs'), m(['⌘'], 'click', 'definition'), m(['⇧', '⌘'], 'click', 'references')])}
   </div><div class="foot"><span><kbd>esc</kbd> close</span><span class="sp"></span><span>everything else is in <kbd>⌘</kbd><kbd>K</kbd></span></div></div></div>`);
   document.body.append(scrim);
   // The palette closes this sheet through keysClose, so its capture listener never outlives it.
@@ -1226,6 +1233,7 @@ document.addEventListener('click', async (e) => {
         { sep: true }, { header: 'DIFF', key: 's' }, { label: 'Split', value: { layout: 'split' }, current: S.layout === 'split' }, { label: 'Unified', value: { layout: 'unified' }, current: S.layout === 'unified' },
         { sep: true }, { header: 'SHOW' }, { label: 'Marks in the code', key: 'm', value: { marks: true }, on: !S.marksHidden },
         ...(hooks.mote?.isAway ? [{ label: 'Mote', sub: 'the beetle in the corner', value: { mote: true }, on: !hooks.mote.isAway() }] : []),
+        { sep: true }, { header: 'MOTION' }, { label: 'Reduce motion', sub: systemStill() ? 'your system asks for it' : undefined, value: { motion: true }, on: motionAsked() || systemStill(), disabled: systemStill() },
         { sep: true }, { header: 'REVIEW' },
         { label: 'Count tests and generated files as viewed', value: { autoView: !st.autoView }, on: !!st.autoView },
         { label: 'Write the brief when a PR opens', value: { autoBrief: !st.autoBrief }, on: !!st.autoBrief },
@@ -1235,6 +1243,7 @@ document.addEventListener('click', async (e) => {
         if (it.value.mode) return applyMode(it.value.mode);
         if (it.value.marks) return setMarksHidden(!S.marksHidden);
         if (it.value.mote) return hooks.mote.away(!hooks.mote.isAway());
+        if (it.value.motion) return setMotion(!motionAsked());
         try { S.app.settings = await api('/api/settings', { method: 'POST', body: it.value }); } catch (err) { return toast(err.message, { fail: true }); }
         for (const f of S.files) updateCard(f.path);
         progress();
@@ -1242,6 +1251,7 @@ document.addEventListener('click', async (e) => {
       }, { align: 'right', width: 340 });
     }
     if (act === 'togglebin') setPane('bin', !paneOpen('bin'));
+    if (act === 'toggledock') hooks.toggleDock?.();
     if (act === 'togglepanel') setPane('panel', !paneOpen('panel'));
     if (act === 'keys') keySheet();
     if (act === 'scopemenu') scopeMenu(b);
@@ -1294,6 +1304,7 @@ document.addEventListener('keydown', (e) => {
   else if (key === 's') setLayout(S.layout === 'split' ? 'unified' : 'split');
   else if (key === 'g' && S.review.brief?.sections?.length) setOrder(S.order === 'guide' ? 'tree' : 'guide');
   else if (key === 't') setPane('bin', !paneOpen('bin'));
+  else if (key === 'b' && hooks.dockable?.()) hooks.toggleDock?.();
   else if (key === 'p') setPane('panel', !paneOpen('panel'));
   else if (key === 'm') setMarksHidden(!S.marksHidden);
   else if (key === '1' || key === '2' || key === '3') { setPane('panel', true); setTab(['overview', 'chat', 'review'][Number(key) - 1]); }

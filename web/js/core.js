@@ -111,7 +111,27 @@ export function toast(msg, opt = {}) {
   clearTimeout(toastT);
   if (!t.dataset.hover) toastT = setTimeout(() => { t.hidden = true; }, opt.action ? 5000 : opt.fail ? 6000 : 3600);
 }
-export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Motion: less of it when the system asks (prefers-reduced-motion) or when you ask loupe (the view menu, ⌘K), which is
+// kept in this browser, set before the first paint by theme.js as data-motion="reduce" on the page, and followed by
+// the browser's other tabs. Either is enough; loupe's own switch cannot turn the system's request off.
+const STILL_Q = '(prefers-reduced-motion: reduce)';
+export const systemStill = () => matchMedia(STILL_Q).matches;
+export const reducedMotion = () => document.documentElement.dataset.motion === 'reduce' || systemStill();
+// fn whenever either of the two changes; returns the way to stop
+export function onMotion(fn) {
+  const mq = matchMedia(STILL_Q);
+  mq.addEventListener('change', fn); document.addEventListener('loupe-motion', fn);
+  return () => { mq.removeEventListener('change', fn); document.removeEventListener('loupe-motion', fn); };
+}
+function showMotion(still) {
+  const root = document.documentElement;
+  if ((root.dataset.motion === 'reduce') === still) return;
+  if (still) root.dataset.motion = 'reduce'; else delete root.dataset.motion;
+  document.dispatchEvent(new Event('loupe-motion'));
+}
+export function setReducedMotion(still) { pref.set('motion', still ? 'reduce' : 'system'); showMotion(still); }
+export const motionAsked = () => document.documentElement.dataset.motion === 'reduce';
+globalThis.addEventListener?.('storage', (e) => { if (e.key === 'loupe.motion') showMotion(pref.get('motion', 'system') === 'reduce'); });
 
 // Octicon-weight glyphs, 16px grid, drawn as strokes so they share one line weight.
 const P = (d, extra = '') => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${d}</svg>`;
@@ -138,7 +158,7 @@ export const I = {
   codex: P('<rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M4.75 6.25 6.5 8l-1.75 1.75M8.25 10h3"/>'),
   link: P('<path d="M6.5 9.5l3-3"/><path d="M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1M9 11.5l-1 1A2.5 2.5 0 0 1 4.5 9l1-1"/>'),
   sidebarL: P('<rect class="pn" x="2" y="2.5" width="4" height="11" rx="1.5"/><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M6 2.5v11"/>'),
-  sidebarB: P('<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 9.5h12"/>'),
+  sidebarB: P('<rect class="pn" x="2" y="9.5" width="12" height="4" rx="1.5"/><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 9.5h12"/>'),
   sidebarR: P('<rect class="pn" x="10" y="2.5" width="4" height="11" rx="1.5"/><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M10 2.5v11"/>'),
   refresh: P('<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v2.5h-2.5"/>'),
   more: '<svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="3.5" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12.5" cy="8" r="1.3"/></svg>',

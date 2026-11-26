@@ -432,9 +432,12 @@ function flowSVG(d, f, id, width = 0) {
 const drawn = new Map(); // a drawing depends only on its diagram and its turn, and the card re-renders often
 let uid = 0;
 // a map turns ('lr' or 'tb'); a flow keeps its lanes and narrows its part names ('lr' or 'tb', which means compact)
-function draw(d, dir = 'lr') {
-  const width = dir === 'tb' ? Math.floor(room() / 8) * 8 : 0; // a turned map and narrow lanes fit the column
-  const key = dir + width + JSON.stringify(d);
+// fits: the room it has across, the card's unless said (the map under the code has the whole column). where: the place
+// it is shown (the card, the dialog, the dock), each with its own copy: its arrowheads are markers found by id, so two
+// places sharing one would draw bare lines in the second while the first is folded away
+function draw(d, dir = 'lr', fits = room(), where = 'card') {
+  const width = dir === 'tb' ? Math.floor(fits / 8) * 8 : 0; // a turned map and narrow lanes fit the column
+  const key = where + dir + width + JSON.stringify(d);
   if (!drawn.has(key)) {
     if (drawn.size > 24) drawn.clear();
     const f = fonts(), id = `dg${++uid}`;
@@ -443,14 +446,14 @@ function draw(d, dir = 'lr') {
   }
   return drawn.get(key);
 }
-export const diagramSVG = (d, dir) => draw(d, dir).svg;
+export const diagramSVG = (d, dir, fits, where) => draw(d, dir, fits, where).svg;
 // the room the drawing has inside the card; a map that does not fit across turns to read top to bottom
 const room = () => { const c = $('#cards'); return c ? c.clientWidth - 2 * 16 - 2 - 2 * 16 : innerWidth - 700; };
 // opening it large helps only when the whole drawing, as Claude laid it out, fits the window but not the column
-function pickDir(d) {
-  const lr = draw(d, 'lr').w;
-  if (lr <= room()) return 'lr';
-  return draw(d, 'tb').w < lr ? 'tb' : 'lr';
+function pickDir(d, fits = room()) {
+  const lr = draw(d, 'lr', fits).w;
+  if (lr <= fits) return 'lr';
+  return draw(d, 'tb', fits).w < lr ? 'tb' : 'lr';
 }
 
 // ------------------------------------------------------------------ the card
@@ -493,6 +496,7 @@ function sceneState(b) {
 }
 
 export function mapCardHTML(b) {
+  queueMicrotask(() => renderDock()); // the map under the code follows every drawing of the card
   if (!b?.context?.system && !b?.diagrams?.length && !b?.scenes?.length && !sceneState(b)) return '';
   queueMicrotask(watchWidth);
   queueMicrotask(() => mountScenes());
@@ -555,7 +559,7 @@ function openLarge(focusNode, at) {
       ? `<div class="dgtabs big" role="tablist" aria-label="Drawings">${ds.map((x, j) => `<button role="tab" data-mb="tab" data-i="${j}" aria-selected="${j === i}"${j === i ? ' id="mapbigt"' : ''}>${esc(name(x))}</button>`).join('')}</div>`
       : `<h2 class="t" id="mapbigt">${esc(name(active))}</h2>`;
     scrim.innerHTML = `<div class="sheet k-map" role="dialog" aria-modal="true" aria-labelledby="mapbigt" id="mapbig"><header class="shh">${head}${legend(active)}<button class="icon" data-mb="close" title="Close (esc)" aria-label="Close">${I.x}</button></header>` +
-      `<div class="mbview">${diagramSVG(active, 'lr')}</div>${active.caption ? `<p class="mbcap">${inline(active.caption, { images: modelKind(b?.model) !== 'codex', citations: b?.citations })}</p>` : ''}</div>`;
+      `<div class="mbview">${diagramSVG(active, 'lr', undefined, 'big')}</div>${active.caption ? `<p class="mbcap">${inline(active.caption, { images: modelKind(b?.model) !== 'codex', citations: b?.citations })}</p>` : ''}</div>`;
   };
   fill();
   const close = () => { scrim.remove(); document.removeEventListener('keydown', key, true); (opener?.isConnected ? opener : $('#mapcard [data-act="mapbig"]'))?.focus(); };
@@ -647,10 +651,11 @@ function light(svg, id) {
   svg.querySelectorAll('.ed, .el').forEach((x) => x.classList.toggle('hl', on.has(x.dataset.e)));
   svg.querySelectorAll('.nd').forEach((x) => x.classList.toggle('hl', !!id && near.has(x.dataset.id)));
 }
-document.addEventListener('pointerover', (e) => { const svg = e.target.closest?.('#mapcard .dgsvg, #mapbig .dgsvg'); if (svg) light(svg, e.target.closest('.nd')?.dataset.id || null); });
-document.addEventListener('pointerout', (e) => { const svg = e.target.closest?.('#mapcard .dgsvg, #mapbig .dgsvg'); if (svg && !svg.contains(e.relatedTarget)) light(svg, null); });
-document.addEventListener('focusin', (e) => { const nd = e.target.closest?.('#mapcard .nd, #mapbig .nd'); if (nd) light(nd.closest('.dgsvg'), nd.dataset.id); });
-document.addEventListener('focusout', (e) => { const nd = e.target.closest?.('#mapcard .nd, #mapbig .nd'); if (nd) light(nd.closest('.dgsvg'), null); });
+const SHEETS = '#mapcard .dgsvg, #mapbig .dgsvg, #mapdock .dgsvg', PARTS = '#mapcard .nd, #mapbig .nd, #mapdock .nd';
+document.addEventListener('pointerover', (e) => { const svg = e.target.closest?.(SHEETS); if (svg) light(svg, e.target.closest('.nd')?.dataset.id || null); });
+document.addEventListener('pointerout', (e) => { const svg = e.target.closest?.(SHEETS); if (svg && !svg.contains(e.relatedTarget)) light(svg, null); });
+document.addEventListener('focusin', (e) => { const nd = e.target.closest?.(PARTS); if (nd) light(nd.closest('.dgsvg'), nd.dataset.id); });
+document.addEventListener('focusout', (e) => { const nd = e.target.closest?.(PARTS); if (nd) light(nd.closest('.dgsvg'), null); });
 document.addEventListener('click', (e) => {
   const card = e.target.closest?.('#mapcard');
   if (!card) return;
@@ -665,6 +670,108 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
-  const t = e.target.closest?.('#mapcard .nd[data-ref], #mapbig .nd[data-ref]');
+  const t = e.target.closest?.('#mapcard .nd[data-ref], #mapbig .nd[data-ref], #mapdock .nd[data-ref]');
   if (t) { e.preventDefault(); t.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
 });
+
+// ------------------------------------------------------------------ the map under the code
+// The drawing kept at the foot of the code column, so the map and the code are in view at once (b, or its latch in the
+// top bar; remembered in this browser). A pane of the frame, as the files and the inspector are, with the code column's
+// width: the drawing reads left to right where it fits and turns where it does not, as on the card. It is as tall as
+// its drawing, up to two fifths of the column, until its top edge is dragged (a double-click there fits it again). A part
+// you click opens its lines above and the drawing stays; the part that holds the file you are reading is marked, and
+// kept in view. Drawings only: a scene has one player, and it plays in the card.
+const DOCK_MIN = 120, DOCK_PAD = 16, DOCK_BAR = 37; // its bar is 36 and a rule
+let dockKey = '', dockRO = null, dockT = 0;
+const dockDiagrams = () => S.review?.brief?.diagrams || [];
+export const dockOpen = () => !!pref.get('mapDock', false) && dockDiagrams().length > 0;
+const dockAt = (ds) => { const id = pref.get('dockTab', null), i = ds.findIndex((d) => (d.id ?? d.title) === id); return i >= 0 ? i : 0; };
+const refPath = (ref) => /^(.*?)(?::\d+)?$/.exec(ref || '')?.[1] || '';
+const holds = (ref, p) => { const r = refPath(ref); return !!r && !!p && (r === p || p.endsWith('/' + r)); };
+function dockHeight(main, natural) {
+  const most = Math.max(DOCK_MIN, main.clientHeight - 160), set = pref.get('dockH', null);
+  return Math.round(Math.min(most, Math.max(DOCK_MIN, set ?? Math.min(natural, main.clientHeight * 0.4))));
+}
+export function renderDock() {
+  const el = $('#mapdock'), main = $('#main'), latch = $('[data-act="toggledock"]');
+  if (!el || !main) return;
+  const ds = dockDiagrams(), open = dockOpen();
+  if (latch) { latch.hidden = !ds.length; latch.setAttribute('aria-pressed', String(open)); }
+  main.classList.toggle('docked', open);
+  el.hidden = !open;
+  if (!open) { dockKey = ''; el.replaceChildren(); return; }
+  const col = $('.viewer-col');
+  if (!dockRO && col && typeof ResizeObserver !== 'undefined') {
+    // the code column narrows or widens when a pane opens or closes, and the window sets how tall the dock may be; its
+    // own height moving (the dock dragged taller) is neither, and redrawing then would undo the drag
+    let seen = '';
+    dockRO = new ResizeObserver(() => {
+      const now = `${col.clientWidth} ${main.clientHeight}`;
+      if (now === seen) return;
+      seen = now; clearTimeout(dockT); dockT = setTimeout(renderDock, 120);
+    });
+    dockRO.observe(col); dockRO.observe(main);
+  }
+  const i = dockAt(ds), d = ds[i], fits = Math.max(0, (col?.clientWidth || main.clientWidth) - 2 * DOCK_PAD);
+  const dir = pickDir(d, fits), drawn = draw(d, dir, fits, 'dock');
+  const key = JSON.stringify([ds.map((x) => [x.id, x.title]), i, dir, dir === 'tb' ? fits : 0, drawn.svg.length, d]);
+  if (key !== dockKey || !el.querySelector('.dockview')) { // or a fresh frame's empty dock
+    const view = el.querySelector('.dockview'), keep = view && el.dataset.d === String(d.id ?? d.title) ? [view.scrollTop, view.scrollLeft] : null;
+    const name = (x) => x.title || (x.kind === 'flow' ? 'Flow' : 'Map');
+    const tabs = ds.length > 1
+      ? `<div class="dgtabs" role="tablist" aria-label="Drawings">${ds.map((x, j) => `<button role="tab" data-act="docktab" data-i="${j}" aria-selected="${j === i}" title="${esc(name(x))}"><span class="tn">${esc(name(x))}</span></button>`).join('')}</div>`
+      : `<div class="dgtabs"><span class="one">${esc(name(d))}</span></div>`;
+    el.innerHTML = `<div class="dockrz" data-dockrz title="Drag to resize; double-click to fit the drawing" aria-hidden="true"></div>` +
+      `<div class="dockbar">${tabs}<span class="sp"></span>${legend(d)}<button class="link" data-act="dockbig" title="The drawing across the whole window">Open large</button></div>` +
+      `<div class="dockview">${drawn.svg}</div>`;
+    el.dataset.d = String(d.id ?? d.title);
+    if (keep) { const v = el.querySelector('.dockview'); v.scrollTop = keep[0]; v.scrollLeft = keep[1]; }
+    dockKey = key;
+  }
+  const h = Number(/ height="(\d+)"/.exec(drawn.svg)?.[1]) || 0;
+  main.style.setProperty('--dock-h', dockHeight(main, DOCK_BAR + h + DOCK_PAD * 2) + 'px');
+  dockHere();
+}
+// the part that holds the file you are reading, marked, and brought into view unless the pointer is on the drawing
+function dockHere() {
+  const el = $('#mapdock');
+  if (!el || el.hidden) return;
+  let here = null;
+  for (const nd of el.querySelectorAll('.nd[data-ref]')) {
+    const on = holds(nd.dataset.ref, S.current);
+    nd.classList.toggle('here', on);
+    if (on) { nd.setAttribute('aria-current', 'true'); here ||= nd; } else nd.removeAttribute('aria-current');
+  }
+  const view = el.querySelector('.dockview');
+  if (!here || !view || el.matches(':hover')) return;
+  const v = view.getBoundingClientRect(), r = here.getBoundingClientRect(), m = DOCK_PAD;
+  if (r.left < v.left + m) view.scrollLeft -= v.left + m - r.left; else if (r.right > v.right - m) view.scrollLeft += Math.min(r.right - v.right + m, r.left - v.left - m);
+  if (r.top < v.top + m) view.scrollTop -= v.top + m - r.top; else if (r.bottom > v.bottom - m) view.scrollTop += Math.min(r.bottom - v.bottom + m, r.top - v.top - m);
+}
+hooks.dockHere = dockHere;
+hooks.toggleDock = (open = !dockOpen()) => { pref.set('mapDock', !!open); renderDock(); };
+hooks.dockOpen = dockOpen;
+hooks.dockable = () => dockDiagrams().length > 0;
+hooks.renderDock = renderDock;
+document.addEventListener('click', (e) => {
+  const dock = e.target.closest?.('#mapdock');
+  if (!dock) return;
+  const b = e.target.closest('[data-act]');
+  if (b?.dataset.act === 'docktab') { const d = dockDiagrams()[Number(b.dataset.i)]; if (d) pref.set('dockTab', d.id ?? d.title); renderDock(); return dock.querySelector(`[data-act="docktab"][data-i="${b.dataset.i}"]`)?.focus(); }
+  if (b?.dataset.act === 'dockbig') return openLarge(null, dockAt(dockDiagrams()));
+  const nd = e.target.closest('.nd[data-ref]');
+  if (nd) goRef(nd);
+});
+// its top edge: dragged, the height is yours; double-clicked, it fits the drawing again
+document.addEventListener('mousedown', (e) => {
+  const rz = e.target.closest?.('[data-dockrz]'), main = $('#main');
+  if (!rz || !main || e.button !== 0) return;
+  e.preventDefault();
+  const startY = e.clientY, start = $('#mapdock').getBoundingClientRect().height;
+  rz.classList.add('drag');
+  let moved = false; // a click that does not move keeps the height fitting the drawing
+  const move = (ev) => { if (ev.clientY === startY && !moved) return; moved = true; const h = Math.round(Math.min(Math.max(DOCK_MIN, main.clientHeight - 160), Math.max(DOCK_MIN, start + startY - ev.clientY))); main.style.setProperty('--dock-h', h + 'px'); };
+  const up = () => { rz.classList.remove('drag'); removeEventListener('mousemove', move); removeEventListener('mouseup', up); const h = parseInt(main.style.getPropertyValue('--dock-h'), 10); if (moved && h) pref.set('dockH', h); };
+  addEventListener('mousemove', move); addEventListener('mouseup', up);
+});
+document.addEventListener('dblclick', (e) => { if (e.target.closest?.('[data-dockrz]')) { pref.set('dockH', null); renderDock(); } });

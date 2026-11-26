@@ -8,7 +8,7 @@
 //
 // The art is the Work Pets v2 sheet scaled down to its own 48 by 52 pixel grid (web/img/mote.png: 8 columns, 11 rows),
 // drawn at one sheet pixel per CSS pixel and kept crisp with image-rendering: pixelated. Frame times are the sheet's.
-import { S, $, pref, reducedMotion } from './core.js';
+import { S, $, pref, reducedMotion, onMotion } from './core.js';
 import { hooks } from './hooks.js';
 import { fit, tok, isDark, watch, BAYER4, frames, lerp, smooth } from './dither.js';
 import { makeFlightFrames, FLY_OFF, FLY_BACK, FLY_STEP, FLY_TRAVEL } from './motefly.js';
@@ -241,6 +241,9 @@ function easeLens() {
 
 // ------------------------------------------------------------------ the floating one on a change's page
 let main = null, words = null, wordsTimer = 0, helloTimer = 0, lastBusy = new Map(), briefWas = false, allWas = null;
+// reduced motion turned on or off while he holds a pose that loops (at work, waiting): it is drawn again the new way,
+// still or moving; a pose of his own ends by itself and comes back to it
+onMotion(() => { if (main && !main.once) main.rest(); });
 const say = (text, ms = 0) => {
   if (!words) return;
   clearTimeout(wordsTimer);
@@ -370,8 +373,6 @@ hooks.mote = {
   },
   // one of his small things now (by its place in LIFE), or a doze, for tests and for the curious
   live: (i) => (i === 'doze' ? main && life.doze(main) : life.tick(i)),
-  // under the loupe (eggs.js): he waves back through the glass, once per look
-  peered() { if (main && !main.once && main.base === 'idle' && !reducedMotion()) main.play('waving'); },
   // away: flown off (true) or called back (false); isAway for the palette's and the view menu's rows
   away: (on) => setAway(on),
   isAway: () => away(),

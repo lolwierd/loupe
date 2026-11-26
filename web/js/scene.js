@@ -3,7 +3,7 @@
 // and type, opens a line of code when it asks, and keeps an eye on it: a scene that stops answering is stopped. Its
 // frame is made only near the view and let go a while after it leaves; it is kept, running, while the card around it
 // is drawn again, so it never starts over under you.
-import { esc, S, fileOf } from './core.js';
+import { esc, S, fileOf, reducedMotion, systemStill, onMotion } from './core.js';
 import { hooks } from './hooks.js';
 
 const KEYS = ['--bg', '--chrome', '--ink', '--ink-2', '--ink-3', '--rule', '--rule-strong', '--on-act', '--ok', '--warn', '--danger', '--pencil', '--shade', '--lit', '--f-ui', '--f-mono'];
@@ -30,12 +30,26 @@ export class ScenePlayer {
     this.hide = () => { if (document.hidden) this.unmount(); else if (this.visible) this.mount(); };
     document.addEventListener('visibilitychange', this.hide);
     el.addEventListener('click', (e) => {
-      if (e.target.closest('[data-act="scene-again"]')) { this.dead = false; this.note(''); this.mount(); }
-      if (e.target.closest('[data-act="scene-start"]')) { this.started = true; this.stage.querySelector('.scnstart')?.remove(); this.mount(); }
+      if (e.target.closest('[data-act="scene-again"]')) { // asked to run again, it is played, whatever the switch says
+        this.dead = false; this.note('');
+        if (!this.started) { this.started = this.played = true; this.stage.querySelector('.scnstart')?.remove(); }
+        this.mount();
+      }
+      if (e.target.closest('[data-act="scene-start"]')) { this.started = this.played = true; this.stage.querySelector('.scnstart')?.remove(); this.mount(); }
     });
-    this.started = ISOLATED;
+    // Reduced motion asked of loupe and not of the system: the frame's own media query cannot know, so the scene cannot
+    // start still by itself, and it waits to be played instead (asked of the system, it starts still on its own)
+    const heldStill = () => reducedMotion() && !systemStill();
+    this.started = ISOLATED && !heldStill();
     if (!SHUT) this.stage.insertAdjacentHTML('beforeend', '<p class="scnstart scnnone">This scene plays in Chrome 152 or later.</p>');
-    else if (!ISOLATED) this.stage.insertAdjacentHTML('beforeend', '<button class="link scnstart" data-act="scene-start">Play the scene</button>');
+    else if (!this.started) this.stage.insertAdjacentHTML('beforeend', '<button class="link scnstart" data-act="scene-start">Play the scene</button>');
+    // the switch turned while it is on the page: on, a scene that started by itself stops and waits; off, it starts
+    // (its frame made only near the view, as always)
+    this.unmotion = onMotion(() => {
+      if (!ISOLATED) return;
+      if (heldStill() && this.started && !this.played) { this.started = false; this.unmount(); this.stage.insertAdjacentHTML('beforeend', '<button class="link scnstart" data-act="scene-start">Play the scene</button>'); }
+      else if (!heldStill() && !this.started) { this.started = true; this.stage.querySelector('.scnstart')?.remove(); if (this.visible) this.mount(); }
+    });
     this.io = new IntersectionObserver(([en]) => { this.visible = en.isIntersecting; if (this.visible) this.mount(); else this.later(); }, { rootMargin: '300px 0px' });
     this.io.observe(el);
     // a new theme: the frame is made again with it
@@ -112,7 +126,7 @@ export class ScenePlayer {
   }
   destroy() {
     clearTimeout(this.drop); this.unmount(); removeEventListener('message', this.listen); document.removeEventListener('visibilitychange', this.hide);
-    this.io.disconnect(); this.mo.disconnect(); this.mq.removeEventListener('change', this.mqf);
+    this.io.disconnect(); this.mo.disconnect(); this.mq.removeEventListener('change', this.mqf); this.unmotion();
     this.el.remove();
   }
 }

@@ -1,6 +1,6 @@
 // Getting around: going to a path:line (in the diff when it is there, else the whole-file viewer), the viewer
 // itself, and gopls: hover for docs, ⌘-click for the definition, ⇧⌘-click for references.
-import { S, $, esc, h, api, wsApi, toast, fileOf, I } from './core.js';
+import { S, $, esc, h, api, wsApi, toast, fileOf, I, reducedMotion } from './core.js';
 import { loadTokens, tokHTML, findRow, findLine, revealAround } from './diff.js';
 import { cardEl, loadFile, renderBody, toggleFold, flashLines } from './cards.js';
 import { md } from './md.js';
@@ -124,7 +124,7 @@ export async function goLoc(loc, origin, restore, { remembered = false, back = n
   try { await loadFile(p); } catch (e) { if (current()) toast(e.message, { fail: true }); return; }
   if (!current() || cardEl(p) !== card) return;
   hooks.setCurrent?.(p);
-  if (!loc.line) { card.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); return; }
+  if (!loc.line) { card.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' }); return; }
   const side = loc.side === 'old' ? 'old' : 'new';
   let rows = S.rows.get(p);
   if (findRow(rows, { side, line: loc.line }) < 0 && side === 'new') { if (await revealAround(p, loc.line)) renderBody(p); rows = S.rows.get(p); }
@@ -186,7 +186,7 @@ export async function openViewer(v) {
     const rowSide = v.ext ? 'ext' : side, key = rowSide + ':' + v.path;
     body.innerHTML = f.lines.map((s, i) => `<div class="ln" data-l="${i + 1}"><span class="no">${i + 1}</span><span class="cd"><span class="tx" data-r="${rowSide}" data-l="${i + 1}">${tokHTML(key, i + 1, s)}</span></span></div>`).join('');
     const row = body.querySelector(`.ln[data-l="${v.line || 1}"]`);
-    if (row) { row.scrollIntoView({ block: 'center' }); if (v.line) row.classList.add('flash'); }
+    if (row) { row.scrollIntoView({ block: 'center' }); if (v.line && !reducedMotion()) row.classList.add('flash'); }
   } catch (e) { if (S.view === v) body.innerHTML = `<div class="loadd err">${esc(e.message)}</div>`; }
 }
 export function closeViewer() { $('#viewer')?.remove(); if (S.view) $('#refs')?.remove(); S.view = null; paintReturn(); }

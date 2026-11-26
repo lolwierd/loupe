@@ -7,6 +7,7 @@ import { isViewed, isStale, lines, statusGlyph, cardEl, orderedFiles, countedOnl
 import { icon } from './pixel.js';
 import { md } from './md.js';
 import { checkKey } from './cards.js';
+import { hooks } from './hooks.js';
 
 function buildTree(files) {
   const root = { name: '', path: '', dirs: new Map(), files: [] };
@@ -109,6 +110,7 @@ export function markCurrent() {
   currentRow?.removeAttribute('aria-current');
   currentRow = p && $('#tlist').querySelector(`.trow[data-p="${CSS.escape(p)}"]`);
   currentRow?.setAttribute('aria-current', 'true');
+  hooks.dockHere?.(); // and on the map under the code
 }
 
 export function updateTreeViewed(path) {

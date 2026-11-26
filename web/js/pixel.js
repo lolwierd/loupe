@@ -6,6 +6,8 @@
 // The one sprite the app uses is Claude's spark: it turns while Claude works (an answer, the brief, a session on a fix),
 // and a still frame marks Claude's words.
 
+import { reducedMotion, onMotion } from './core.js';
+
 const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
 (function ditherVars() {
   const root = document.documentElement.style;
@@ -74,14 +76,13 @@ function sparkFrames() {
 const STILL = FRAMES;
 
 let frames = null, phase = 0, raf = 0, start;
-const motion = matchMedia('(prefers-reduced-motion: reduce)');
 function draw(all) {
   const i = Math.floor(phase), t = phase - i;
   const fade = t * t * (3 - 2 * t);
   for (const cv of document.querySelectorAll(all ? 'canvas.spark' : 'canvas.spark:not(.still)')) {
     const x = cv.getContext('2d');
     x.clearRect(0, 0, SZ, SZ);
-    if (cv.classList.contains('still') || motion.matches) { x.drawImage(frames[STILL], 0, 0); continue; }
+    if (cv.classList.contains('still') || reducedMotion()) { x.drawImage(frames[STILL], 0, 0); continue; }
     // Blend premultiplied pixels so lit points keep their brightness as the star turns.
     x.globalCompositeOperation = 'lighter';
     x.globalAlpha = 1 - fade;
@@ -94,7 +95,7 @@ function draw(all) {
 }
 function tick(ts) {
   raf = 0;
-  if (motion.matches || !document.querySelector('canvas.spark:not(.still)')) { start = undefined; return; }
+  if (reducedMotion() || !document.querySelector('canvas.spark:not(.still)')) { start = undefined; return; }
   start ??= ts;
   phase = ((ts - start) / 95) % FRAMES;
   draw(false);
@@ -103,9 +104,9 @@ function tick(ts) {
 function wake() {
   frames ||= sparkFrames();
   draw(true);
-  if (!raf && !motion.matches && document.querySelector('canvas.spark:not(.still)')) raf = requestAnimationFrame(tick);
+  if (!raf && !reducedMotion() && document.querySelector('canvas.spark:not(.still)')) raf = requestAnimationFrame(tick);
 }
-motion.addEventListener('change', wake);
+onMotion(wake);
 // New sparks appear whenever a part of the page is drawn: draw them at once, and keep turning while any is busy.
 new MutationObserver((ms) => { if (ms.some((m) => [...m.addedNodes].some((n) => n.nodeType === 1 && (n.matches?.('canvas.spark') || n.querySelector?.('canvas.spark'))))) wake(); })
   .observe(document.documentElement, { childList: true, subtree: true });

@@ -7,7 +7,7 @@
 // for every device pixel of its canvas whether ink lands there. The canvas's backing store is its CSS size times the
 // device pixel ratio and nothing is scaled or smoothed after, so one entry of a mask is one pixel on the glass.
 // Colours are the theme's tokens, read through the page, and a canvas is drawn again when the theme or its size changes.
-import { reducedMotion } from './core.js';
+import { reducedMotion, onMotion } from './core.js';
 
 export const dpr = () => Math.max(1, Math.round(window.devicePixelRatio || 1));
 
@@ -41,8 +41,9 @@ export const isDark = () => {
 export function watch(el, fn) {
   let raf = 0;
   const again = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => fn()); };
-  const mqs = ['(prefers-color-scheme: dark)', '(prefers-reduced-motion: reduce)'].map((q) => matchMedia(q));
-  for (const mq of mqs) mq.addEventListener('change', again);
+  const mq = matchMedia('(prefers-color-scheme: dark)');
+  mq.addEventListener('change', again);
+  const unmotion = onMotion(again);
   const mo = new MutationObserver(() => {
     // A view transition suppresses animation frames during its update callback.
     if (document.documentElement.classList.contains('theme-capture')) { cancelAnimationFrame(raf); fn(); }
@@ -50,7 +51,7 @@ export function watch(el, fn) {
   }); mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   const ro = new ResizeObserver(again); if (el) ro.observe(el);
   fn();
-  return () => { for (const mq of mqs) mq.removeEventListener('change', again); mo.disconnect(); ro.disconnect(); cancelAnimationFrame(raf); };
+  return () => { mq.removeEventListener('change', again); unmotion(); mo.disconnect(); ro.disconnect(); cancelAnimationFrame(raf); };
 }
 
 // ------------------------------------------------------------------ numbers

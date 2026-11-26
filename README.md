@@ -8,7 +8,8 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
   references and search. A strip of lamps in the top bar shows what is left to read.
 - **A map of the change.** Before the first file, the model reads the code around the change and explains how that
   part of the system works, what changes, and where to start. It draws the parts involved with the change marked on
-  them, and the runtime path as numbered steps.
+  them, and the runtime path as numbered steps. `b` keeps the drawing under the code, so you can read the two at once;
+  a part you click opens its lines, and the part you are reading is marked.
 - **A guide.** The change as a few sections in reading order, each with what to check, and a short note above each
   file on why the change touches it.
 - **Ask about lines.** Select lines, press `a` and ask. The answer sits at the lines. Questions are read-only.
@@ -26,7 +27,8 @@ A local review desk for pull requests, branches and uncommitted work, with Claud
 - **Keyboard first.** `⌘K` finds any file, change, commit or action; `?` lists the keys.
 
 Mote, the small beetle in the corner, shows what the desk is doing: working while an answer is written, looking it over
-when it lands, jumping when you finish the last file. Drag him anywhere; double-click him and he flies off.
+when it lands, jumping when you finish the last file. Drag him anywhere; double-click him and he flies off. Reduced
+motion, asked of your system or of loupe (the view menu, or ⌘K), stills him, the meter, the stamp and the theme's wave.
 
 ![The map of a change](docs/img/map.png)
 
@@ -77,6 +79,7 @@ are on in loupe, and a right-click on any pull request link has **Open link in l
 | `[` | back: un-view the file `]` just marked, or return from a jump (so do the mouse's back button and `⌘[`) |
 | `/` `f` | find a file, search the repository |
 | `v` `o` | mark viewed, fold |
+| `t` `b` `p` | the files, the map under the code, the inspector |
 | `a` `c` | on selected lines: ask, comment for your review |
 | `↵` `⇧↵` | send, new line (text for GitHub posts with `⌘↵`) |
 | `s` `g` | split or unified, guide order |

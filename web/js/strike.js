@@ -31,7 +31,7 @@ function target(e) {
   return {
     v: () => cardNow()?.querySelector('[data-act="viewed"]'),
     o: () => cardNow()?.querySelector('.fh [data-act="fold"].icon'),
-    t: () => $('[data-act="togglebin"]'), p: () => $('[data-act="togglepanel"]'), r: () => $('[data-act="refresh"]'),
+    t: () => $('[data-act="togglebin"]'), b: () => $('[data-act="toggledock"]:not([hidden])'), p: () => $('[data-act="togglepanel"]'), r: () => $('[data-act="refresh"]'),
     g: () => $(`#ordseg [data-o="${order}"]`),
     '[': () => $('#backslip .link'),
     1: () => $('#ptab-overview'), 2: () => $('#ptab-chat'), 3: () => $('#ptab-review'),

@@ -9,7 +9,7 @@
 // as a gradient: heavier where the rubber pressed, a squeeze of ink along every edge, a soft spot where it did not quite
 // touch, grain. The angle, the lean and the soft spot are seeded by the head's id, so the same head always prints the
 // same stamp. It settles into the paper, holds, and lifts. With reduced motion only the small one is printed.
-import { S, $, esc, reducedMotion } from './core.js';
+import { S, $, esc, reducedMotion, onMotion } from './core.js';
 import { hooks } from './hooks.js';
 import { tok, isDark, watch, smooth, hash, noise, fbm, BAYER4, dpr } from './dither.js';
 
@@ -99,15 +99,15 @@ function stampBig(v) {
   document.body.append(el);
   const opt = { word: 'APPROVED', sub: `at ${short(v.head)} · ${day(v.at)}`, angle: -9 + (seed % 50) / 10 }, colour = ink(), f = field(W, H, d, opt, seed);
   paintPlates(el, W, H, [{ mask: plate(f, W, H, 1), rgba: colour }]);
-  const motion = matchMedia('(prefers-reduced-motion: reduce)');
   const move = el.animate([
     { offset: 0, opacity: 0.45, transform: 'scale(1.03)', easing: 'cubic-bezier(.2,.7,.2,1)' },
     { offset: 70 / (LIFT + 240), opacity: 1, transform: 'scale(1)' },
     { offset: LIFT / (LIFT + 240), opacity: 1, transform: 'scale(1)', easing: 'ease-out' },
     { offset: 1, opacity: 0, transform: 'scale(1)' },
   ], { duration: LIFT + 240, fill: 'both' });
-  const stop = () => { move.cancel(); el.remove(); motion.removeEventListener('change', stop); };
-  motion.addEventListener('change', stop);
+  let unmotion = null;
+  const stop = () => { move.cancel(); el.remove(); unmotion?.(); };
+  unmotion = onMotion(stop);
   move.finished.then(stop, stop);
 }
 

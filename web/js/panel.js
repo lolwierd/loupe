@@ -4,7 +4,7 @@
 //   Chat:     talk to Claude about it (fresh, a fork of a Claude Code session, or the live session)
 //   Review:   what have I marked? (your questions, and GitHub's threads). What you do about them, submitting
 //             the review or handing the fixes back, is the top bar's next act, not a form here.
-import { S, $, $$, esc, h, api, wsApi, I, pref, toast, convOf, lastRun, rememberRun, ago, plural, fileOf, modelName, briefRun } from './core.js';
+import { S, $, $$, esc, h, api, wsApi, I, pref, toast, convOf, lastRun, rememberRun, ago, plural, fileOf, modelName, briefRun, reducedMotion } from './core.js';
 import { md } from './md.js';
 import { msgHTML, runBtn, briefRunBtn, runOf, grow, menu, shimmerSync, modelKind, verdict } from './ui.js';
 import { isViewed, lines, setResolved, deleteMark, cardEl, renderBody, oneLine } from './cards.js';
@@ -344,7 +344,7 @@ export function openChat() { S.focusChat = true; setTab('chat'); }
 function follow(log) {
   if (!log) return;
   log.dataset.follow = '1';
-  log.scrollTo({ top: log.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  log.scrollTo({ top: log.scrollHeight, behavior: reducedMotion() ? 'auto' : 'smooth' });
 }
 const fromEnd = (log) => log.scrollHeight - log.scrollTop - log.clientHeight;
 function following(log) {
@@ -600,7 +600,7 @@ $('#root').addEventListener('click', async (e) => {
   if (act === 'gofile') return hooks.goLoc?.({ path: b.dataset.p, line: Number(b.dataset.l) || 0 });
   if (act === 'scope') return hooks.setScope?.(b.dataset.scope);
   if (act === 'stackopen') { const i = Number(b.dataset.si); return S.stack?.items?.[i]?.here ? null : hooks.openStackItem?.(i); }
-  if (act === 'gomap') { const m = $('#mapcard'); if (m) { m.classList.remove('shut'); pref.set('mapOpen', true); m.scrollIntoView({ block: 'start', behavior: 'smooth' }); } return; }
+  if (act === 'gomap') { const m = $('#mapcard'); if (m) { m.classList.remove('shut'); pref.set('mapOpen', true); m.scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'auto' : 'smooth' }); } return; }
   if (act === 'chatpick') return chatPicker(b);
   if (act === 'newchat') return newChat();
   if (act === 'linkpick') return linkPicker(b);
