@@ -26,7 +26,11 @@ export const autoViewed = (f) => !!S.app?.settings?.autoView && (f.kind === 'tes
 export const countedOnly = (f) => autoViewed(f) && isViewed(f) && !(S.review.viewed[f.path] || []).some((k) => k === viewKey(f) || k === legacyKey(f));
 export const isViewed = (f) => { const v = S.review.viewed[f.path] || []; return v.includes(viewKey(f)) || v.includes(legacyKey(f)) || (autoViewed(f) && !(S.review.unviewed?.[f.path] || []).includes(viewKey(f))); };
 export const isStale = (f) => !!S.review.viewed[f.path]?.length && !isViewed(f);
-export const lines = (f) => f.added + f.deleted;
+// The lines a file asks you to read, as every count of what is left counts them: its changed lines that hold a letter or
+// a digit (the daemon's codeLines; git's +N -M when it has none). The header's +N -M stay git's, as on GitHub.
+export const lines = (f) => f.codeLines ?? f.added + f.deleted;
+// how big a file's diff is to draw: every changed line
+const size = (f) => f.added + f.deleted;
 
 // ------------------------------------------------------------------ order: the tree's, or the guide's sections
 export function orderedFiles() {
@@ -248,7 +252,7 @@ function startPreload() {
   if (!pass || pass.started) return;
   pass.started = true;
   // Very large changes keep the viewport loader rather than building an unbounded DOM in the background.
-  if (pass.files.length < 80 || pass.files.length > 500 || pass.files.reduce((n, f) => n + lines(f), 0) > 50_000) return;
+  if (pass.files.length < 80 || pass.files.length > 500 || pass.files.reduce((n, f) => n + size(f), 0) > 50_000) return;
   // Give the first cards and their highlights the request slots before filling the rest of the change.
   setTimeout(() => {
     let next = 0;
@@ -522,7 +526,7 @@ export function renderLayout() {
 
 function finishLayout(files) {
   const idle = globalThis.requestIdleCallback || ((fn) => setTimeout(() => fn({ timeRemaining: () => 0 }), 0));
-  files.sort((a, b) => lines(a) - lines(b));
+  files.sort((a, b) => size(a) - size(b));
   let next = 0;
   function batch(deadline) {
     if (layoutPass !== files) return;

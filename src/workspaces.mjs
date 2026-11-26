@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { STATE_DIR, SEARCH_ROOTS, BIN, HOME } from './config.mjs';
 import { git, gitOk, run, JsonFile, Lru, slug, isSha, safeRel, single, serial } from './util.mjs';
-import { WORKTREE, revParse, commitsBetween, changedFiles, fileHunks, rangePatches, readAt, lineCount, related, kindOf } from './git.mjs';
+import { WORKTREE, revParse, commitsBetween, changedFiles, fileHunks, rangePatches, readAt, lineCount, related, kindOf, reviewLines } from './git.mjs';
 import { goplsFor } from './lsp.mjs';
 import * as GH from './github.mjs';
 import { localParent, localTrunk, stackFor, stackSnapshot } from './stacks.mjs';
@@ -824,8 +824,8 @@ export class Workspace {
     let lines = 0, n = 0, total = 0;
     for (const f of files) {
       if (f.kind === 'generated') continue;
-      total += f.added + f.deleted;
-      if (!this.isViewed(f)) { lines += f.added + f.deleted; n++; }
+      total += reviewLines(f);
+      if (!this.isViewed(f)) { lines += reviewLines(f); n++; }
     }
     return { lines, files: n, total };
   }

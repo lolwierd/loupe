@@ -155,3 +155,29 @@ test('related Go files still work with literal Git pathspecs', async () => {
   const result = await related(repo, WORKTREE, 'related.go', [{ lines: [{ t: '+', s: 'func ExampleThing() {}' }] }], new Set());
   assert.deepEqual(result.usedBy.map((f) => f.path), ['caller.go']);
 });
+
+test('code lines: a changed line counts when it holds a letter or a digit, not when blank or only brackets', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-code-'));
+  const run = (...a) => execFileSync('git', a, { cwd: dir, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).toString();
+  const put = (p, s) => fs.writeFileSync(path.join(dir, p), s);
+  run('init', '-q', '-b', 'main');
+  put('a.js', 'function a() {\n  return 1;\n}\n');
+  put('gone.js', 'x();\n\n});\n');
+  put('with space.js', 'one\n');
+  run('add', '.'); run('commit', '-qm', 'base');
+  const from = run('rev-parse', 'HEAD').trim();
+  // six lines added: "if (x) {", "y(2);" and "/* c */" hold letters or digits; "}", the blank and "*/" do not
+  put('a.js', 'function a() {\n  if (x) {\n    y(2);\n  }\n\n  /* c */\n  */\n  return 1;\n}\n');
+  fs.rmSync(path.join(dir, 'gone.js'));
+  put('with space.js', 'one\n}\n\ttwo\n');
+  put('new.md', '# Title\n\n---\nText 3\n');
+  const files = await changedFiles(dir, { old: from, new: WORKTREE });
+  const by = Object.fromEntries(files.map((f) => [f.path, f]));
+  assert.equal(by['a.js'].added, 6); assert.equal(by['a.js'].codeLines, 3, 'if, y(2) and the comment; not }, the blank or */');
+  assert.equal(by['gone.js'].deleted, 3); assert.equal(by['gone.js'].codeLines, 1, 'a deletion counts the same way');
+  assert.equal(by['with space.js'].codeLines, 1, 'a name with a space is read');
+  assert.equal(by['new.md'].untracked, true); assert.equal(by['new.md'].codeLines, 2, 'an untracked file too');
+  run('add', '.'); run('commit', '-qm', 'next');
+  const committed = await changedFiles(dir, { old: from, new: run('rev-parse', 'HEAD').trim() });
+  assert.deepEqual(committed.map((f) => [f.path, f.codeLines]), [['a.js', 3], ['gone.js', 1], ['new.md', 2], ['with space.js', 1]]);
+});

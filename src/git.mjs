@@ -94,12 +94,48 @@ export async function commitsBetween(root, from, to) {
   });
 }
 
-// The files a range changes. raw gives status and blob ids, numstat the line counts; both detect renames.
+// The lines a reviewer reads in a change: the added and removed lines that hold a letter or a digit. A blank line, or one
+// that only closes something (`}`, `});`, `*/`), is not counted. A file's +N -M stay git's, so they match GitHub's.
+const READ = /[\p{L}\p{N}]/u;
+export const codeLineCount = (text) => (text ? text.split('\n').filter((l) => READ.test(l)).length : 0);
+// what the counts are read by: a file's code lines when they are known, else git's count of every line
+export const reviewLines = (f) => f.codeLines ?? f.added + f.deleted;
+// Each file's code lines, from the range's patch with no context. A file named in a way this does not read (a quoted
+// name that is not JSON's quoting) is left out and keeps git's count.
+async function codeLines(root, ends) {
+  const patch = await git(root, ['-c', 'core.quotePath=false', 'diff', '--no-color', '--no-ext-diff', '-M', '-U0',
+    '--src-prefix=a/', '--dst-prefix=b/', ...ends, '--'], { maxBuffer: 64 * 1024 * 1024 });
+  // a header's name: git quotes one with a quote, a backslash or a control character in it, and ends one with a space
+  // in it with a tab
+  const name = (s, prefix) => {
+    s = s.replace(/\t$/, '');
+    if (s === '/dev/null') return null;
+    if (s.startsWith('"')) { try { s = JSON.parse(s); } catch { return undefined; } }
+    return s.startsWith(prefix) ? s.slice(prefix.length) : undefined;
+  };
+  const counts = new Map();
+  let from, to, n = 0, inHunk = false;
+  const done = () => { const p = to ?? from; if (p) counts.set(p, n); };
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('diff --git ')) { done(); from = to = undefined; n = 0; inHunk = false; }
+    else if (!inHunk) {
+      if (line.startsWith('--- ')) from = name(line.slice(4), 'a/');
+      else if (line.startsWith('+++ ')) to = name(line.slice(4), 'b/');
+      else if (line.startsWith('@@')) inHunk = true;
+    } else if ((line[0] === '+' || line[0] === '-') && READ.test(line.slice(1))) n++;
+  }
+  done();
+  return counts;
+}
+
+// The files a range changes. raw gives status and blob ids, numstat the line counts; both detect renames. The patch
+// gives the code lines among them.
 export async function changedFiles(root, range) {
   const ends = range.new === WORKTREE ? [range.old] : [range.old, range.new];
-  const [raw, num] = await Promise.all([
+  const [raw, num, code] = await Promise.all([
     git(root, ['diff', '-z', '--raw', '--no-abbrev', '-M', '--no-ext-diff', ...ends]),
     git(root, ['diff', '-z', '--numstat', '-M', '--no-ext-diff', ...ends]),
+    codeLines(root, ends).catch(() => new Map()), // too big a patch: every file keeps git's count
   ]);
   const files = [];
   const rp = raw.split('\0');
@@ -125,6 +161,7 @@ export async function changedFiles(root, range) {
     f.binary = a === '-';
     f.added = f.binary ? 0 : Number(a);
     f.deleted = f.binary ? 0 : Number(d);
+    if (!f.binary && code.has(file)) f.codeLines = code.get(file);
   }
   if (range.new === WORKTREE) {
     // Untracked files are part of uncommitted work too: added in full.
@@ -136,7 +173,7 @@ export async function changedFiles(root, range) {
       const text = bytes?.toString('utf8');
       const binary = text === undefined || text.includes('\0') || text.includes('\uFFFD');
       const blob = bytes && hashBlob(bytes, format);
-      files.push({ path: p, status: 'A', untracked: true, oldBlob: null, blob, added: binary ? 0 : lineCount(text), deleted: 0, binary });
+      files.push({ path: p, status: 'A', untracked: true, oldBlob: null, blob, added: binary ? 0 : lineCount(text), deleted: 0, codeLines: binary ? 0 : codeLineCount(text), binary });
     }
     // The working tree side has no blob id in git's output: hash what is on disk, so "viewed" can key to content.
     const need = files.filter((f) => !f.untracked && !f.blob && f.status !== 'D');
