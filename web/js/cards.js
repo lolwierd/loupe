@@ -106,7 +106,9 @@ function guideHeadHTML(sec, k) {
 
 let io = null;
 let preload;
-export function renderCards(keepFiles = false) {
+// keepFiles: the same files, rearranged or with a new guide or banner around them; mustKeep keeps their bodies however few
+// are drawn (a read again that found no file moved: drawing them again would move the page and redraw every body)
+export function renderCards(keepFiles = false, mustKeep = false) {
   hooks.cardVisibilityChanged?.();
   const order = orderedFiles();
   const sections = S.review.brief?.sections || [];
@@ -117,7 +119,7 @@ export function renderCards(keepFiles = false) {
   const intro = banner + (order.length ? mapCardHTML(S.review.brief) : '');
   // Moving every card costs more than drawing them again until many bodies are loaded; keep them when that work is
   // worth saving, or when a draft is open in one
-  if (keepFiles && (S.draft || S.loaded.size >= 24) && order.length && order.every(({ f }) => cardEl(f.path))) {
+  if (keepFiles && (mustKeep || S.draft || S.loaded.size >= 24) && order.length && order.every(({ f }) => cardEl(f.path))) {
     for (const el of [...cards.children]) if (!el.classList.contains('file')) el.remove();
     cards.insertAdjacentHTML('afterbegin', intro);
     // Keep the code, syntax spans and open composers when the same files are rearranged.
@@ -150,11 +152,14 @@ export function renderCards(keepFiles = false) {
 function bannerHTML() {
   const m = S.ws;
   const bits = [];
-  if (m.kind === 'pr' && !m.worktreeReady) bits.push(`<div class="banner"><span class="working"><span class="shimmer" style="${shimmerSync()}">Making loupe's own checkout of the PR, so review models and gopls can read its files…</span></span></div>`);
+  if (m.kind === 'pr' && !m.worktreeReady) bits.push(`<div class="banner" data-b="worktree"><span class="working"><span class="shimmer" style="${shimmerSync()}">Making loupe's own checkout of the PR, so review models and gopls can read its files…</span></span></div>`);
   if (S.untrackedSkipped) bits.push(`<div class="banner warn"><span>${S.untrackedSkipped.toLocaleString()} more untracked files are not shown (over 5,000). A .gitignore entry is probably missing.</span></div>`);
   if (S.rangeKey === 'since') bits.push(`<div class="banner"><span>Showing only what changed since you last marked a file viewed${m.sinceCount ? ` (${plural(m.sinceCount, 'new commit')})` : ''}.</span><span class="sp"></span><button class="btn sm" data-act="scope" data-scope="all">Whole change</button></div>`);
   return bits.join('');
 }
+
+// what the banners say no longer holds: loupe's checkout of the PR was made, or is being made again, since they were drawn
+export const introStale = () => !!$('#cards > .banner[data-b="worktree"]') !== (S.ws?.kind === 'pr' && !S.ws.worktreeReady);
 
 export function updateCard(p) {
   const f = fileOf(p), c = cardEl(p);
@@ -298,7 +303,8 @@ function scheduleDraw() {
   else setTimeout(run, 0);
 }
 
-// One fetch per file's diff, shared by everything that needs it; cleared when the change is read again.
+// One fetch per file's diff, shared by everything that needs it; kept when the change is read again and the file's
+// blobs did not move.
 export function diffOf(p) {
   let d = S.diffs.get(p);
   if (!d) { d = api(wsApi('/diff', { path: p })); S.diffs.set(p, d); d.catch(() => { if (S.diffs.get(p) === d) S.diffs.delete(p); }); }

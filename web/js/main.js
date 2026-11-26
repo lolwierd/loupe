@@ -1,7 +1,7 @@
 // The page: which change this URL is, the frame around it (top bar; bin | diff | inspector), live
 // updates from the daemon, keys, the palette and home. One URL per change; "/" goes back to the last one.
 import { S, $, $$, esc, h, api, wsApi, I, pref, toast, fileOf, plural, ago, briefRun, notesRun } from './core.js';
-import { renderCards, renderBody, renderAllBodies, renderLayout, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment, statusGlyph, updateFileNotes } from './cards.js';
+import { renderCards, renderBody, renderAllBodies, renderLayout, loadFile, toggleFold, setViewed, isViewed, cardEl, openDraft, attachSelection, cancelDraft, updateCard, orderedFiles, lines, updateMark, setMarksHidden, canComment, statusGlyph, updateFileNotes, viewKey, introStale } from './cards.js';
 import { attemptFileNotes, filesNeedingNotes, resetNotesAttempt, currentNotes } from './file-notes.js';
 import { renderTree, updateTreeViewed, markCurrent, nextUnviewed } from './tree.js';
 import { renderPanel, setTab, renderTabs, openChat, paintMessage } from './panel.js';
@@ -206,13 +206,16 @@ function showState(title, text, error) {
   wakeMotes($('#cards'));
 }
 
+// GitHub's answer is drawn only when it differs from the one drawn: drawing it redraws every open file's body, and the
+// daemon says GitHub was asked again after every ask (each minute, and each time you come back), mostly with nothing new.
+// `at`, when it last asked, always differs.
+const ghSame = (a, b) => !!a && !!b && JSON.stringify({ ...a, at: 0 }) === JSON.stringify({ ...b, at: 0 });
 let fileRequest = 0;
 async function loadFiles(reason) {
   const id = S.id, request = ++fileRequest;
   const current = () => id === S.id && request === fileRequest;
   const briefAtRequest = S.review.brief;
   const notesAtRequest = S.review.notes;
-  const spot = reason ? scrollSpot() : null;
   let files, review;
   const ghReq = api(`/api/w/${S.id}/github`).catch(() => null);
   try {
@@ -220,32 +223,56 @@ async function loadFiles(reason) {
   } catch (e) { if (current()) showState('Could not read the change', e.message, true); return; }
   if (!current()) return;
   const comparison = `${files.old}:${files.new}`;
+  // A read again of the change already drawn: coming back to a tab whose stream slept, or the daemon saying it moved.
+  // When no file's content moved (the key is every file's blobs, the working tree's hashed from disk), the cards, their
+  // code and where you are stay as they are, and only the review state, which can have moved meanwhile, is drawn again.
+  const drawn = !!S.comparison && S.rangeKey === files.scope;
+  const same = drawn && S.comparison === comparison && S.filesKey === files.key && S.untrackedSkipped === (files.untrackedSkipped || 0);
+  const spot = drawn && !same ? scrollSpot() : null;
   if (S.comparison && S.comparison !== comparison) clearReturns();
-  S.comparison = comparison;
+  S.comparison = comparison; S.filesKey = files.key;
   S.rangeKey = files.scope;
   S.untrackedSkipped = files.untrackedSkipped || 0;
-  S.files = files.files.map((f, i) => ({ ...f, i }));
-  S.byPath = new Map(S.files.map((f) => [f.path, f]));
+  const previous = S.byPath;
+  // the same objects, refreshed: a body being drawn checks its file by identity, and a new one would strand it
+  if (same) for (const f of files.files) Object.assign(previous.get(f.path) || {}, f);
+  else {
+    S.files = files.files.map((f, i) => ({ ...f, i }));
+    S.byPath = new Map(S.files.map((f) => [f.path, f]));
+  }
   // A model result can land while the files request is still in flight.
   if (S.review.brief !== briefAtRequest) review.brief = S.review.brief; // (what can be undone on it travels with it, as brief.edits)
   if (S.review.notes !== notesAtRequest) review.notes = S.review.notes;
+  const before = S.review;
   S.review = review;
   S.github ||= { pr: null, threads: [] };
   // GitHub's side (the PR, its checks, its threads) is never waited for: it lands when it lands.
-  ghReq.then((gh) => { if (gh && current()) { S.github = gh; hooks.githubChanged(); renderGo(); syncMote(); renderGhLink(); $('#wsbtn').innerHTML = wsTitle(); } });
+  ghReq.then((gh) => {
+    if (!gh || !current()) return;
+    if (ghSame(gh, S.github)) { S.github.at = gh.at; return; }
+    S.github = gh; hooks.githubChanged(); renderGo(); syncMote(); renderGhLink(); $('#wsbtn').innerHTML = wsTitle();
+  });
   S.wsWip = new Set(S.ws.wipPaths || []);
-  S.rows.clear(); S.items.clear(); S.tok.clear(); S.loaded.clear(); S.newText.clear(); S.diffs.clear();
-  // Generated files, and files you have viewed, start folded.
-  S.shut = new Set(S.files.filter((f) => f.kind === 'generated' || isViewed(f)).map((f) => f.path));
   if (S.order === 'guide' && !S.review.brief?.sections?.length) S.order = 'tree';
   if (S.mode === 'guide' && S.review.brief?.sections?.length) S.order = 'guide';
+  if (same) redrawReview(before);
+  else {
+    // A file whose diff did not move (the same blobs on both sides) keeps what was read of it, its diff, highlighting and
+    // text, so it is drawn again at once with no request, and the fold you gave it. Files that moved start over: generated
+    // files and files you have viewed start folded.
+    const kept = new Set(drawn ? S.files.filter((f) => previous?.get(f.path) && viewKey(previous.get(f.path)) === viewKey(f)).map((f) => f.path) : []);
+    S.rows.clear(); S.items.clear(); S.loaded.clear();
+    for (const m of [S.diffs, S.newText]) for (const p of [...m.keys()]) if (!kept.has(p)) m.delete(p);
+    for (const k of [...S.tok.keys()]) if (k.startsWith('ext:') || !kept.has(k.slice(k.indexOf(':') + 1))) S.tok.delete(k);
+    S.shut = new Set(S.files.filter((f) => kept.has(f.path) ? S.shut.has(f.path) : f.kind === 'generated' || isViewed(f)).map((f) => f.path));
+  }
   if (!S.current || !fileOf(S.current)) S.current = orderedFiles()[0]?.f.path || null;
-  renderScopebar(); renderTree(); renderCards(); renderPanel(); renderLsp(); syncMote(); renderGhLink();
+  renderScopebar(); renderTree(); if (!same) renderCards(); renderPanel(); renderLsp(); syncMote(); renderGhLink();
+  if (spot) restoreSpot(spot); // at once: a frame later the page has already been drawn at the wrong place
   hooks.sound?.opened(S.id);
   renderProgress(); renderGo(); renderStack(); hooks.moteMount?.(allViewed(), leftShare());
   requestAnimationFrame(spyNow);
-  if (spot) requestAnimationFrame(() => restoreSpot(spot));
-  else if (location.hash.length > 1) {
+  if (!drawn && location.hash.length > 1) {
     // #path, #path:L12 or #path:L12-L20: the file, scrolled to the line.
     const m2 = /^(.*?)(?::L(\d+)(?:-L?(\d+))?)?$/.exec(decodeURIComponent(location.hash.slice(1)));
     if (m2 && fileOf(m2[1])) requestAnimationFrame(() => goLoc({ path: m2[1], line: Number(m2[3] || m2[2]) || 0 }));
@@ -383,21 +410,53 @@ function setOrder(o) {
   requestAnimationFrame(spyNow);
 }
 
-// ------------------------------------------------------------------ where the reader is
-function scrollSpot() {
-  const c = $('#center'), r = c.getBoundingClientRect();
-  const el = document.elementFromPoint(r.left + r.width / 2, r.top + 100);
-  const card = el?.closest('.file');
-  if (!card) return null;
-  const tx = el.closest('.ln')?.querySelector('.tx[data-r="new"]');
-  return { path: card.dataset.p, line: tx ? Number(tx.dataset.l) : null, off: (tx || card).getBoundingClientRect().top - r.top };
+// The change read again with no file moved: what can have changed is the review around the code (viewed, marks and their
+// answers, the guide, file notes, the banner), so only that is drawn. A body is drawn again only when its marks moved.
+const guideOf = (x) => JSON.stringify([x?.tldr, x?.sections, x?.diagrams, (x?.scenes || []).map((s) => [s.id, s.at, s.by]), x?.scene, x?.edits]);
+function redrawReview(before) {
+  const marksOf = (rv, p) => JSON.stringify((rv?.threads || []).filter((t) => t.path === p).map((t) => [t, rv.convs?.[t.conv]]));
+  for (const f of S.files) {
+    updateCard(f.path);
+    if (!S.rows.has(f.path) || marksOf(before, f.path) === marksOf(S.review, f.path)) continue;
+    if (!document.activeElement?.closest?.(`.file[data-p="${CSS.escape(f.path)}"] .composer`)) renderBody(f.path);
+    hooks.threadsChanged(f.path);
+  }
+  if (JSON.stringify(before?.notes) !== JSON.stringify(S.review.notes)) updateFileNotes(before?.notes);
+  const guideMoved = guideOf(before?.brief) !== guideOf(S.review.brief);
+  if (guideMoved && S.order === 'guide' || introStale()) renderCards(true, true);
+  else if (guideMoved) hooks.mapChanged?.();
 }
+
+// ------------------------------------------------------------------ where the reader is
+// The line 100 px down the code column, and how far down it sits; or, between lines (a file's head, a guide heading), the
+// file there and how far down its top is.
+function scrollSpot() {
+  const c = $('#center'), r = c.getBoundingClientRect(), y = r.top + Math.min(100, r.height / 2);
+  const el = document.elementFromPoint(r.left + r.width / 2, y);
+  const card = el?.closest('.file') || $$('#cards > .file:not([hidden])').find((f) => { const b = f.getBoundingClientRect(); return b.top <= y && b.bottom > y; });
+  if (!card) return null;
+  const tx = el?.closest('.ln')?.querySelector('.tx[data-r="new"][data-l]');
+  return { path: card.dataset.p, line: tx ? Number(tx.dataset.l) : null, off: tx ? tx.getBoundingClientRect().top - r.top : null, cardOff: card.getBoundingClientRect().top - r.top };
+}
+// Back to that spot after the cards were drawn again: the file first, so the screen is about right at once, then its line
+// once its body is drawn (unless the change was read again meanwhile). Until then the browser's scroll anchoring is off:
+// it holds still whatever card is in view as the bodies around it grow, and as the file you were in grows from its
+// placeholder that is the card after it, which it follows thousands of pixels down.
+let restoring = 0;
 async function restoreSpot(s) {
-  const card = s && cardEl(s.path);
-  if (!card) return;
-  if (s.line) await loadFile(s.path).catch(() => {});
-  const tx = s.line && card.querySelector(`.tx[data-r="new"][data-l="${s.line}"]`);
-  $('#center').scrollTop += (tx || card).getBoundingClientRect().top - $('#center').getBoundingClientRect().top - s.off;
+  const card = s && cardEl(s.path), c = $('#center');
+  if (!card || card.hidden) return;
+  const align = (el, off) => { c.scrollTop += el.getBoundingClientRect().top - c.getBoundingClientRect().top - off; };
+  const request = fileRequest, mine = ++restoring;
+  c.style.overflowAnchor = 'none';
+  try {
+    align(card, s.cardOff);
+    if (!s.line || card.classList.contains('shut')) return;
+    await loadFile(s.path).catch(() => {});
+    if (request !== fileRequest || cardEl(s.path) !== card) return;
+    const tx = card.querySelector(`.tx[data-r="new"][data-l="${s.line}"]`);
+    if (tx) align(tx, s.off);
+  } finally { if (mine === restoring) c.style.overflowAnchor = ''; }
 }
 // Which file you are reading: the last card whose top is above the line 90 px down, except when a guide heading sits
 // between it and the line, which means you are at the start of the heading's first file.
@@ -607,7 +666,6 @@ function listenWs() {
     S.review.brief = d; // it carries what can be undone on it (brief.edits): one event, so the two never disagree
     guideEditsChanged(was?.edits, d.edits);
     // while it is being written, only the line that says what it is reading changes (unless a chat changed the guide meanwhile)
-    const guideOf = (x) => JSON.stringify([x?.tldr, x?.sections, x?.diagrams, (x?.scenes || []).map((s) => [s.id, s.at, s.by]), x?.scene, x?.edits]);
     if (d.pending && was?.pending && guideOf(d) === guideOf(was)) { hooks.briefStep?.(); hooks.mapStep?.(); return; }
     syncMote(); if (S.ws) renderScopebar();
     if (S.tab === 'overview') renderPanel(); else renderTabs();
@@ -623,8 +681,9 @@ function listenWs() {
   on('github', async () => {
     const id = S.id, github = await api(`/api/w/${S.id}/github`).catch(() => null);
     if (id !== S.id || !github) return;
-    S.github = github; hooks.githubChanged();
-    if (S.ws) { $('#wsbtn').innerHTML = wsTitle(); loadStack(); }
+    if (ghSame(github, S.github)) S.github.at = github.at;
+    else { S.github = github; hooks.githubChanged(); if (S.ws) $('#wsbtn').innerHTML = wsTitle(); }
+    if (S.ws) loadStack(); // the stack's other PRs can move with this one unchanged
   });
   on('page', () => location.reload());
 }
