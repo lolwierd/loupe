@@ -695,7 +695,8 @@ function guideEditsChanged(before = [], edits = []) {
   if (undoToast && !edits.some((e) => e.id === undoToast && e.undo)) { if ($('#toast')?.dataset.edit === undoToast) $('#toast').hidden = true; undoToast = null; }
   const fresh = edits.find((e) => !seen.has(e.id) && !e.undone);
   if (!fresh) return;
-  const what = fresh.kind === 'tldr' ? 'the TLDR' : `the ${fresh.kind === 'scene' ? 'animation' : fresh.kind} \u201c${fresh.title}\u201d`;
+  // a part there is one of (the TLDR, the risk, ...) is titled by what the page calls it, as the Overview's list does
+  const what = !['section', 'diagram', 'scene'].includes(fresh.kind) ? fresh.title : `the ${fresh.kind === 'scene' ? 'animation' : fresh.kind} \u201c${fresh.title}\u201d`;
   toast(`Chat ${{ add: 'added', replace: 'replaced', remove: 'removed' }[fresh.op]} ${what}.`, fresh.undo ? { action: 'Undo', run: () => undoEdit(fresh.id) } : {});
   const t = $('#toast'); if (t && fresh.undo) { t.dataset.edit = fresh.id; undoToast = fresh.id; }
 }

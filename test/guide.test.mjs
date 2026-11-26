@@ -337,3 +337,133 @@ test('a look-over fixes a scene with edits: each finds a passage that is there o
   assert.match(applyEdits('<p>x</p>', [{ find: '', replace: 'y' }]).problem, /without find/);
   assert.deepEqual(applyEdits('<p>x</p>', []), { html: '<p>x</p>' });
 });
+
+// Every part of the guide is a chat's to change, not only its lists: the risk, the map's text, how to review it and the
+// questions are replaced as the TLDR is, undone, and counted by Regenerate.
+test('a chat replaces the risk, the map\'s text, the plan and the questions; leaving a field out keeps it', async () => {
+  const d = brief();
+  const read = (k) => JSON.parse(guidePart(d.brief, k));
+  assert.deepEqual(read('risk'), { level: 'typical', why: 'Shelves can overflow.' });
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'risk', value: { level: 'low' } }, { conv: 'c' })).ok);
+  assert.equal(d.brief.risk, 'low'); assert.equal(d.brief.riskWhy, 'Shelves can overflow.', 'why was left out, so it stays');
+  assert.match((await editGuide(d, FILES, { op: 'replace', kind: 'risk', value: { level: 'scary' } })).message, /low, typical, high or very high/);
+  const ctx = await editGuide(d, FILES, { op: 'replace', kind: 'context', value: { glossary: [{ term: 'Jar', meaning: 'One item on a shelf.' }] } });
+  assert.ok(ctx.ok, ctx.message);
+  assert.equal(d.brief.context.system, 'A pantry.'); assert.deepEqual(d.brief.context.glossary, [{ term: 'Jar', meaning: 'One item on a shelf.', where: '' }]);
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'plan', value: { start: 'restock.go', steps: ['Read the restock.', 'Then the shelf.'] } })).ok);
+  assert.equal(d.brief.plan.start, 'pantry/restock.go', 'named as the change has it');
+  assert.equal(d.brief.startHere, 'pantry/restock.go', 'the Overview\'s Start with follows the map\'s');
+  assert.match((await editGuide(d, FILES, { op: 'replace', kind: 'plan', value: { start: 'kitchen/oven.go' } })).message, /one of the change's files/);
+  assert.equal(d.brief.plan.start, 'pantry/restock.go');
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'questions', value: ['Does Restock stop when Put fails?'] })).ok);
+  assert.deepEqual(d.brief.questions, ['Does Restock stop when Put fails?']);
+  assert.match((await editGuide(d, FILES, { op: 'add', kind: 'questions', value: ['Another?'] })).message, /exactly one questions: replace it/);
+  assert.match((await editGuide(d, FILES, { op: 'replace', kind: 'questions', value: 'Another?' })).message, /array of strings/);
+  const sum = guideSummary(d.brief);
+  for (const s of ['Risk [risk] (changed in chat): low', 'Jar: One item on a shelf.', 'Start with pantry/restock.go', '- Does Restock stop when Put fails?']) assert.ok(sum.includes(s), s);
+  assert.deepEqual(guideEdits(d).map((e) => e.title), ['the questions worth asking', 'how to review it', 'how this part works', 'the risk']);
+  assert.equal(chatEditsToBrief(d), 4, 'a new brief would write each of them again');
+  assert.equal(chatEditsToBrief({ brief: carryChatParts(d.brief, brief().brief, FILES) }), 0);
+  // undone newest first, back to the brief's own words
+  for (const e of guideEdits(d)) assert.ok(undoGuide(d, e.id, FILES).ok);
+  const fresh = brief().brief;
+  for (const k of ['risk', 'riskWhy', 'context', 'plan', 'startHere', 'questions']) assert.deepEqual(d.brief[k], fresh[k], k);
+  for (const k of ['riskBy', 'contextBy', 'planBy', 'questionsBy']) assert.equal(d.brief[k], undefined, k);
+  d.brief.pending = true;
+  assert.match((await editGuide(d, FILES, { op: 'replace', kind: 'risk', value: { level: 'high' } })).message, /being written again/);
+});
+
+test('a replace keeps what it leaves out, so a move is an id and a place: the section keeps its words, id, ticks and scene, and never goes after Other changes', async () => {
+  const d = brief(), [shelf, tests] = d.brief.sections;
+  tick(d, shelf, 'Lids close.');
+  shelf.check = ['Lids close.'];
+  assert.ok((await editGuide(d, FILES, { op: 'add', kind: 'scene', value: scene(DRAWS) }, { conv: 'c' })).ok);
+  const r = await editGuide(d, FILES, { op: 'replace', kind: 'section', id: shelf.id, at: 99 }); // a move is an id and a place
+  assert.ok(r.ok, r.message);
+  assert.deepEqual(d.brief.sections.map((s) => s.title), ['Tests', 'The shelf holds jars', 'Other changes', 'Generated and lock files']);
+  const moved = d.brief.sections[1];
+  assert.equal(moved.id, shelf.id); assert.deepEqual(ticked(d, moved), ['Lids close.']); assert.equal(d.brief.scenes[0].sectionId, shelf.id);
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'section', id: shelf.id, at: 0, value: {} })).ok);
+  assert.equal(d.brief.sections[0].why, 'Why.', 'what the value left out is kept');
+  assert.equal(d.brief.sections[0].id, shelf.id); assert.equal(d.brief.sections[1].id, tests.id);
+  const other = d.brief.sections.find((s) => s.synthetic);
+  assert.match((await editGuide(d, FILES, { op: 'replace', kind: 'section', id: other.id, at: 0, value: { ...other } })).message, /a title of its own/);
+});
+
+test('the brief\'s lists are cut to what its prompt asks for; a chat keeps the room it had', async () => {
+  const many = (n, w) => Array.from({ length: n }, (_, k) => `${w} ${k + 1}.`);
+  const g = normalizeGuide({
+    risk: 'spicy', questions: many(6, 'Question'), plan: { start: 'nowhere.go', steps: many(8, 'Step') },
+    context: { system: 's', glossary: many(8, 'Term').map((t) => ({ term: t, meaning: 'm' })) },
+    sections: [{ title: 'Shelf', role: 'core', why: 'w', check: many(5, 'Check'), files: ['pantry/shelf.go'] }],
+    startHere: 'pantry/shelf.go',
+  }, FILES);
+  assert.equal(g.risk, 'typical', 'a risk loupe cannot draw is the usual one');
+  assert.deepEqual([g.questions.length, g.plan.steps.length, g.context.glossary.length, g.sections[0].check.length], [3, 5, 5, 3]);
+  assert.equal(g.plan.start, 'pantry/shelf.go', 'the old startHere when the plan names no changed file');
+  const d = { brief: { key: 'k', at: 1, ...g }, checks: {}, guideHistory: [] };
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'section', id: g.sections[0].id, value: { ...g.sections[0], check: many(5, 'Check') } })).ok);
+  assert.equal(d.brief.sections[0].check.length, 5);
+});
+
+test('a replace keeps what it leaves out: a retitled diagram keeps its drawing; a scene keeps its section unless given one', async () => {
+  const d = brief(), dg = d.brief.diagrams[0];
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'diagram', id: dg.id, value: { title: 'Pantry, renamed' } })).ok);
+  assert.equal(d.brief.diagrams[0].title, 'Pantry, renamed'); assert.equal(d.brief.diagrams[0].nodes.length, 2);
+  assert.ok((await editGuide(d, FILES, { op: 'add', kind: 'scene', value: scene(DRAWS) })).ok);
+  const sc = d.brief.scenes[0];
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { title: 'Slower' } })).ok);
+  assert.equal(d.brief.scenes[0].sectionId, d.brief.sections[0].id); assert.equal(d.brief.scenes[0].html, DRAWS);
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { section: 0 } })).ok);
+  assert.equal(d.brief.scenes[0].sectionId, null, 'section 0 is the map');
+});
+
+// What the Fable reviews found (26 Nov 2026), each kept from coming back.
+test('the last edit saved before a part was editable can still be undone: it is compared on the keys it kept', async () => {
+  const d = brief(), was = d.brief.tldr;
+  const r = await editGuide(d, FILES, { op: 'replace', kind: 'tldr', value: 'Rewritten.' });
+  const old = ['tldr', 'tldrBy', 'sections', 'diagrams', 'scenes', 'removedInChat'], e = d.guideHistory[0]; // as the version before saved it
+  e.before = Object.fromEntries(old.map((k) => [k, e.before[k]])); e.after = JSON.stringify(old.map((k) => d.brief[k] ?? null));
+  assert.equal(guideEdits(d)[0].undo, true);
+  assert.ok(undoGuide(d, r.entry.id, FILES).ok); assert.equal(d.brief.tldr, was); assert.equal(d.brief.risk, 'typical', 'a key it did not keep is left alone');
+});
+
+test('a plan edit keeps a start it leaves out, also on a brief that had only startHere; a wrong type is refused', async () => {
+  const d = brief();
+  delete d.brief.plan; d.brief.startHere = 'pantry/shelf.go';
+  assert.equal(JSON.parse(guidePart(d.brief, 'plan')).start, 'pantry/shelf.go');
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'plan', value: { steps: ['Read the shelf first.'] } })).ok);
+  assert.equal(d.brief.plan.start, 'pantry/shelf.go'); assert.equal(d.brief.startHere, 'pantry/shelf.go');
+  // the change moved on and the start is not in it now: an edit that does not name a start leaves it as it was
+  const fewer = FILES.filter((f) => f.path !== 'pantry/shelf.go');
+  assert.ok((await editGuide(d, fewer, { op: 'replace', kind: 'plan', value: { why: 'The shelf is where jars live.' } })).ok);
+  assert.equal(d.brief.plan.start, 'pantry/shelf.go'); assert.equal(d.brief.startHere, 'pantry/shelf.go');
+  assert.match((await editGuide(d, FILES, { op: 'replace', kind: 'plan', value: { steps: 'Read it.' } })).message, /whole list/);
+  assert.match((await editGuide(d, FILES, { op: 'replace', kind: 'context', value: { glossary: 'Jar' } })).message, /whole list/);
+  assert.match((await editGuide(d, FILES, { op: 'replace', kind: 'questions', value: [{ q: 'Why?' }] })).message, /array of strings/);
+  assert.deepEqual(d.brief.plan.steps, ['Read the shelf first.']); assert.deepEqual(d.brief.context.glossary, []);
+});
+
+test('a scene read back whole and sent again with a new section number moves there; the number it was drawn for does not move it', async () => {
+  const d = brief();
+  d.brief.sections.splice(1, 0, ...normalizeGuide({ sections: [{ title: 'Restock', role: 'core', why: 'w', files: ['pantry/restock.go'] }] }, FILES).sections.slice(0, 1));
+  d.brief.sections[0].files = ['pantry/shelf.go'];
+  const [shelf, restock] = d.brief.sections;
+  d.brief.scenes.push({ id: 'drawn1', title: 'Drawn by the brief', why: '', section: 1, sectionId: shelf.id, by: 'brief', origin: 'brief', html: DRAWS, height: 260, at: 5 });
+  const read = () => JSON.parse(guidePart(d.brief, 'scene', 'drawn1'));
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: 'drawn1', value: { ...read(), title: 'Renamed' } })).ok);
+  assert.equal(d.brief.scenes[0].sectionId, shelf.id, 'echoed whole, with the number it was drawn for: it stays');
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: 'drawn1', value: { ...read(), section: 2 } })).ok);
+  assert.equal(d.brief.scenes[0].sectionId, restock.id, 'a number changed from what was read moves it');
+});
+
+test('"Other changes" becomes a section only when named: a bare replace is refused, a title makes it a section like the others', async () => {
+  const d = brief(), other = d.brief.sections.find((s) => s.title === 'Other changes');
+  assert.match((await editGuide(d, FILES, { op: 'replace', kind: 'section', id: other.id })).message, /a title of its own/);
+  assert.equal(chatEditsToBrief(d), 0);
+  const r = await editGuide(d, FILES, { op: 'replace', kind: 'section', id: other.id, value: { title: 'The pantry\'s docs', role: 'docs' } });
+  assert.ok(r.ok, r.message);
+  const named = d.brief.sections.find((s) => s.id === other.id);
+  assert.equal(named.title, 'The pantry\'s docs'); assert.equal(named.synthetic, undefined); assert.deepEqual(named.files, ['docs/pantry.md']);
+  assert.equal(d.brief.sections.filter((s) => s.title === 'Other changes').length, 0);
+});

@@ -19,7 +19,7 @@ import { registry, contentKey, totalsOf, settings } from './workspaces.mjs';
 import { git, uid } from './util.mjs';
 import { WORKTREE, changedFiles, fileHunks, readWorktree } from './git.mjs';
 import { eligibleForNotes, fileNoteKey, filesNeedingNotes, currentNotes, NOTES_VERSION } from '../web/js/file-notes.js';
-import { normalizeGuide, carryChatParts, ensureIds, editGuide, guideSummary, guidePart, guideEdits, drops, chatTouchedScene } from './guide.mjs';
+import { normalizeGuide, carryChatParts, ensureIds, editGuide, guideSummary, guidePart, guideEdits, drops, chatTouchedScene, ONE } from './guide.mjs';
 import { normalizeScene, applyEdits } from './scenes.mjs';
 import { openMcp } from './mcp.mjs';
 import { docPrompt, DOC_SCHEMA, LOOK_SCHEMA, DOC_FRAME, DOC_LOOK } from './scene-doc-guide.mjs';
@@ -181,9 +181,9 @@ async function systemText(ws, scope, linked, forCodex = false, write = null) {
   const can = write
     ? (forCodex
       ? 'You can read and edit files in the checkout and run commands there. The sandbox has no network.'
-      : `Tools: Read, Grep and Glob; Edit and Write for files in the checkout; Bash for commands, run in a sandbox (no network, no writes outside the checkout and its git directory); \`git\` for read-only git as a list of arguments; list_threads and read_thread for the reviewer's other questions and chats on this change (use them when the reviewer refers to one); read_guide and edit_guide for the change's guide (its sections, diagrams and animated scenes; scene_kit before you draw a scene), which you may change when asked.`)
+      : `Tools: Read, Grep and Glob; Edit and Write for files in the checkout; Bash for commands, run in a sandbox (no network, no writes outside the checkout and its git directory); \`git\` for read-only git as a list of arguments; list_threads and read_thread for the reviewer's other questions and chats on this change (use them when the reviewer refers to one); read_guide and edit_guide for the change's guide, every part of it (the TLDR, the risk, the map's text, how to review it, the questions, sections, diagrams and animated scenes; scene_kit before you draw a scene), which you may change when asked.`)
       + ' Nothing you do reaches GitHub: the reviewer commits and pushes from loupe, so leave commits and pushes to them unless they ask. When you change files, say which, as path:line.'
-    : forCodex ? 'Use read-only commands to inspect the workspace. Stay inside the checkout and do not write files.' : `Tools: Read, Grep and Glob inside the workspace; \`git\` for read-only git (diff, show, log, blame, grep, ls-files, ...: pass the arguments as a list); list_threads and read_thread for the reviewer's other questions and chats on this change. Use them when the reviewer refers to another thread, or when one bears on the question. read_guide reads the change's guide; in a chat, edit_guide changes it (sections, diagrams, animated scenes; scene_kit first for a scene) when the reviewer asks: the guide is loupe's, so this is allowed even here.`;
+    : forCodex ? 'Use read-only commands to inspect the workspace. Stay inside the checkout and do not write files.' : `Tools: Read, Grep and Glob inside the workspace; \`git\` for read-only git (diff, show, log, blame, grep, ls-files, ...: pass the arguments as a list); list_threads and read_thread for the reviewer's other questions and chats on this change. Use them when the reviewer refers to another thread, or when one bears on the question. read_guide reads the change's guide; in a chat, edit_guide changes any part of it (the TLDR, the risk, the map's text, how to review it, the questions, sections, diagrams, animated scenes; scene_kit first for a scene) when the reviewer asks: the guide is loupe's, so this is allowed even here.`;
   const prCopy = ws.rec.kind === 'pr' && !write ? ' This is loupe\'s own checkout of the pull request: if asked to change the code, say what you would change, and that edits need a local checkout of the branch (open that in loupe and chat there).' : '';
   return `
 ${write ? 'You are working with a reviewer inside loupe, a local code-review desk, in their checkout of this repository.' : `You are answering a reviewer inside loupe, a local code-review desk. You are read-only here.${prCopy}`}
@@ -241,12 +241,12 @@ function threadTools(ws) {
 function guideToolDefs(ws, conv, edit, turn = null) {
   const defs = [{
     name: 'read_guide',
-    description: "Read this change's guide: the TLDR, its sections (with the files in each), its diagrams and its scenes (the animations). Give part and id for one of them in full, as JSON (a scene's includes its code).",
-    shape: { part: z.enum(['section', 'diagram', 'scene']).optional(), id: z.string().optional() },
+    description: "Read this change's guide, all of it: the TLDR, the risk, how this part works (the map's text and glossary), how to review it, the questions worth asking, its sections (with the files in each), its diagrams and its scenes (the animations). Give a part (and an id for a section, diagram or scene) for it in full, as JSON, as a chat's edit_guide takes it (a scene's includes its code).",
+    shape: { part: z.enum(['section', 'diagram', 'scene', ...Object.keys(ONE)]).optional(), id: z.string().optional() },
     run: async ({ part, id }) => {
       const b = ws.review.data.brief;
       if (b?.sections && (b.sections.some((s) => !s.id) || (b.diagrams || []).some((x) => !x.id))) { ensureIds(ws.review.data); ws.review.save(); }
-      if (!part) return guideSummary(b);
+      if (!part || !b?.sections) return guideSummary(b); // no guide yet: say so, whichever part was asked for
       return guidePart(b, part, id) || `No ${part} ${id}; read_guide without a part lists them.`;
     },
   }];
@@ -258,15 +258,22 @@ function guideToolDefs(ws, conv, edit, turn = null) {
     run: async () => `A scene is an animation as a document: your own HTML, CSS and JavaScript.\n\n${DOC_FRAME}\n\n${DOC_LOOK}`,
   }, {
     name: 'edit_guide',
-    description: `Change this change's guide, which the reviewer reads beside the code: add, replace or remove a section, a diagram or a scene (an animation), or replace the TLDR. The reviewer sees the edit at once, marked as made in chat, and can undo it.
-- section: { title, role (core|supporting|tests|config|docs|other), why (markdown), context, check: [up to 3 things to verify], files: [paths from the change] }. Every changed file stays in exactly one section: a file you put in a section leaves the one it was in (an edit that would empty a section made in chat is refused: remove that one first). The guide cannot be changed while a new brief is being written.
+    description: `Change any part of this change's guide, which the reviewer reads beside the code. The reviewer sees the edit at once and can undo it. Nothing can be changed while a new brief is being written.
+A replace keeps the fields you leave out of value, so give only what changes; a list you give (glossary, steps, check, files, nodes, questions) replaces the whole list, so give all of it, the items you keep included.
+The parts there is one of: op replace.
+- tldr: the markdown text.
+- risk: { level: low|typical|high|very high, why }.
+- context, the map's text: { system (how this part works), before, after, glossary: [{ term, meaning, where }] }.
+- plan, how to review it: { start (one of the change's files), why, steps: [...] }.
+- questions, worth asking: the whole list, as strings.
+The lists: op add, replace or remove. id names the one to replace or remove (read_guide lists ids); at is the 0-based place to add one at, or to move the one you replace to (a move is just op replace, id and at).
+- section: { title, role (core|supporting|tests|config|docs|other), why (markdown), context, check: [up to 3 things to verify], files: [paths from the change] }. Every changed file stays in exactly one section: a file you put in a section leaves the one it was in (an edit that would empty a section made in chat is refused: remove that one first).
 - diagram: as the brief's diagrams: { kind: map|flow, title, caption, nodes: [{ id, label, kind, col, row, change, ref }], edges: [{ from, to, label, change, step }], groups }.
 - scene: { title, why, section (1-based, 0 for the map), height, html }: an animation as your own HTML, CSS and JavaScript. Read scene_kit first. loupe renders it before keeping it; what it finds wrong comes back to you.
-- tldr: value is the markdown text.
-id names the part to replace or remove (read_guide lists ids); at is where to add a section (0-based).`,
-    shape: { op: z.enum(['add', 'replace', 'remove']), kind: z.enum(['section', 'diagram', 'scene', 'tldr']), id: z.string().optional(), at: z.number().int().optional(), value: z.any().optional().describe('the part as a JSON object (for tldr: the text)') },
+Write as the brief does: a TLDR or a section's why in at most 50 words, a check in 20, a question in 30, each thing said once, in whole sentences that follow from each other, with no em dashes and none of the stock words of generated text (crucial, robust, seamless, leverage, ensuring ...).`,
+    shape: { op: z.enum(['add', 'replace', 'remove']), kind: z.enum(['section', 'diagram', 'scene', ...Object.keys(ONE)]), id: z.string().optional(), at: z.number().int().optional(), value: z.any().optional().describe('the part: an object, the list of strings for questions, the text for tldr') },
     run: async ({ op, kind, id, at, value }, ctx = turn) => {
-      if (typeof value === 'string' && kind !== 'tldr') { try { value = JSON.parse(value); } catch { return 'value must be the part as a JSON object'; } }
+      if (typeof value === 'string' && kind !== 'tldr') { try { value = JSON.parse(value); } catch { return kind === 'questions' ? 'value must be the whole list of questions, as a JSON array of strings' : 'value must be the part as a JSON object'; } }
       const files = await ws.files('all', { fresh: true }); // the change as it is now, not as the watcher last saw it
       if (ctx?.live && !ctx.live()) return 'This turn is over; the edit was not made.';
       const r = await editGuide(ws.review.data, files, { op, kind, id, at, value }, { conv: conv?.id || null, live: ctx?.live, signal: ctx?.signal, render: (html, height, signal) => renderScene(html, { origin: `http://127.0.0.1:${PORT}`, height, signal }) });
@@ -405,7 +412,7 @@ export function ask(ws, conv, msg, { model, effort, scope = 'all', thread = null
       if (answer.role === 'codex') {
         const context = await systemText(ws, scope, false, true, write);
         const tools = conv.kind === 'chat'
-          ? "loupe's tools (an MCP server named loupe): read_guide reads the change's guide; edit_guide changes it (sections, diagrams, animated scenes; scene_kit first for a scene) when the reviewer asks. The guide is loupe's own state, not the repository."
+          ? "loupe's tools (an MCP server named loupe): read_guide reads the change's guide; edit_guide changes any part of it (the TLDR, the risk, the map's text, how to review it, the questions, sections, diagrams, animated scenes; scene_kit first for a scene) when the reviewer asks. The guide is loupe's own state, not the repository."
           : "loupe's tool read_guide (an MCP server named loupe) reads the change's guide.";
         const input = [context, tools, codex.otherQuestions(ws, conv), prompt(ws, conv, msg, thread)].filter(Boolean).join('\n\n');
         const extra = write ? (await sandboxFor(write)).filesystem.allowWrite : [];
@@ -494,9 +501,9 @@ function toolSummary(root, name, input = {}) {
     case 'mcp__loupe__git': return `git ${(input.args || []).join(' ')}`;
     case 'mcp__loupe__list_threads': return 'your other threads';
     case 'mcp__loupe__read_thread': return `thread ${input.id}`;
-    case 'mcp__loupe__read_guide': return input.part ? `the guide's ${input.part} ${input.id || ''}`.trim() : 'the guide';
+    case 'mcp__loupe__read_guide': return ONE[input.part] ? `the guide: ${ONE[input.part].label}` : input.part ? `the guide's ${input.part} ${input.id || ''}`.trim() : 'the guide';
     case 'mcp__loupe__scene_kit': return 'how scenes are drawn';
-    case 'mcp__loupe__edit_guide': return `${{ add: 'adds', replace: 'replaces', remove: 'removes' }[input.op] || input.op} ${input.kind === 'tldr' ? 'the TLDR' : `a ${input.kind}${input.value?.title ? ` \u201c${String(input.value.title).slice(0, 60)}\u201d` : input.id ? ` ${input.id}` : ''}`}`;
+    case 'mcp__loupe__edit_guide': return `${{ add: 'adds', replace: 'replaces', remove: 'removes' }[input.op] || input.op} ${ONE[input.kind] ? ONE[input.kind].label : `a ${input.kind}${input.value?.title ? ` \u201c${String(input.value.title).slice(0, 60)}\u201d` : input.id ? ` ${input.id}` : ''}`}`;
     default: return JSON.stringify(input).slice(0, 140);
   }
 }
@@ -506,6 +513,15 @@ function toolSummary(root, name, input = {}) {
 // (the changed files in full, their callers, the package, the repository's own docs and the history of the changed
 // files) with the same read-only tools a question gets, and writes: what the change does and why, how this part of
 // the system works today, a map (diagrams) with the change marked on it, and how to review it.
+// How the guide reads: an engineer explaining their code to a colleague, not generated text. The rules are the
+// humanizer skill's, cut to what review prose trips on. Word limits alone pushed the brief into clipped fragments
+// ("framed.go: initFrames offsets per part"); FLOW asks for whole sentences that follow from each other, and TELLS
+// names the marks of generated text so they stay out. File notes take TELLS only: their own prompt wants short
+// fragments ("The same settings as the Frankfurt config.") and no judgment of the change.
+const FLOW = `How it reads: like an engineer who knows this code explaining it to a colleague, in sentences that follow from each other. Short does not mean clipped. Cut words, never grammar: every sentence has a subject that does something ("the sweeper drops a jar once it expires", not "expired jars dropped"). Mix short sentences with longer ones that carry a because or a so. Be concrete: the function, the field, the number, what happens to it. Where a judgment helps the reviewer (this is the part most likely to break), say it plainly. No filler, and no praise for the code.`;
+const TELLS = `Leave out the marks of generated text: em and en dashes (use a period, a comma, a colon or parentheses); "serves as", "stands as" or "offers" where "is" or "has" will do; -ing tails that add nothing (", ensuring ...", ", highlighting ..."); "not just X but Y", and fragments tacked onto a sentence ("no locks needed"); lists of three made for rhythm; announcing what comes next; bold; hedges stacked on hedges; and the words crucial, key (as an adjective), robust, seamless, leverage, enhance, delve, underscore, highlight (as a verb), additionally, comprehensive and notably.`;
+const VOICE = `${FLOW}\n${TELLS}`;
+
 const BRIEF_SCHEMA = {
   type: 'object',
   properties: {
@@ -513,17 +529,17 @@ const BRIEF_SCHEMA = {
       type: 'object', properties: { ref: { type: 'string', description: 'The exact repository-relative path:line used in the text or node.' }, excerpt: { type: 'string', description: 'A literal excerpt from that source line, up to 160 characters.' } },
       required: ['ref', 'excerpt'],
     } },
-    tldr: { type: 'string', description: 'Markdown, two to four plain sentences, no list: what changes, for whom, and why (the problem it solves), and where in the system it lands. No preamble.' },
+    tldr: { type: 'string', description: 'Markdown, at most 50 words in two or three plain sentences, no list: what changes and why (the problem it solves), and where in the system it lands. No preamble, no file names.' },
     risk: { type: 'string', enum: ['low', 'typical', 'high', 'very high'] },
-    riskWhy: { type: 'string', description: 'One sentence: what could break, where, and for whom.' },
+    riskWhy: { type: 'string', description: 'One sentence of at most 25 words: what could break, and for whom.' },
     context: {
       type: 'object',
       description: 'The surroundings a reviewer new to this codebase needs, read from the code around the change, not only the diff.',
       properties: {
-        system: { type: 'string', description: 'Markdown, one or two short paragraphs: what this part of the system is and does today, who calls it and when, what happens at runtime, in words; at most two path:line references, at the end. Say "I infer" where you infer.' },
-        before: { type: 'string', description: 'Markdown, one to three sentences: how it behaved before this change, and the problem or limit the change addresses.' },
-        after: { type: 'string', description: 'Markdown, one to three sentences: how it behaves after, as a user or caller would notice.' },
-        glossary: { type: 'array', description: 'Up to eight terms of this codebase or company that a newcomer will meet in this change, defined from how the code uses them.', items: { type: 'object', properties: { term: { type: 'string' }, meaning: { type: 'string', description: 'One sentence.' }, where: { type: 'string', description: 'path:line where it is defined or best seen.' } }, required: ['term', 'meaning'] } },
+        system: { type: 'string', description: 'Markdown, one paragraph of at most 80 words: what this part of the system is and does today, who calls it and when, in words; at most two path:line references, at the end. Not the change itself. Say "I infer" where you infer.' },
+        before: { type: 'string', description: 'One sentence of at most 25 words: how it behaved before, and the problem or limit the change addresses.' },
+        after: { type: 'string', description: 'One sentence of at most 25 words: how it behaves after, as a user or caller would notice.' },
+        glossary: { type: 'array', description: 'Up to five terms of this codebase or company the reviewer will meet in this change and could not guess, most needed first, defined from how the code uses them. None for ordinary engineering words.', items: { type: 'object', properties: { term: { type: 'string' }, meaning: { type: 'string', description: 'One sentence of at most 15 words.' }, where: { type: 'string', description: 'path:line where it is defined or best seen.' } }, required: ['term', 'meaning'] } },
       },
       required: ['system', 'before', 'after'],
     },
@@ -576,12 +592,12 @@ const BRIEF_SCHEMA = {
       description: 'How to review this change.',
       properties: {
         start: { type: 'string', description: 'The repository-relative path of the one file to read first.' },
-        why: { type: 'string', description: 'One sentence: why start there.' },
-        steps: { type: 'array', items: { type: 'string' }, description: 'Three to six short steps in reading order, each naming what to read (path or symbol) and what to look for.' },
+        why: { type: 'string', description: 'At most 20 words: why start there.' },
+        steps: { type: 'array', items: { type: 'string' }, description: 'Three to five steps in reading order, each one sentence of at most 20 words: what to read (a file or symbol) and what to look for there. Not the sections\' checks again.' },
       },
       required: ['start', 'steps'],
     },
-    questions: { type: 'array', items: { type: 'string' }, description: 'Up to five questions the diff does not answer, worth asking the author or checking.' },
+    questions: { type: 'array', items: { type: 'string' }, description: 'Up to three questions only the author can answer (intent, rollout, what was tested), each at most 30 words, most important first. None is fine. Not something the reviewer can settle by reading the code: that is a check.' },
     motion: {
       type: 'object',
       description: 'Whether the core of this change should be shown as a short animation (a scene), drawn after the brief. Yes when the core is a process over time or a state machine that a map cannot show: concurrency or a race, a GC or sweep cycle, retries and backoff, a pipeline or a queue, a protocol or handshake, a lease or a lock, a cache filling and expiring, a migration in phases, a rate limiter. Decide by what happens over time, not by the size of the diff: a one-line fix to something that accrues, expires, rotates or races is a yes; a large diff that only moves types or renames is a no. No for a rename, a config or dependency change, docs, tests alone, copy, styling, or a refactor that keeps behaviour.',
@@ -600,11 +616,11 @@ const BRIEF_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          title: { type: 'string', description: 'A short heading naming what this part does, e.g. "Sessions expire after an hour without use"' },
+          title: { type: 'string', description: 'At most eight words naming what this part does, e.g. "Sessions expire after an hour without use"' },
           role: { type: 'string', enum: ['core', 'supporting', 'tests', 'config', 'docs', 'other'] },
-          context: { type: 'string', description: 'One or two sentences: where this code sits and what it did before this change.' },
-          why: { type: 'string', description: 'One to three sentences of markdown: what this part changes and why, in words; at most one path:line reference.' },
-          check: { type: 'array', items: { type: 'string' }, description: 'One to three specific things a reviewer should verify in this part.' },
+          context: { type: 'string', description: 'Usually "". One sentence of at most 20 words, only when the why cannot be followed without it: where this code sits. Never what the map\'s before already says.' },
+          why: { type: 'string', description: 'Markdown, at most 50 words: what this part changes and why, in words; at most one path:line reference. Not the TLDR again.' },
+          check: { type: 'array', items: { type: 'string' }, description: 'One to three things to verify in this part, most important first, each at most 20 words: what must hold, and where. E.g. "`Release` still frees the slot when the clone delete fails."' },
           files: { type: 'array', items: { type: 'string' }, description: 'Repository-relative paths, in reading order.' },
         },
         required: ['title', 'role', 'why', 'files'],
@@ -674,7 +690,11 @@ Before you write, read around the change; the diff alone is not enough. Use your
 - the history of the main changed files (git log -n 15 --oneline -- <path>, and git show of a relevant commit) for why the code is the way it is.
 Do not read everything: stop when you can explain where the change sits and how the parts around it work.
 
-Then answer through the structured output. Write plainly, as to a colleague: no filler, no praise, no hedging words. Ground every claim in code you read; say "I infer" when you infer. Write prose a person reads, not a list of identifiers: name a function, type or file in backticks the first time, then by its plain name (the batcher, the save step), and never put more than two backticked names in one sentence. Cite sparingly: at most two path:line references in a paragraph, at its end, for the places worth opening; the plan's steps name the file to read instead. The TLDR says what changes and why in words a newcomer follows. The context explains the system around the change, not the change again. The first diagram maps the components and marks this change on them; place parts on the grid so arrows mostly run left to right.
+Then answer through the structured output. Keep it short: the whole guide should read in about two minutes, under 400 words for a small change and rarely over 700 for a large one, and every field's word limit is a limit, not a target. Say each thing once: the TLDR says what changes and why, before and after say the behaviour, a section says what its files do, a check says what to verify, a question asks what only the author knows, and none of them repeats another.
+
+${VOICE}
+
+Ground every claim in code you read; say "I infer" when you infer. Write prose a person reads, not a list of identifiers: name a function, type or file in backticks the first time, then by its plain name (the batcher, the save step), and never put more than two backticked names in one sentence. Cite sparingly: at most two path:line references in a paragraph, at its end, for the places worth opening; the plan's steps name the file to read instead. The TLDR says what changes and why in words a newcomer follows. The context explains the system around the change, not the change again. The first diagram maps the components and marks this change on them; place parts on the grid so arrows mostly run left to right.
 
 Decide whether the change needs a scene (motion): an animation of its core, drawn after this brief by another run that reads your story. Most changes do not. Judge the behaviour, not the size of the diff: when the core is a process over time (things accruing, waiting, racing, expiring, rotating, being swept, retried or refilled), even in a one-line fix, say yes and tell the story exactly: one mechanism, what is on the sheet, what happens in order, what the reader should notice, and where the code does each step.
 
@@ -961,9 +981,9 @@ async function notesLayout(ws) {
 async function requestNotes(ws, run, abort, prompt, schema) {
   abort.signal.throwIfAborted();
   if (modelKind(run.model) === 'codex') {
-    return { cost: 0, ...await codex.structured(ws, run, NOTES_APPEND + '\n\n' + prompt, schema, abort.signal) };
+    return { cost: 0, ...await codex.structured(ws, run, `${NOTES_APPEND}\n\n${TELLS}\n\n${prompt}`, schema, abort.signal) };
   }
-  const options = baseOptions(ws, { ...run, roots: [ws.root || ws.gitDir], abort, append: NOTES_APPEND });
+  const options = baseOptions(ws, { ...run, roots: [ws.root || ws.gitDir], abort, append: `${NOTES_APPEND}\n\n${TELLS}` });
   Object.assign(options, { maxTurns: 8, persistSession: false, includePartialMessages: false, outputFormat: { type: 'json_schema', schema } });
   for await (const msg of query({ prompt, options })) {
     if (msg.type !== 'result') continue;

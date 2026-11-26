@@ -154,7 +154,8 @@ function editsHTML() {
   const all = S.review.brief?.edits || [], edits = all.slice(0, 6);
   const can = all.find((e) => e.undo); if (can && !edits.includes(can)) edits.unshift(can); // the one Undo can do is always in view
   if (!edits.length) return '';
-  const what = (e) => (e.kind === 'tldr' ? 'the TLDR' : `${e.kind === 'scene' ? 'animation' : e.kind} \u201c${esc(e.title)}\u201d`);
+  // a part there is one of (the TLDR, the risk, ...) is titled by what the page calls it; a list's part by its own title
+  const what = (e) => (!['section', 'diagram', 'scene'].includes(e.kind) ? esc(e.title) : `${e.kind === 'scene' ? 'animation' : e.kind} \u201c${esc(e.title)}\u201d`);
   return `<div class="gedits"><div class="sh">Changed in chat</div>${edits.map((e) => `<div class="gedit${e.undone ? ' undone' : ''}"><span class="w">${EDIT_VERB[e.op]} ${what(e)}</span><span class="faint">${e.undone ? 'undone' : ago(e.at)}</span>${e.undo ? `<button class="link" data-act="undoedit" data-id="${esc(e.id)}">Undo</button>` : ''}</div>`).join('')}</div>`;
 }
 // edits a new brief would drop: chat's changes to parts the brief wrote (what chat added is kept)

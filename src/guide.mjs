@@ -1,7 +1,8 @@
-// The guide: the brief's sections, diagrams and scenes, as the page shows them and as a chat may change them.
-// normalizeGuide turns a model's brief into one loupe can draw; editGuide is how a chat adds, replaces or removes a
-// part; undoGuide takes an edit back. The guide is loupe's own state (review.json), not the repository, so every chat
-// may change it, a read-only one on a pull request included.
+// The guide: everything the brief writes, as the page shows it and as a chat may change it. That is its parts there
+// are one of (the TLDR, the risk, how this part works, how to review it, the questions worth asking) and its lists
+// (sections, diagrams, scenes). normalizeGuide turns a model's brief into one loupe can draw; editGuide is how a chat
+// replaces a part, or adds, replaces, moves or removes one in a list; undoGuide takes an edit back. The guide is loupe's
+// own state (review.json), not the repository, so every chat may change it, a read-only one on a pull request included.
 //
 // Rules every edit keeps: every changed file is in exactly one section (a file a chat's section claims leaves the
 // model's; a file no section claims goes to "Other changes"); parts have stable ids, so ticks, anchors and undo survive
@@ -68,23 +69,69 @@ function diagram(d) {
   return { id: typeof d.id === 'string' && d.id ? d.id : uid(), kind: d.kind === 'flow' ? 'flow' : 'map', title: str(d.title, 120), caption: str(d.caption, 400), nodes, edges, groups };
 }
 
+// The parts there is one of, shaped the same whether the brief or a chat wrote them. A chat only replaces one (there is
+// nothing to add or remove), and gives it as read_guide shows it; an object's fields it leaves out keep their value,
+// and a list it gives (glossary, steps) is the whole list. A field of the wrong type is refused, not read as empty.
+// Each is marked <kind>By on the brief once a chat changes it.
+const RISKS = new Set(['low', 'typical', 'high', 'very high']);
+const contextOf = (c = {}) => ({ system: str(c.system), before: str(c.before, 2000), after: str(c.after, 2000),
+  glossary: (Array.isArray(c.glossary) ? c.glossary : []).slice(0, 8).map((g) => ({ term: str(g?.term, 80), meaning: str(g?.meaning, 400), where: str(g?.where, 200) })).filter((g) => g.term && g.meaning) });
+const planOf = (pl, resolve) => ({ start: resolve(pl.start), why: str(pl.why, 400), steps: (Array.isArray(pl.steps) ? pl.steps : []).slice(0, 8).map((x) => str(x, 400)).filter(Boolean) });
+const questionsOf = (q) => (Array.isArray(q) ? q : []).slice(0, 6).map((x) => str(x, 400)).filter(Boolean);
+const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+// what is wrong with a list field, if it was given and is not a list of what it holds
+const listProblem = (v, key, item, ok) => (key in v && !(Array.isArray(v[key]) && v[key].every(ok)) ? `${key} is the whole list, of ${item}` : null);
+const isText = (x) => typeof x === 'string';
+// make(value, brief, files) -> the brief's fields to set, or what is wrong with the value
+export const ONE = {
+  tldr: { label: 'the TLDR', fields: ['tldr'], read: (b) => b.tldr || '',
+    make: (v) => (typeof v === 'string' && v.trim() ? { tldr: str(v, 3000) } : 'the TLDR is markdown text') },
+  risk: { label: 'the risk', fields: ['risk', 'riskWhy'], read: (b) => ({ level: b.risk, why: b.riskWhy || '' }),
+    make: (v, b) => {
+      if (!isObject(v)) return 'give the risk as { level, why }';
+      const level = v.level ?? b.risk;
+      return RISKS.has(level) ? { risk: level, riskWhy: str(v.why ?? b.riskWhy, 600) } : 'level is low, typical, high or very high';
+    } },
+  context: { label: 'how this part works', fields: ['context'], read: (b) => contextOf(b.context),
+    make: (v, b) => (!isObject(v) ? 'give it as { system, before, after, glossary }'
+      : listProblem(v, 'glossary', '{ term, meaning, where }', isObject) || { context: contextOf({ ...b.context, ...v }) }) },
+  plan: { label: 'how to review it', fields: ['plan', 'startHere'], read: (b) => b.plan || { start: b.startHere || null, why: '', steps: [] },
+    make: (v, b, files) => {
+      if (!isObject(v)) return 'give it as { start, why, steps }';
+      const bad = listProblem(v, 'steps', 'strings', isText);
+      if (bad) return bad;
+      const resolve = resolver(files), cur = ONE.plan.read(b); // over what read_guide showed: a brief from before plans had only startHere
+      if (v.start && !resolve(v.start)) return `start is one of the change's files, and ${JSON.stringify(v.start)} is not`;
+      const plan = planOf({ ...cur, ...v }, resolve);
+      if (!('start' in v)) plan.start = cur.start || null; // left out, so kept as it was, though the change may have moved past it
+      return { plan, startHere: plan.start }; // the Overview's "Start with" and the map's are the same file
+    } },
+  questions: { label: 'the questions worth asking', fields: ['questions'], read: (b) => b.questions || [],
+    make: (v) => (Array.isArray(v) && v.every(isText) ? { questions: questionsOf(v) } : 'give the whole list of questions, as an array of strings') },
+};
+
 // A guide never hides a file: unknown paths are dropped, a file named twice stays in its first section, and every
 // file no section named goes to a last section (generated ones to their own).
+// The brief's lists are cut to what its prompt asks for, most important first: models write past the counts they are
+// given (four checks of 50 words where three of 20 were asked). Only here: a chat's edit keeps the looser caps above,
+// so a chat that renames a section never drops a check, or its tick, the brief had kept.
+const BRIEF_MAX = { check: 3, questions: 3, glossary: 5, steps: 5 };
 export function normalizeGuide(out, files) {
   const resolve = resolver(files);
   const numbered = (out.sections || []).map((s) => section(s, files)); // as the model numbered them, before any goes
+  for (const s of numbered) s.check = s.check.slice(0, BRIEF_MAX.check);
   const sections = rehome(numbered, files);
   // Small models sometimes hand back the TLDR as a list, or as a list written into the string.
   let tl = out.tldr;
   if (typeof tl === 'string' && /^\s*\[/.test(tl)) { try { const a = JSON.parse(tl); if (Array.isArray(a)) tl = a; } catch { /* a string that starts with [ */ } }
   if (Array.isArray(tl)) tl = tl.map(String).join('\n\n');
-  const c = out.context || {};
-  const context = { system: str(c.system), before: str(c.before, 2000), after: str(c.after, 2000),
-    glossary: (Array.isArray(c.glossary) ? c.glossary : []).slice(0, 8).map((g) => ({ term: str(g.term, 80), meaning: str(g.meaning, 400), where: str(g.where, 200) })).filter((g) => g.term && g.meaning) };
+  const context = contextOf(out.context || {});
+  context.glossary = context.glossary.slice(0, BRIEF_MAX.glossary);
   const diagrams = (Array.isArray(out.diagrams) ? out.diagrams : []).slice(0, 3).map(diagram).filter((d) => d.nodes.length >= 2);
   const pl = out.plan || {};
-  const plan = { start: resolve(pl.start) || resolve(out.startHere), why: str(pl.why, 400), steps: (Array.isArray(pl.steps) ? pl.steps : []).slice(0, 8).map((x) => str(x, 400)).filter(Boolean) };
-  const questions = (Array.isArray(out.questions) ? out.questions : []).slice(0, 6).map((x) => str(x, 400)).filter(Boolean);
+  const plan = planOf({ ...pl, start: resolve(pl.start) ? pl.start : out.startHere }, resolve);
+  plan.steps = plan.steps.slice(0, BRIEF_MAX.steps);
+  const questions = questionsOf(out.questions).slice(0, BRIEF_MAX.questions);
   const citations = Object.fromEntries((Array.isArray(out.citations) ? out.citations : []).slice(0, 64)
     .map((x) => [str(x?.ref, 250).trim(), str(x?.excerpt, 160).trim()])
     .filter(([ref, excerpt]) => /:\d+$/.test(ref) && excerpt));
@@ -93,7 +140,7 @@ export function normalizeGuide(out, files) {
   const n = Math.max(0, Math.round(Number(m.section) || 0));
   const target = n ? numbered[n - 1]?.id : null;
   const motion = { warranted: m.warranted === true && !!str(m.story).trim(), why: str(m.why, 400), title: str(m.title, 80), sectionId: target && sections.some((s) => s.id === target) ? target : null, story: str(m.story, 4000) };
-  return { tldr: String(tl || ''), risk: out.risk, riskWhy: out.riskWhy || '', startHere: plan.start, context, diagrams, plan, questions, sections, citations, motion, scenes: [], pending: false, error: null, step: null };
+  return { tldr: String(tl || ''), risk: RISKS.has(out.risk) ? out.risk : 'typical', riskWhy: str(out.riskWhy, 600), startHere: plan.start, context, diagrams, plan, questions, sections, citations, motion, scenes: [], pending: false, error: null, step: null };
 }
 
 // ------------------------------------------------------------------ ids on a brief written before parts had them
@@ -117,15 +164,25 @@ export function ensureIds(data) {
 
 // ------------------------------------------------------------------ what a chat reads
 const who = (p) => (originOf(p) === 'chat' ? 'made in chat' : p.by === 'chat' ? 'by the brief, changed in chat' : 'by the brief');
+// the parts there is one of are short: shown whole, so a chat sees everything it may change in one read
 export function guideSummary(b) {
   if (!b?.sections) return 'There is no guide yet: the brief has not been written. The reviewer can write it from the Overview.';
+  const head = (kind, name) => `${name} [${kind}]${b[`${kind}By`] ? ' (changed in chat)' : ''}:`;
+  const c = ONE.context.read(b), p = ONE.plan.read(b), qs = ONE.questions.read(b);
+  const ctx = [c.system, c.before && `Before: ${c.before}`, c.after && `After: ${c.after}`, c.glossary.length && `Words you will meet: ${c.glossary.map((g) => `${g.term}: ${g.meaning}${g.where ? ` (${g.where})` : ''}`).join('; ')}`].filter(Boolean).join('\n') || '(empty)';
+  const plan = [p.start && `Start with ${p.start}.${p.why ? ` ${p.why}` : ''}`, ...p.steps.map((x, k) => `${k + 1}. ${x}`)].filter(Boolean).join('\n') || '(empty)';
   const secs = b.sections.map((s, k) => `${k + 1}. [${s.id || k}] ${s.role} · ${s.title} · ${s.files.join(', ')}${s.by === 'chat' ? ` · ${who(s)}` : ''}`).join('\n');
   const dgs = (b.diagrams || []).map((d) => `[${d.id}] ${d.kind} · ${d.title || '(untitled)'} · ${d.nodes.length} parts, ${d.edges.length} arrows · ${who(d)}`).join('\n') || '(none)';
   const scs = (b.scenes || []).map((s) => `[${s.id}] ${s.title} · ${s.sectionId ? `on section ${b.sections.findIndex((x) => x.id === s.sectionId) + 1}` : 'on the map'} · ${(s.html || '').length.toLocaleString('en-US')} characters of html · ${who(s)}`).join('\n') || '(none)';
   const mo = b.motion?.warranted ? `\nThe brief asked for a scene: ${b.motion.title || ''}. ${b.motion.why}` : '';
-  return `TLDR:\n${b.tldr}\n\nSections (in reading order; [id]):\n${secs}\n\nDiagrams:\n${dgs}\n\nScenes (animations):\n${scs}${mo}\n\nread_guide with a part ("section", "diagram" or "scene" and its id) gives one part in full, as JSON; a scene's includes its code.`;
+  return `The guide, as the reviewer sees it. In a chat, edit_guide can change every part of it; [kind] or [id] says how to name a part.
+
+${head('tldr', 'TLDR')}\n${b.tldr}\n\n${head('risk', 'Risk')} ${b.risk}. ${b.riskWhy || ''}\n\n${head('context', 'How this part works (the map\'s text)')}\n${ctx}\n\n${head('plan', 'How to review it')}\n${plan}\n\n${head('questions', 'Worth asking')}\n${qs.map((x) => `- ${x}`).join('\n') || '(none)'}
+
+Sections (in reading order; [id]):\n${secs}\n\nDiagrams:\n${dgs}\n\nScenes (animations):\n${scs}${mo}\n\nread_guide with a part gives it in full, as JSON, as a chat's edit_guide takes it: "section", "diagram" or "scene" with its id (a scene's includes its code), or "tldr", "risk", "context", "plan" or "questions".`;
 }
 export function guidePart(b, kind, id) {
+  if (ONE[kind]) return b?.sections ? JSON.stringify(ONE[kind].read(b), null, 1) : null;
   const list = { section: b?.sections, diagram: b?.diagrams, scene: b?.scenes }[kind];
   const part = list?.find((p) => p.id === id);
   return part ? JSON.stringify(part, null, 1) : null;
@@ -134,7 +191,10 @@ export function guidePart(b, kind, id) {
 // ------------------------------------------------------------------ what a chat changes
 const LISTS = { section: 'sections', diagram: 'diagrams', scene: 'scenes' };
 const clone = (x) => JSON.parse(JSON.stringify(x));
-// { op: add | replace | remove, kind: section | diagram | scene | tldr, id, at (0-based place for an add), value }
+// { op: add | replace | remove, kind: section | diagram | scene, or one of ONE (replace only), id, at, value }
+// A replace keeps the fields its value leaves out, for every kind.
+// at: the 0-based place to add a part at, or to move the part a replace changes to (a section moved keeps its id, its
+// ticks and its scene, which removing it and adding it again would lose).
 // Returns { ok, message, entry }; nothing changes unless ok. The part is built (a scene is played) before anything is
 // touched, then committed against the guide as it is by then, or refused if the brief was written again meanwhile, or
 // if live() says the turn that asked is over.
@@ -145,26 +205,43 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
 // the newest edit, while the guide is still exactly as that edit left it (anything since, another edit, the brief's
 // scene landing, a new brief, comes first or stops it). Ticks are the reader's, kept outside the guide, never undone.
 const originOf = (p) => p?.origin || (p?.by === 'chat' ? 'chat' : 'brief');
-const GUIDE = ['tldr', 'tldrBy', 'sections', 'diagrams', 'scenes', 'removedInChat'];
+const GUIDE = [...Object.entries(ONE).flatMap(([k, o]) => [...o.fields, `${k}By`]), 'sections', 'diagrams', 'scenes', 'removedInChat'];
 const snapshot = (b) => clone(Object.fromEntries(GUIDE.map((k) => [k, b[k] ?? null])));
-const stateOf = (b) => JSON.stringify(GUIDE.map((k) => b[k] ?? null));
+// the guide as one string, over the keys given: an edit is compared on the keys its own snapshot holds, so the last edit
+// saved before a part became editable (its snapshot has fewer) can still be undone
+const stateOf = (b, keys = GUIDE) => JSON.stringify(keys.map((k) => b[k] ?? null));
+const KINDS = ['section', 'diagram', 'scene', ...Object.keys(ONE)];
 export async function editGuide(data, files, { op, kind, id, at, value }, { conv = null, live = () => true, signal = null, render = null } = {}) {
   const b0 = data.brief;
   if (!b0?.sections) return { ok: false, message: 'There is no guide yet: the brief has to be written first (the Overview\'s Write the guide).' };
   if (b0.pending) return { ok: false, message: 'The guide is being written again just now; edit it once the new one is in.' };
   if (!['add', 'replace', 'remove'].includes(op)) return { ok: false, message: 'op is add, replace or remove' };
-  if (!['section', 'diagram', 'scene', 'tldr'].includes(kind)) return { ok: false, message: 'kind is section, diagram, scene or tldr' };
+  if (!KINDS.includes(kind)) return { ok: false, message: `kind is ${KINDS.slice(0, -1).join(', ')} or ${KINDS.at(-1)}` };
   ensureIds(data);
-  const gen = b0.at, key = LISTS[kind], mark = { by: 'chat', conv, at: Date.now() };
-  if (kind === 'tldr' && (op !== 'replace' || typeof value !== 'string' || !value.trim())) return { ok: false, message: 'the TLDR can only be replaced, with markdown text' };
+  const gen = b0.at, key = LISTS[kind], one = ONE[kind], mark = { by: 'chat', conv, at: Date.now() };
+  if (one && op !== 'replace') return { ok: false, message: `the guide has exactly one ${kind}: replace it (to empty a list, replace it with an empty one)` };
+  const fields = one ? one.make(value, b0, files) : null; // nothing is awaited before it is set, so it is made against the guide it lands on
+  if (typeof fields === 'string') return { ok: false, message: fields };
   const target = op !== 'add' && id && key ? (b0[key] || []).find((p) => p.id === id) : null; // an add always gets an id of its own
-  if (kind !== 'tldr' && op !== 'add' && !target) return { ok: false, message: `there is no ${kind} with id ${JSON.stringify(id)}; read_guide lists them` };
+  if (!one && op !== 'add' && !target) return { ok: false, message: `there is no ${kind} with id ${JSON.stringify(id)}; read_guide lists them` };
   const stamp = target ? target.edit ?? target.at ?? null : null; // which version of it this edit was asked against
   if (op === 'remove' && target?.synthetic) return { ok: false, message: `"${target.title}" holds the files no section claims; it goes by itself once another section takes them` };
+  // "Other changes" (or the generated files) becomes a section like the others only by being named: a bare replace would
+  // turn it into a chat's section with the same title, and the next unplaced file would bring a second one
+  if (op === 'replace' && target?.synthetic && (!isObject(value) || !String(value.title || '').trim() || value.title === target.title)) return { ok: false, message: `"${target.title}" holds the files no section claims; give it a title of its own to make it a section, or put its files in another` };
   // 1. the part, built and checked; nothing of the guide is touched yet
   let part = null, notice = null; // notice: what the scene's check saw that is worth fixing (labels over each other)
-  if (kind !== 'tldr' && op !== 'remove') {
-    if (!value || typeof value !== 'object') return { ok: false, message: `give the ${kind} as an object in value` };
+  if (!one && op !== 'remove') {
+    if (op === 'replace' && value === undefined) value = {};
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false, message: `give the ${kind} as an object in value` };
+    // A replace keeps what it leaves out, as a part there is one of does: a move is an id and a place, a new title only
+    // the title. (A chat that sent only { at } used to blank the section it meant to move.) A scene is placed by its
+    // sectionId; a section number the chat changed from what it read moves it there, unless it changed the id as well
+    // (a scene read back whole carries both, and the brief's keep the number they were drawn for).
+    if (op === 'replace') {
+      const renumbered = kind === 'scene' && 'section' in value && value.section !== target.section && !('sectionId' in value && value.sectionId !== target.sectionId);
+      value = { ...target, ...value, ...(renumbered ? { sectionId: null } : {}) };
+    }
     if (kind === 'section') {
       part = section({ ...value, id: target?.id ?? null }, files);
       if (!part.files.length) return { ok: false, message: 'a section needs at least one of the change\'s files (paths as the guide lists them)' };
@@ -197,16 +274,19 @@ export async function editGuide(data, files, { op, kind, id, at, value }, { conv
   if (!live()) return { ok: false, message: 'This turn is over; the edit was not made.' };
   if (part?.sectionId && !data.brief.sections.some((x) => x.id === part.sectionId)) return { ok: false, message: 'The section that scene was for went while it was being checked; read the guide and try again.' };
   const b = data.brief, before = snapshot(b), edit = uid(); // this edit's own id, stamped on what it leaves
-  if (kind === 'tldr') {
-    b.tldr = str(value, 3000); b.tldrBy = { conv, at: Date.now(), edit };
-    return record(data, { kind, op, partId: 'tldr', title: 'the TLDR', before, conv, id: edit });
+  if (one) {
+    Object.assign(b, fields); b[`${kind}By`] = { conv, at: Date.now(), edit };
+    return record(data, { kind, op, partId: kind, title: one.label, before, conv, id: edit });
   }
   if (part) part.edit = edit;
   const list = clone(b[key] || []), where = id ? list.findIndex((p) => p.id === id) : -1;
   if (op !== 'add' && where < 0) return { ok: false, message: `The ${kind} ${id} went while this was being checked.` };
   if (op !== 'add' && (list[where].edit ?? list[where].at ?? null) !== stamp) return { ok: false, message: `The ${kind} ${id} was changed while this was being checked; read it and try again.` }; // another chat's edit to it landed first
   const gone = op !== 'add' ? list[where] : null;
-  if (op === 'add') { const k = Number.isInteger(at) ? Math.max(0, Math.min(list.length, at)) : kind === 'section' ? list.filter((x) => !x.synthetic).length : list.length; list.splice(k, 0, part); }
+  // a place among the parts a chat can order: a section goes before "Other changes" and the generated files, never after
+  const place = (n) => Math.max(0, Math.min(kind === 'section' ? list.filter((x) => !x.synthetic).length : list.length, n));
+  if (op === 'add') list.splice(Number.isInteger(at) ? place(at) : place(Infinity), 0, part);
+  else if (op === 'replace' && Number.isInteger(at)) { list.splice(where, 1); list.splice(place(at), 0, part); }
   else if (op === 'replace') list[where] = part;
   else list.splice(where, 1);
   const after = kind === 'section' ? rehome(list, files, op === 'remove' ? null : part.id) : list;
@@ -228,13 +308,13 @@ function record(data, { kind, op, partId, title, before, conv, id = null }) {
   const entry = { id: id || uid(), at: Date.now(), brief: data.brief?.at || 0, conv, kind, op, partId, title: str(title, 120), before, after: stateOf(data.brief) };
   data.guideHistory = [...(data.guideHistory || []), entry].slice(-20); // each keeps the guide before it (scenes' code too): the last 20
   const verb = { add: 'Added', replace: 'Replaced', remove: 'Removed' }[op];
-  return { ok: true, entry, message: `${verb} ${kind === 'tldr' ? 'the TLDR' : `${kind} "${entry.title}" [${partId}]`}. The reviewer sees it now and can undo it from the page.` };
+  return { ok: true, entry, message: `${verb} ${ONE[kind] ? ONE[kind].label : `${kind} "${entry.title}" [${partId}]`}. The reviewer sees it now and can undo it from the page.` };
 }
 
 // the edit Undo would take back now: the newest not undone, on this brief, if the guide is still as it left it
 function undoable(data) {
   const b = data.brief, e = (data.guideHistory || []).filter((x) => !x.undone).at(-1);
-  return b && !b.pending && e && e.brief === (b.at || 0) && e.after === stateOf(b) ? e : null; // none while a new brief is written
+  return b && !b.pending && e && e.brief === (b.at || 0) && e.after === stateOf(b, Object.keys(e.before || {})) ? e : null; // none while a new brief is written
 }
 export function undoGuide(data, entryId, files = null) {
   if (data.brief?.pending) return { ok: false, message: 'The guide is being written again just now; the new one replaces this edit\u2019s guide.' };
@@ -244,11 +324,12 @@ export function undoGuide(data, entryId, files = null) {
     return { ok: false, message: !asked ? 'That edit is not there to undo.' : 'The guide changed after that edit (a later edit, the brief’s scene, or a new brief); it can no longer be undone.' };
   }
   const b = data.brief;
-  for (const k of GUIDE) { if (e.before[k] === null) delete b[k]; else b[k] = clone(e.before[k]); }
+  // a key the snapshot lacks (kept before loupe could edit that part) is left as it is, never cleared
+  for (const k of GUIDE) { if (!(k in e.before)) continue; if (e.before[k] === null) delete b[k]; else b[k] = clone(e.before[k]); }
   if (files) b.sections = rehome(b.sections, files); // the change may have moved on since
   for (const sc of b.scenes || []) if (sc.sectionId && !b.sections.some((x) => x.id === sc.sectionId)) sc.sectionId = null; // its section went with the change
   e.undone = Date.now();
-  return { ok: true, message: `Undid: ${e.op} ${e.kind} "${e.title}".` };
+  return { ok: true, message: ONE[e.kind] ? `Undid the change to ${e.title}.` : `Undid: ${e.op} ${e.kind} "${e.title}".` };
 }
 
 // A new brief keeps what chats made: their sections (in the same place, with their files), diagrams and scenes.
@@ -266,7 +347,7 @@ export function carryChatParts(prev, next, files) {
 // what a regeneration would undo: edits a chat made to parts the brief wrote
 export function chatEditsToBrief(data) { return dropsOnRegenerate(data.brief); }
 // read from the guide itself, not from the history (which keeps only the last edits): the brief's own parts a chat
-// changed, its TLDR if a chat rewrote it, and its parts a chat removed
+// changed (the ones there is one of included: the TLDR, the risk, ...), and its parts a chat removed
 export function dropsOnRegenerate(b) { return drops(b).n; }
 // a chat changed or removed the scene the brief drew: drawing it again would undo that, so it is not done without asking
 export const chatTouchedScene = (b) => (b?.scenes || []).some((s) => s.by === 'chat' && originOf(s) !== 'chat') || (b?.removedInChat || []).some((r) => r.kind === 'scene');
@@ -274,7 +355,8 @@ export const chatTouchedScene = (b) => (b?.scenes || []).some((s) => s.by === 'c
 export function drops(b) {
   if (!b) return { n: 0, key: '' };
   const changed = [...(b.sections || []), ...(b.diagrams || []), ...(b.scenes || [])].filter((p) => p.by === 'chat' && originOf(p) !== 'chat').map((p) => p.edit || `${p.id}@${p.at}`);
-  const all = [...changed, ...(b.tldrBy ? [b.tldrBy.edit || `tldr@${b.tldrBy.at}`] : []), ...(b.removedInChat || []).map((r) => r.edit || `-${r.kind}:${r.id}`)];
+  const ones = Object.keys(ONE).map((k) => b[`${k}By`] && (b[`${k}By`].edit || `${k}@${b[`${k}By`].at}`)).filter(Boolean);
+  const all = [...changed, ...ones, ...(b.removedInChat || []).map((r) => r.edit || `-${r.kind}:${r.id}`)];
   return { n: all.length, key: checkId(all.join('|')) };
 }
 
