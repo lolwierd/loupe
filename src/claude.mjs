@@ -845,6 +845,8 @@ export function writeScene(ws, plan, { model, effort } = {}) {
         }
         if (seen.failed) throw new Error(`it could not be rendered: ${seen.failed}`);
         if (seen.problem) throw new Error(`it did not render: ${seen.problem}`);
+        // rendered with nothing found: a chat that only moves or retitles it need not render it again (src/guide.mjs)
+        if (!seen.unavailable && !seen.errors?.length && !seen.cut?.length) scene.clean = true;
         kept = scene;
       } finally { for (const d of dirs) fs.rm(d, { recursive: true, force: true }, () => {}); }
       const scene = kept;

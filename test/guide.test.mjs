@@ -123,6 +123,26 @@ test('a scene a chat moves or retitles is not rendered again, and one whose docu
   assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { height: sc.height + 40 } }, { render })).ok);
   assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { html: DRAWS + '<!-- again -->' } }, { render })).ok);
   assert.equal(rendered.length, 3);
+  assert.equal(d.brief.scenes[0].clean, true);
+});
+
+test('a scene kept with faults, or never checked, is rendered again when a chat moves it', async () => {
+  const d = brief();
+  let found = { problem: null, errors: [], cut: ['the text "front" is cut off in its box'] }, renders = 0;
+  const render = async () => { renders++; return found; };
+  assert.ok((await editGuide(d, FILES, { op: 'add', kind: 'scene', value: scene(DRAWS) }, { render })).ok);
+  const sc = d.brief.scenes[0];
+  assert.equal(sc.clean, undefined);
+  const moved = await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { title: 'Restocking, moved' } }, { render });
+  assert.equal(renders, 2);
+  assert.match(moved.message, /cut off/, 'the chat hears what is still wrong');
+  found = { unavailable: true }; // no Chrome: kept, unchecked
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { html: DRAWS + '<!-- b -->' } }, { render })).ok);
+  assert.equal(d.brief.scenes[0].clean, undefined);
+  found = { problem: null, errors: [], cut: [] }; // Chrome is back
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { title: 'Checked now' } }, { render })).ok);
+  assert.equal(renders, 4);
+  assert.equal(d.brief.scenes[0].clean, true);
 });
 
 test('diagrams and the TLDR: replaced and undone; a diagram must draw; no guide, no edit', async () => {
