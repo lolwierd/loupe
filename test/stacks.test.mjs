@@ -1048,6 +1048,19 @@ test('stack clicks prefer a checkout, then its PR, and an old request cannot ove
   assert.equal(S.stack, result);
 });
 
+test('a stack asked for beside the files is never drawn over a newer one', async () => {
+  const main = fs.readFileSync(new URL('../web/js/main.js', import.meta.url), 'utf8');
+  const S = { id: 'ws' }, drawn = [], replies = [];
+  const { askStack, loadStack } = vm.runInNewContext(main.slice(main.indexOf('let stackRequest'), main.indexOf('async function openStackItem')) + '\n({ askStack, loadStack })',
+    { S, renderGo() {}, renderStack: () => drawn.push(S.stack), typingInPanel: () => false, api: () => new Promise((resolve) => replies.push(resolve)) });
+  const early = askStack(); // sent with the files, drawn once they are
+  const newer = loadStack(); // a read of GitHub landed meanwhile, and asked again
+  replies[1]({ kind: 'chain', items: [{ pr: 2 }, { pr: 3 }] }); await newer;
+  replies[0]({ kind: 'chain', items: [{ pr: 1 }, { pr: 3 }] }); await early();
+  assert.deepEqual(S.stack.items.map((i) => i.pr), [2, 3]);
+  assert.equal(drawn.length, 1);
+});
+
 test('a PR’s stack is read from its own record while GitHub’s read of it is slow', async (t) => {
   const root = repo();
   cut(root, 'parent', 'main', 'parent');

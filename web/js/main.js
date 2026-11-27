@@ -225,6 +225,7 @@ async function loadFiles(reason) {
   const notesAtRequest = S.review.notes;
   let files, review;
   const ghReq = api(`/api/w/${S.id}/github`).catch(() => null);
+  const drawStack = askStack(); // beside the files: it is drawn once they are
   try {
     [files, review] = await Promise.all([api(wsApi('/files')), api(`/api/w/${S.id}/review`)]);
   } catch (e) { if (current()) showState('Could not read the change', e.message, true); return; }
@@ -278,6 +279,7 @@ async function loadFiles(reason) {
   if (spot) restoreSpot(spot); // at once: a frame later the page has already been drawn at the wrong place
   hooks.sound?.opened(S.id);
   renderProgress(); renderGo(); renderStack(); hooks.moteMount?.(allViewed(), leftShare());
+  drawStack();
   requestAnimationFrame(spyNow);
   if (!drawn && location.hash.length > 1) {
     // #path, #path:L12 or #path:L12-L20: the file, scrolled to the line.
@@ -295,27 +297,31 @@ async function loadFiles(reason) {
     notesChange.files = whole.files;
     maybeAutoNotes();
   }
-  loadStack();
   if (S.ws.kind === 'local') loadShip(true);
 }
 
 // A comment being written in the inspector: drawing the panel again would take its focus.
 function typingInPanel() { return !!document.activeElement?.closest?.('#pbody .composer'); }
 
-// Read the Overview's stack after the diff opens, and again on every read of GitHub (each minute while the page is
-// open). Each row opens its checkout or its PR.
+// The Overview's stack: asked for beside the change's files, and again on every read of GitHub (each minute while the
+// page is open). Each row opens its checkout or its PR. askStack sends the request and answers the function that
+// draws its reply; the request is numbered when it is sent, so a reply a newer request has overtaken is not drawn.
 let stackRequest = 0;
-async function loadStack(fresh = false) {
+function askStack(fresh = false) {
   const id = S.id, request = ++stackRequest;
-  const stack = await api(`/api/w/${id}/stack${fresh ? '?fresh=1' : ''}`).catch(() => null);
-  // A reply from the previous workspace or before a newer refresh belongs to that view.
-  if (id !== S.id || request !== stackRequest) return;
-  // The same stack is not drawn again. One that moved while you write a comment under it waits for the next read,
-  // and S.stack stays the one on screen meanwhile: its rows open by their place in it.
-  if (JSON.stringify(stack) === JSON.stringify(S.stack) || (S.stack && typingInPanel())) return;
-  S.stack = stack;
-  renderStack(); renderGo();
+  const reply = api(`/api/w/${id}/stack${fresh ? '?fresh=1' : ''}`).catch(() => null);
+  return async () => {
+    const stack = await reply;
+    // A reply from the previous workspace or before a newer request belongs to that view.
+    if (id !== S.id || request !== stackRequest) return;
+    // The same stack is not drawn again. One that moved while you write a comment under it waits for the next read,
+    // and S.stack stays the one on screen meanwhile: its rows open by their place in it.
+    if (JSON.stringify(stack) === JSON.stringify(S.stack) || (S.stack && typingInPanel())) return;
+    S.stack = stack;
+    renderStack(); renderGo();
+  };
 }
+function loadStack(fresh = false) { return askStack(fresh)(); }
 async function openStackItem(i) {
   const it = S.stack?.items?.[i];
   if (!it || it.here) return;
