@@ -109,6 +109,22 @@ test('a chat adds a scene that runs, is refused one that does not, and can repla
   assert.ok(undoGuide(d, add.entry.id).ok); assert.equal(d.brief.scenes.length, 0);
 });
 
+test('a scene a chat moves or retitles is not rendered again, and one whose document changed is', async () => {
+  const d = brief(), rendered = [];
+  const render = async (html, height) => { rendered.push({ html, height }); return { problem: null, errors: [], cut: [] }; };
+  assert.ok((await editGuide(d, FILES, { op: 'add', kind: 'scene', value: scene(DRAWS) }, { render })).ok);
+  const sc = d.brief.scenes[0];
+  assert.equal(rendered.length, 1);
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { title: 'Restocking, slower' } }, { render })).ok);
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { section: 0 } }, { render })).ok);
+  assert.equal(d.brief.scenes[0].title, 'Restocking, slower');
+  assert.equal(d.brief.scenes[0].sectionId, null);
+  assert.equal(rendered.length, 1, 'a move and a new title open no Chrome');
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { height: sc.height + 40 } }, { render })).ok);
+  assert.ok((await editGuide(d, FILES, { op: 'replace', kind: 'scene', id: sc.id, value: { html: DRAWS + '<!-- again -->' } }, { render })).ok);
+  assert.equal(rendered.length, 3);
+});
+
 test('diagrams and the TLDR: replaced and undone; a diagram must draw; no guide, no edit', async () => {
   const d = brief(), dg = d.brief.diagrams[0];
   assert.equal((await editGuide(d, FILES, { op: 'replace', kind: 'diagram', id: dg.id, value: { kind: 'map', nodes: [{ id: 'x', label: 'Only one' }] } })).ok, false);

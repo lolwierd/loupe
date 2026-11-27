@@ -257,8 +257,11 @@ export async function editGuide(data, files, { op, kind, id, at, value }, { conv
       const sectionId = typeof value.sectionId === 'string' && value.sectionId ? value.sectionId : n ? secs[n - 1].id : null;
       const { scene, problem } = await normalizeScene({ ...value, id: target?.id ?? null }, { by: 'chat', conv });
       if (!scene) return { ok: false, message: `The scene was not kept: ${problem}. Fix it and try again.` };
-      // loupe renders it as the card would: one that shows nothing is not kept, and what else it finds goes back
-      const seen = render ? await render(scene.html, scene.height, signal) : null;
+      // loupe renders it as the card would: one that shows nothing is not kept, and what else it finds goes back.
+      // A replace that leaves the document and its height as they were (a move, a new title) was rendered when it
+      // was kept, so Chrome is not opened again for it: that is some ten seconds of the chat's turn.
+      const same = op === 'replace' && scene.html === target.html && scene.height === target.height;
+      const seen = render && !same ? await render(scene.html, scene.height, signal) : null;
       if (seen?.dir) rmSync(seen.dir, { recursive: true, force: true });
       if (seen?.failed) return { ok: false, message: `The scene was not kept: loupe could not render it (${seen.failed}). Fix it and try again.` };
       if (seen && !seen.unavailable && seen.problem) return { ok: false, message: `The scene was not kept: ${seen.problem}${seen.errors?.length ? ` (${seen.errors.join('; ')})` : ''}. Fix it and try again.` };
