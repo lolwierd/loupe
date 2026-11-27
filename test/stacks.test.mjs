@@ -1148,6 +1148,28 @@ test('a PR that left a stack asks GitHub for its own the next time', async () =>
   assert.ok(asked() > before, '#3 used the stack it had left');
 });
 
+test('a PR replaced in a stack, and one moved to another stack, are told apart by the stack', async () => {
+  const { root, bare, prs, at, asked } = sharedStack();
+  await stackFor(at(2)); // stack 7: #1 #2 #3, kept for each
+  const four = pr(4, 'four', 'two'), all = [...prs, four];
+  const ref = (ps) => ps.map((p) => ({ number: p.number, head: { ref: p.headRefName } }));
+  const seven = { number: 7, base: { ref: 'main' }, pull_requests: ref([prs[0], prs[1], four]) };
+  fixture(root, { prs: all, stacks: { 1: [seven], 2: [seven], 4: [seven], 3: 'error' } }, prs[1]);
+  const ws4 = prWorkspace(bare, { ...at(2).github, number: 4, pr: four });
+  assert.deepEqual(numbers(await stackFor(ws4, { fresh: true })), [1, 2, 4]); // #3 was replaced by #4
+  const before = asked();
+  assert.notEqual((await stackFor(at(3))).kind, 'github', '#3 still showed the stack it was replaced in');
+  assert.ok(asked() > before);
+  // #1 moves to stack 8; a member of 8 is read, then one of 7, which no longer has #1
+  const eight = { number: 8, base: { ref: 'main' }, pull_requests: ref([prs[0], { number: 9, headRefName: 'nine' }]) };
+  const seven2 = { ...seven, pull_requests: ref([prs[1], four]) };
+  fixture(root, { prs: all, stacks: { 9: [eight], 2: [seven2], 4: [seven2], 1: 'error' } }, prs[1]);
+  await stackFor(prWorkspace(bare, { ...at(2).github, number: 9, pr: { number: 9, headRefName: 'nine', baseRefName: 'main', state: 'OPEN' } }), { fresh: true });
+  await stackFor(at(2), { fresh: true });
+  const one = await stackFor(at(1)); // GitHub fails for #1: what was kept for it in stack 8 still stands
+  assert.equal(one.stackNumber, 8);
+});
+
 test('a stack is kept no longer than the oldest answer it was built from may be used, and Read again keeps the last answer for a failure', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const { gh, at, write } = sharedStack();
@@ -1293,6 +1315,22 @@ test('a PR’s stack is read from its own record while GitHub’s read of it is 
   const waited = Date.now();
   await pageStack(old);
   assert.ok(Date.now() - waited >= 2000, 'it did not wait for GitHub');
+});
+
+test('a PR whose record cannot tell a fork, with GitHub failing, takes what the open PRs say of it', async (t) => {
+  const root = repo();
+  cut(root, 'parent', 'main', 'parent');
+  cut(root, 'child', 'parent', 'child');
+  cut(root, 'grandchild', 'parent', 'grandchild'); // based on child by name
+  const parent = committedPR(root, 1, 'parent'), child = committedPR(root, 2, 'child', 'parent');
+  const grandchild = committedPR(root, 3, 'grandchild', 'child');
+  const clone = fetchedPR(root, child, 'parent');
+  for (const ref of ['refs/loupe/pr/2/trunk', 'refs/remotes/origin/main']) sh(clone, 'update-ref', '-d', ref); // only its head and base
+  const gh = fixture(root, { prs: [parent, { ...child, isCrossRepository: false }, grandchild], viewError: true }, child);
+  const ws = new Workspace({ id: gh.repo + '-listed', kind: 'pr', owner: gh.owner, repo: gh.repo, number: 2, clone, pr: child });
+  await ws.ready();
+  t.after(() => ws.stopWatching());
+  assert.deepEqual(numbers(await pageStack(ws)), [1, 2, 3], 'the open PRs said it is this repository’s own');
 });
 
 test('a fork PR whose record cannot tell it is one, with GitHub failing, links no branch of this clone to it', async (t) => {

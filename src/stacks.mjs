@@ -64,7 +64,9 @@ function keep(repo, k, seq, value) {
   if (!e) reads.set(k, e = blank());
   if (seq < e.written) return false;
   if (seq <= (expiries.get(repoKey(repo))?.seq || 0)) {
-    Object.assign(e, { at: Date.now(), value, written: seq, expired: true });
+    const moved = e.failed; // a stack built while the read after the expiry failed now has an answer to fall back on
+    Object.assign(e, { at: Date.now(), value, written: seq, expired: true, failed: false });
+    if (moved) changed(repo);
     return false;
   }
   // after a failure, even the same answer moves the generation: a stack built while it failed is read again
@@ -97,7 +99,9 @@ function sharedRead(repo, what, run, rc) {
     const p = run(seq).then((value) => {
       if (keep(repo, k, seq, value)) return value;
       const now = reads.get(k);
-      return now.written > seq ? now.value : value; // overtaken: the newer answer; begun before an expiry: its own
+      if (!(now.written > seq)) return value; // begun before an expiry: its own answer, for its own callers
+      if (now.value === undefined) throw new Error('a newer read proved this answer wrong'); // the callers' fallback
+      return now.value; // overtaken: the newer answer
     }, (err) => {
       const last = reads.get(k);
       if (last?.value === undefined || !(Date.now() - last.at < READ_STALE_MS)) {
@@ -350,26 +354,31 @@ function listClosedPRs(repo, head, fresh) {
 
 // GitHub's stack holding this PR. Its answer names every PR in that stack, so it is kept for each of them too, as an
 // answer of the same read: the next PR of the stack opened has its answer already, and a read of its own begun
-// after this one still replaces it. A PR the last answer named and this one does not left the stack: what was kept
-// for it is expired, so its next stack asks GitHub.
+// after this one still replaces it. What was kept for other PRs is checked against it by stack number: a PR kept as
+// in a stack this answer gives without it left that stack, so what was kept for it is dropped (a PR now in another
+// stack keeps its answer); a stack kept with this PR in it that this answer no longer gives has changed, so its
+// members read it again (what they had stays for a read that fails).
 const members = (stacks) => new Set((Array.isArray(stacks) ? stacks : []).flatMap((s) => (s.pull_requests || []).map((p) => p.number)));
 async function githubStack(repo, number, fresh) {
-  const own = repoKey(repo) + '\0stacks#' + number, before = members(reads.get(own)?.value);
   const stacks = await sharedRead(repo, 'stacks#' + number, async (seq) => {
     const answer = await GH.ghJson(['api', `repos/${repo}/stacks?pull_request=${number}`]);
     if (!Array.isArray(answer)) throw new Error('GitHub answered no list of stacks');
     const now = members(answer);
+    const given = new Map(answer.map((s) => [s.number, members([s])]));
     for (const n of now) {
       if (n !== number) keep(repo, repoKey(repo) + '\0stacks#' + n, seq, answer.filter((s) => s.pull_requests?.some((p) => p.number === n)));
     }
-    for (const n of before) {
-      const e = reads.get(repoKey(repo) + '\0stacks#' + n);
-      // what it had is disproven: neither fresh nor a fallback, and no read of it begun before this one is kept
-      if (n !== number && !now.has(n) && e && !(e.written > seq)) Object.assign(e, { value: undefined, written: seq, expired: true, reading: null });
+    const prefix = repoKey(repo) + '\0stacks#';
+    for (const [k, e] of reads) {
+      if (!k.startsWith(prefix) || !Array.isArray(e.value) || e.written > seq) continue;
+      const n = Number(k.slice(prefix.length));
+      if (n === number || now.has(n)) continue;
+      if (e.value.some((s) => given.has(s.number))) Object.assign(e, { value: undefined, written: seq, expired: true, reading: null });
+      else if (e.value.some((s) => !given.has(s.number) && members([s]).has(number))) { e.expired = true; e.reading = null; }
     }
     return answer;
   }, fresh).catch(() => []);
-  return stacks.find((s) => s.pull_requests?.some((p) => p.number === number)) || null;
+  return (Array.isArray(stacks) ? stacks : []).find((s) => s.pull_requests?.some((p) => p.number === number)) || null;
 }
 
 function prGraph(repo, open, trunk, fresh) {
@@ -782,6 +791,7 @@ async function resolve(ws, snapshot, m, github, commits, fresh = {}) {
     const owner = ws.rec.pr.headRepositoryOwner?.login;
     const fork = ws.rec.pr.isCrossRepository ?? (owner ? owner.toLowerCase() !== String(ws.rec.owner).toLowerCase() : true);
     g = { owner: ws.rec.owner, repo: ws.rec.repo, pr: { number: ws.rec.number, ...ws.rec.pr, isCrossRepository: fork } };
+    if (ws.rec.pr.isCrossRepository === undefined) g.unsure = true; // the open PRs, once read, say (below)
   }
   const repo = g?.owner && `${g.owner}/${g.repo}`;
   const co = checkouts(snapshot.worktrees);
@@ -811,6 +821,10 @@ async function resolve(ws, snapshot, m, github, commits, fresh = {}) {
   // its own, the recently merged ones) start now, beside the stacks call, instead of one after another
   if (repo && commits) {
     prHistory().catch(() => {});
+    if (g.unsure) {
+      const listed = (await prHistory().catch(() => null))?.list.find((p) => p.number === g.pr.number);
+      if (listed) g.pr.isCrossRepository = !!listed.isCrossRepository;
+    }
     const tip = ws.rec.kind === 'pr' ? m.headFull || g.pr?.headRefOid : refs.get(localPrefix + m.branch);
     if (isOid(tip)) {
       const reads = startCommitLists(repo), bootstrap = reads.bootstrap;
