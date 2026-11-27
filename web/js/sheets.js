@@ -57,6 +57,9 @@ function commitsHTML() {
     `<div class="clist">${cs.slice(0, 12).map((c) => `<div class="crow"><span class="sha">${esc(c.short.slice(0, 7))}</span><span class="s" title="${esc(c.subject)}">${esc(c.subject)}</span></div>`).join('')}${cs.length > 12 ? `<div class="crow more"><span></span><span>and ${cs.length - 12} more</span></div>` : ''}</div></section>`;
 }
 
+// what goes with a review: said again whenever GitHub's copy of your pending review changes, so the count beside the
+// button is the count that will be sent
+const pendingNote = () => { const n = S.github?.pending?.comments?.length || 0; return n ? `${plural(n, 'comment')} on lines go${n === 1 ? 'es' : ''} with it: your pending review on GitHub.` : 'No comments on lines yet: select lines and press c to add one.'; };
 // ------------------------------------------------------------------ the dialogs
 const EVENTS = [['COMMENT', 'Comment'], ['REQUEST_CHANGES', 'Request changes'], ['APPROVE', 'Approve']];
 const reviewDraft = () => S.reviewDraft ?? S.github?.pending?.body ?? '';
@@ -77,7 +80,7 @@ const SHEETS = {
         return `<button data-ev="${e}" aria-pressed="${c.opts.event === e}"${block ? ` disabled title="${esc(block)}"` : ''}>${label}</button>`;
       }).join('')}</div>` +
         `<div class="box"><textarea class="body prose" rows="6" data-f="reviewDraft" placeholder="What you think of the change as a whole. GitHub needs it for Comment and Request changes." aria-label="Review summary">${esc(reviewDraft())}</textarea></div>` +
-        `<p class="note">${(() => { const n = S.github?.pending?.comments?.length || 0; return n ? `${plural(n, 'comment')} on lines go${n === 1 ? 'es' : ''} with it: your pending review on GitHub.` : 'No comments on lines yet: select lines and press c to add one.'; })()}</p>`;
+        `<p class="note" id="shrn">${esc(pendingNote())}</p>`;
     },
     bind(c, el) {
       el.querySelector('#shev').addEventListener('click', (e) => {
@@ -225,6 +228,8 @@ export const sheetOpen = () => !!cur;
 hooks.reviewActionsChanged = () => {
   const c = cur;
   if (c?.kind !== 'review' || c.sending) return;
+  const note = $('#shrn', c.el);
+  if (note && note.textContent !== pendingNote()) { note.textContent = pendingNote(); refreshSoon(); } // what goes changed: the preview (and its guard) is read again
   const pr = S.github?.pr;
   if (pr?.state !== 'OPEN') return closeSheet();
   for (const [event, label] of EVENTS) {

@@ -147,7 +147,8 @@ export async function imageProxies(owner, repo, number, texts, known = {}) {
 // Your review on a PR that is started but not submitted (GitHub keeps one per person): its comments are drafts only
 // you can see. loupe adds to it and submits it, so a review begun on GitHub and one begun here are the same review.
 const DRAFT_COMMENTS = 'pageInfo{hasNextPage endCursor} nodes{id databaseId body path line startLine originalLine originalStartLine outdated createdAt author{login}}';
-const PENDING = `query($o:String!,$r:String!,$n:Int!,$after:String){repository(owner:$o,name:$r){pullRequest(number:$n){id
+const PENDING = `query($o:String!,$r:String!,$n:Int!,$after:String){viewer{login} repository(owner:$o,name:$r){pullRequest(number:$n){id headRefOid baseRefName baseRefOid state
+  latestOpinionatedReviews(first:100){nodes{author{login} state submittedAt commit{oid}}}
   reviews(first:20,states:PENDING,after:$after){pageInfo{hasNextPage endCursor} nodes{id viewerDidAuthor body
     comments(first:100){${DRAFT_COMMENTS}}}}}}}`;
 const MORE_DRAFT_COMMENTS = `query($id:ID!,$after:String!){node(id:$id){... on PullRequestReview{
@@ -161,15 +162,21 @@ export async function pendingReview(owner, repo, number) {
     if (!connection.pageInfo.endCursor) throw new Error('GitHub did not return the next page of pending reviews');
     return connection.pageInfo.endCursor;
   };
-  let pr, review, after = null;
+  let pr, review, me = null, after = null;
   do {
     const d = await ghJson(after ? [...argv, '-f', `after=${after}`] : argv);
     pr = d.data?.repository?.pullRequest;
+    me ||= d.data?.viewer?.login || null;
     if (d.errors?.length || !pr?.id) throw new Error('GitHub did not return pending reviews');
     after = next(pr.reviews);
     review = pr.reviews.nodes.find((r) => r.viewerDidAuthor);
   } while (!review && after);
-  if (!review) return { prId: pr.id, review: null };
+  // the PR's head, base and state and your latest verdict come with it, so one read is enough to check a write against
+  // (actions.mjs). The verdict is read as pullRequest's is: your latest approval or request for changes (a comment-only
+  // review after one does not hide it), none once dismissed.
+  const verdict = viewerReview(pr.latestOpinionatedReviews?.nodes || [], me);
+  const about = { prId: pr.id, head: pr.headRefOid || null, base: pr.baseRefName || null, state: pr.state || null, viewerReview: verdict };
+  if (!review) return { ...about, review: null };
 
   let page = review.comments;
   const comments = [];
@@ -181,7 +188,7 @@ export async function pendingReview(owner, repo, number) {
     if (d.errors?.length) throw new Error('GitHub did not return pending comments');
     page = d.data?.node?.comments;
   }
-  return { prId: pr.id, review: { id: review.id, body: review.body || '', comments } };
+  return { ...about, review: { id: review.id, body: review.body || '', comments } };
 }
 
 // The pull request behind a local branch, if one is open (or the newest closed one).

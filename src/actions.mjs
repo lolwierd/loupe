@@ -49,7 +49,7 @@ async function commentPlace(ws, t, { path, line, startLine, side }) {
   return { path, line: Number(line), startLine: startLine && Number(startLine) < Number(line) ? Number(startLine) : null, side: side === 'old' ? 'LEFT' : 'RIGHT' };
 }
 const ADD_REVIEW = 'mutation($pr:ID!,$commit:GitObjectID!){addPullRequestReview(input:{pullRequestId:$pr,commitOID:$commit}){pullRequestReview{id}}}';
-const ADD_THREAD = 'mutation($review:ID!,$path:String!,$line:Int!,$side:DiffSide!,$startLine:Int,$startSide:DiffSide,$body:String!){addPullRequestReviewThread(input:{pullRequestReviewId:$review,path:$path,line:$line,side:$side,startLine:$startLine,startSide:$startSide,body:$body}){thread{id}}}';
+const ADD_THREAD = 'mutation($review:ID!,$path:String!,$line:Int!,$side:DiffSide!,$startLine:Int,$startSide:DiffSide,$body:String!){addPullRequestReviewThread(input:{pullRequestReviewId:$review,path:$path,line:$line,side:$side,startLine:$startLine,startSide:$startSide,body:$body}){thread{id comments(first:1){nodes{id databaseId body createdAt url author{login}}}}}}';
 const DROP_COMMENT = 'mutation($id:ID!){deletePullRequestReviewComment(input:{id:$id}){pullRequestReview{id}}}';
 const SUBMIT = 'mutation($review:ID!,$event:PullRequestReviewEvent!,$body:String){submitPullRequestReview(input:{pullRequestReviewId:$review,event:$event,body:$body}){pullRequestReview{id url commit{oid}}}}';
 const gql = (query, vars) => {
@@ -59,12 +59,44 @@ const gql = (query, vars) => {
 };
 const where = (c) => `${c.path} ${c.startLine && c.startLine !== c.line ? `lines ${c.startLine}–${c.line}` : `line ${c.line}`}`;
 
+// What a review write is checked against, read fresh in one request: the PR's head and state, your latest verdict, and
+// your pending review (its id and its comments). Nothing else the page shows is needed to send it, so no full refresh
+// (a second or two, more on a stacked PR) waits in front of the write. The answer is only compared with what the
+// dialog showed, never copied into loupe's copy: a difference refuses the write and starts the full read, which brings
+// the page what changed (its diff, its threads) before anything can be sent on it.
+const seenComments = (comments) => JSON.stringify((comments || []).map((c) => [c.nodeId, c.body, c.path, c.line, c.startLine, !!c.outdated]));
 async function freshReviewTarget(ws, guard) {
-  const fresh = await ws.fetchGithub(true).catch(() => null);
-  if (!fresh?.pr || fresh.stale || fresh.pendingError) throw fail('GitHub could not confirm your pending review: try again');
   const t = sameTarget(ws, guard);
-  if (guard.head && t.pr.headRefOid !== guard.head) throw fail('the PR has new commits since the preview: look again');
-  return t;
+  // and, on a checkout, which branch it is on now (loupe's copy of the PR can still be the last branch's)
+  const [fresh, branch] = await Promise.all([GH.pendingReview(t.owner, t.repo, t.number).catch(() => null),
+    ws.rec.kind === 'local' ? g(ws, ['symbolic-ref', '--short', '-q', 'HEAD']).then((x) => x.trim(), () => '') : null]);
+  sameTarget(ws, guard); // the page may have moved to another PR while that was read
+  if (target(ws).number !== t.number) throw fail('this would now go to another PR: look again');
+  if (!fresh) throw fail('GitHub could not confirm your pending review: try again');
+  const moved = (why) => { ws.fetchGithub(true).catch(() => {}); return fail(why); };
+  if (branch !== null && t.pr.headRefName && branch !== t.pr.headRefName) throw moved('this checkout is on another branch now: look again');
+  if (fresh.state && fresh.state !== 'OPEN') throw moved(`#${t.number} is ${fresh.state.toLowerCase()} now`);
+  if (guard.head && fresh.head && fresh.head !== guard.head) throw moved('the PR has new commits since the preview: look again');
+  // a retargeted PR keeps its head but compares against another branch: what you read (and where a line can go) moved.
+  // The branch the preview pinned, not loupe's copy (a refresh may have seen the retarget already); its tip moving
+  // (new commits on main) changes nothing you read.
+  if (guard.base && fresh.base && fresh.base !== guard.base) throw moved('the PR\'s base branch changed since the preview: look again');
+  if ('review' in guard && (guard.review ?? null) !== (fresh.review?.id ?? null)) throw moved('your pending review changed on GitHub since the preview: look at it again');
+  if ('comments' in guard && guard.comments !== seenComments(fresh.review?.comments)) throw moved('your pending review\'s comments changed on GitHub since the preview: look at them again');
+  if (guard.event && guard.event !== 'COMMENT' && fresh.viewerReview?.head === guard.head && fresh.viewerReview?.event === guard.event) {
+    throw moved(guard.event === 'APPROVE' ? 'you already approved this commit' : 'you already requested changes on this commit');
+  }
+  return { t, fresh };
+}
+// After a write: what it changed goes into loupe's copy of the PR at once and the page is told (it reads that copy on
+// the answer), and the full read follows behind the answer instead of in front of it.
+// Each change is idempotent: a read that finished in the moment between the write and this may already hold it.
+function landed(ws, change, t) {
+  ws.ghWrites = (ws.ghWrites || 0) + 1; // a read already under way began before this write: its answer is not kept
+  const same = !t || (ws.github?.number === t.number && ws.github?.owner === t.owner && ws.github?.repo === t.repo); // the page may be on another PR by now
+  if (change && ws.github && same) ws.github = { ...ws.github, ...change(ws.github) };
+  ws.emit('github', {});
+  ws.fetchGithub(true).catch(() => {});
 }
 
 const review = {
@@ -75,6 +107,7 @@ const review = {
     if (t.pr.state !== 'OPEN') throw fail(`#${t.number} is ${t.pr.state.toLowerCase()}`);
     if (event !== 'COMMENT' && t.pr.viewerIsAuthor) throw fail('GitHub does not let you approve or request changes on your own pull request');
     const head = t.pr.headRefOid;
+    if (ws.rec.kind === 'pr' && ((ws.meta?.headFull && head && ws.meta.headFull !== head) || (ws.meta?.base && t.pr.baseRefName && ws.meta.base !== t.pr.baseRefName))) throw fail('the PR has moved: wait for its diff to load, then look again');
     if (head && t.pr.viewerReview?.head === head && t.pr.viewerReview.event === event) {
       throw fail(event === 'APPROVE' ? 'you already approved this commit' : 'you already requested changes on this commit');
     }
@@ -95,11 +128,11 @@ const review = {
       ],
       warnings: comments.filter((c) => c.outdated).map((c) => `${where(c)} is outdated: the PR moved after you wrote it.`),
       // what the confirm showed: the summary and the pending comments, so a comment added elsewhere since is seen first
-      guard: { head, repo: `${t.owner}/${t.repo}`, number: t.number, summary: body.trim(), event, comments: JSON.stringify(comments.map((c) => [c.nodeId, c.body, c.path, c.line, c.startLine, !!c.outdated])), review: pend?.id || null },
+      guard: { head, repo: `${t.owner}/${t.repo}`, number: t.number, summary: body.trim(), event, base: t.pr.baseRefName || null, comments: seenComments(comments), review: pend?.id || null },
     };
   },
   async run(ws, payload, guard) {
-    const t = await freshReviewTarget(ws, guard);
+    const { t } = await freshReviewTarget(ws, guard);
     const pv = await this.preview(ws, payload);
     if (pv.guard.summary !== guard.summary || pv.guard.event !== guard.event || pv.guard.comments !== guard.comments || pv.guard.review !== guard.review) throw fail('your review changed since the preview (a comment added or removed): look again, then submit');
     const body = payload.body?.trim() || null;
@@ -126,8 +159,13 @@ const review = {
       else delete ws.review.data.verdict;
       ws.review.save(); ws.emit('review', { verdict: ws.review.data.verdict || null });
     }
-    await ws.fetchGithub(true).catch(() => {});
-    ws.emit('github', {});
+    // sent: no pending review any more, its comments are ordinary threads, and your verdict is on the head it went to
+    landed(ws, (g) => ({
+      pending: null,
+      threads: (g.threads || []).map((th) => (th.pending ? { ...th, pending: false, comments: th.comments.map((c) => ({ ...c, pending: false })) } : th)),
+      // a verdict GitHub gave no commit for replaces the one before, as the saved verdict above does
+      pr: { ...g.pr, ...(payload.event !== 'COMMENT' ? { viewerReview: head ? { event: payload.event, head, at: Date.now() } : null } : {}) },
+    }), t);
     return { message: `${EVENTS[payload.event]} sent to ${t.full}${n ? ` with ${n} comment${n === 1 ? '' : 's'} on lines` : ''}.`, url, event: payload.event, head };
   },
 };
@@ -139,15 +177,15 @@ const reviewcomment = {
     const t = target(ws);
     if (!String(payload.body || '').trim()) throw fail('write the comment first', 400);
     const place = await commentPlace(ws, t, payload);
-    return { title: `Add to your review of ${t.full}`, where: 'on GitHub, pending: only you see it until you submit the review', confirm: 'Add', items: [`At ${where(place)}: “${clip(payload.body, 200)}”`], guard: { repo: `${t.owner}/${t.repo}`, number: t.number, head: t.pr.headRefOid } };
+    return { title: `Add to your review of ${t.full}`, where: 'on GitHub, pending: only you see it until you submit the review', confirm: 'Add', items: [`At ${where(place)}: “${clip(payload.body, 200)}”`], guard: { repo: `${t.owner}/${t.repo}`, number: t.number, head: t.pr.headRefOid, base: t.pr.baseRefName || null } };
   },
   async run(ws, payload, guard) {
-    const t = await freshReviewTarget(ws, guard);
+    const { t, fresh } = await freshReviewTarget(ws, guard);
     if (!String(payload.body || '').trim()) throw fail('write the comment first', 400);
     const place = await commentPlace(ws, t, payload);
-    let id = ws.github.pending?.id;
+    let id = fresh.review?.id; // the pending review GitHub holds now, begun here or on GitHub
     if (!id) {
-      const prId = ws.github.prId || (await GH.pendingReview(t.owner, t.repo, t.number)).prId;
+      const prId = fresh.prId || ws.github.prId;
       const d = await gql(ADD_REVIEW, { pr: prId, commit: guard.head });
       if (d.errors?.length) throw fail(`GitHub would not start a review: ${clip(d.errors[0].message, 300)}`, 502);
       id = d.data?.addPullRequestReview?.pullRequestReview?.id;
@@ -155,9 +193,21 @@ const reviewcomment = {
     }
     const d = await gql(ADD_THREAD, { review: id, path: place.path, line: place.line, side: place.side, startLine: place.startLine, startSide: place.startLine ? place.side : null, body: String(payload.body).trim() });
     if (d.errors?.length) throw fail(`GitHub refused the comment: ${clip(d.errors[0].message, 300)}`, 502);
-    if (!d.data?.addPullRequestReviewThread?.thread?.id) throw fail('GitHub did not return the comment thread', 502);
-    await ws.fetchGithub(true).catch(() => {});
-    ws.emit('github', {});
+    const th = d.data?.addPullRequestReviewThread?.thread;
+    if (!th?.id) throw fail('GitHub did not return the comment thread', 502);
+    // the comment, pending, where you put it: in your pending review and as a thread at its lines
+    const c = th.comments?.nodes?.[0];
+    landed(ws, (g) => {
+      if (!c) return {};
+      const who = c.author?.login || g.pr?.viewer, at = c.createdAt || new Date().toISOString();
+      const mine = { id: c.databaseId, nodeId: c.id, body: c.body, path: place.path, line: place.line, startLine: place.startLine, outdated: false, at, author: who };
+      // the review GitHub confirmed (a discarded one's text and comments stay out of it), with this comment once
+      return {
+        pending: { id, body: fresh.review?.id === id ? fresh.review.body || '' : '', comments: [...(fresh.review?.id === id ? fresh.review.comments : []).filter((x) => x.nodeId !== c.id), mine] },
+        threads: [...(g.threads || []).filter((x) => x.id !== th.id), { id: th.id, resolved: false, outdated: false, canResolve: false, canUnresolve: false, canReply: false, path: place.path, line: place.line, startLine: place.startLine, side: place.side === 'LEFT' ? 'old' : 'new', pending: true,
+          comments: [{ id: c.databaseId, nodeId: c.id, author: who, body: c.body, at, url: c.url, pending: true }] }],
+      };
+    }, t);
     return { message: `Added to your pending review of ${t.full}.` };
   },
 };
@@ -170,12 +220,15 @@ const dropcomment = {
     return { title: `Delete your pending comment at ${where(c)}`, where: 'on GitHub', confirm: 'Delete', tone: 'danger', items: [`“${clip(c.body, 200)}”`], guard: { repo: `${t.owner}/${t.repo}`, number: t.number } };
   },
   async run(ws, { nodeId }, guard) {
-    await freshReviewTarget(ws, guard);
+    const { t, fresh } = await freshReviewTarget(ws, guard);
+    if (!(fresh.review?.comments || []).some((c) => c.nodeId === nodeId)) { ws.fetchGithub(true).catch(() => {}); throw fail('that comment is not in your pending review on GitHub any more'); }
     await this.preview(ws, { nodeId });
     const d = await gql(DROP_COMMENT, { id: nodeId });
     if (d.errors?.length) throw fail(`GitHub would not delete it: ${clip(d.errors[0].message, 300)}`, 502);
-    await ws.fetchGithub(true).catch(() => {});
-    ws.emit('github', {});
+    landed(ws, (g) => ({
+      pending: g.pending ? { ...g.pending, comments: g.pending.comments.filter((c) => c.nodeId !== nodeId) } : g.pending,
+      threads: (g.threads || []).map((th) => { const comments = th.comments.filter((c) => c.nodeId !== nodeId); return { ...th, comments, pending: comments.some((c) => c.pending) }; }).filter((th) => th.comments.length),
+    }), t);
     return { message: 'Deleted from your pending review.' };
   },
 };
@@ -190,7 +243,7 @@ const comment = {
   async run(ws, { body }, guard) {
     const t = sameTarget(ws, guard);
     const r = await ghPost(`repos/${t.owner}/${t.repo}/issues/${t.number}/comments`, { body: String(body).trim() });
-    await ws.fetchGithub(true).catch(() => {});
+    landed(ws, (g) => (g.pr && !(g.pr.timeline || []).some((x) => x.url && x.url === r.html_url) ? { pr: { ...g.pr, timeline: [...(g.pr.timeline || []), { kind: 'comment', id: r.node_id || String(r.id), author: r.user?.login || g.pr.viewer, body: r.body ?? String(body).trim(), at: r.created_at || new Date().toISOString(), url: r.html_url }] } } : {}), t);
     return { message: `Commented on ${t.full}.`, url: r.html_url };
   },
 };
@@ -206,7 +259,8 @@ const reply = {
     const t = sameTarget(ws, guard);
     await this.preview(ws, { commentId, body });
     const r = await ghPost(`repos/${t.owner}/${t.repo}/pulls/${t.number}/comments/${Number(commentId)}/replies`, { body: String(body).trim() });
-    await ws.fetchGithub(true).catch(() => {});
+    landed(ws, (g) => ({ threads: (g.threads || []).map((th) => (th.comments[0]?.id === commentId && !th.comments.some((x) => x.id === r.id)
+      ? { ...th, comments: [...th.comments, { id: r.id, nodeId: r.node_id, author: r.user?.login || g.pr?.viewer, body: r.body ?? String(body).trim(), at: r.created_at || new Date().toISOString(), url: r.html_url }] } : th)) }), t);
     return { message: 'Replied on GitHub.', url: r.html_url };
   },
 };
@@ -221,13 +275,16 @@ const resolve = {
     const t = target(ws);
     return { title: `${resolved ? 'Resolve' : 'Reopen'} the thread on ${th.path}`, where: 'on GitHub', confirm: resolved ? 'Resolve' : 'Reopen', items: [], guard: { repo: `${t.owner}/${t.repo}`, number: t.number } };
   },
+  // No read in front of it: resolving a thread that is already resolved (or reopening an open one) changes nothing on
+  // GitHub, and GitHub's answer says where the thread now stands.
   async run(ws, { threadId, resolved }, guard) {
-    const fresh = await ws.fetchGithub(true).catch(() => null);
-    if (!fresh?.pr || fresh.stale) throw fail('GitHub could not confirm the thread state: try again');
-    sameTarget(ws, guard);
+    const t = sameTarget(ws, guard);
     await this.preview(ws, { threadId, resolved });
-    await gh(['api', 'graphql', '-f', `query=${resolved ? RESOLVE : UNRESOLVE}`, '-f', `id=${threadId}`]);
-    await ws.fetchGithub(true).catch(() => {});
+    const out = JSON.parse(await gh(['api', 'graphql', '-f', `query=${resolved ? RESOLVE : UNRESOLVE}`, '-f', `id=${threadId}`]) || '{}');
+    if (out.errors?.length) throw fail(`GitHub refused: ${clip(out.errors[0].message, 300)}`, 502);
+    const now = out.data?.[resolved ? 'resolveReviewThread' : 'unresolveReviewThread']?.thread?.isResolved;
+    if (typeof now !== 'boolean') throw fail('GitHub did not confirm the thread\'s state: look at it on GitHub', 502);
+    landed(ws, (g) => ({ threads: (g.threads || []).map((th) => (th.id === threadId ? { ...th, resolved: now, canResolve: !now, canUnresolve: now } : th)) }), t);
     return { message: resolved ? 'Resolved on GitHub.' : 'Reopened on GitHub.' };
   },
 };
@@ -374,6 +431,11 @@ const push = {
   },
 };
 
+// the open pull requests from this repository's own branch of that name (a fork can have a branch of the same name)
+async function openPrsFor(owner, repo, branch) {
+  const list = JSON.parse(await gh(['pr', 'list', '--repo', `${owner}/${repo}`, '--head', branch, '--state', 'open', '--limit', '100', '--json', 'number,isCrossRepository,headRepositoryOwner']) || '[]');
+  return list.filter((p) => !p.isCrossRepository && (!p.headRepositoryOwner?.login || p.headRepositoryOwner.login.toLowerCase() === owner.toLowerCase()));
+}
 const openpr = {
   modal: true,
   async preview(ws, { title = '', body = '', base = '', draft = true }) {
@@ -392,8 +454,16 @@ const openpr = {
     };
   },
   async run(ws, payload, guard) {
-    const fresh = await ws.fetchGithub(true).catch(() => null);
-    if (!fresh || fresh.stale || fresh.error) throw fail('GitHub could not confirm whether this branch already has a pull request: try again');
+    // the one thing GitHub must say now: whether this branch already has an open pull request (not a full refresh)
+    const [owner, repo] = String(guard?.repo || '').split('/');
+    // the remote loupe reads the checkout's PR from (origin, else the first), as the preview did, read again now
+    const remotes = (await g(local(ws), ['remote', '-v']).catch(() => '')).split('\n');
+    const line = remotes.find((l) => l.startsWith('origin\t')) || remotes[0] || '';
+    const origin = GH.githubRepoOf(line.split(/\s+/)[1]);
+    if (!origin || `${origin.owner}/${origin.repo}`.toLowerCase() !== String(guard?.repo || '').toLowerCase()) throw fail('this checkout\'s remote is not the repository you previewed: look again');
+    const open = owner && repo ? await openPrsFor(owner, repo, guard.branch).catch(() => null) : null;
+    if (!open) throw fail('GitHub could not confirm whether this branch already has a pull request: try again');
+    if (open.length) throw fail(`#${open[0].number} is already open for ${guard.branch}`);
     const pv = await this.preview(ws, payload);
     for (const k of ['head', 'branch', 'remoteSha', 'base', 'repo']) if (pv.guard[k] !== guard?.[k]) throw fail('the branch moved since the preview: look again');
     const out = await exec(BIN.gh, ['pr', 'create', '--repo', guard.repo, '--head', guard.branch, '--base', guard.base, `--title=${payload.title.trim()}`, '--body-file', '-', ...(payload.draft === false ? [] : ['--draft'])], { cwd: ws.rec.root, input: payload.body || '', timeout: 120000 });

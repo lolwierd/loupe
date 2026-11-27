@@ -431,7 +431,24 @@ export class Workspace {
     if (def) refs.push(`+refs/heads/${def}:refs/loupe/pr/${number}/trunk`);
     await git(this.rec.clone, ['fetch', '--atomic', '--no-tags', '--quiet', this.rec.remote || 'origin', ...refs], { timeout: 10 * 60 * 1000 });
   }
-  async prTrunkTip(pr) {
+  // The default branch's tip, asked alongside the PR's own reads instead of after them (a git ls-remote is a second or
+  // so): skipped when the last read had the PR based on that branch, whose tip the PR's own base then gives.
+  trunkEarly() {
+    const { clone, owner, repo } = this.rec;
+    return (async () => {
+      const def = (await GH.mergeSettings(owner, repo))?.defaultBranchRef?.name;
+      if (!def) return { def: null };
+      if (this.github?.pr?.baseRefName === def) return { def };
+      const out = await git(clone, ['ls-remote', '--refs', this.rec.remote || 'origin', `refs/heads/${def}`]).catch(() => '');
+      return { def, oid: out.split('\t')[0], asked: true }; // asked, answered or not: not asked again in this refresh
+    })().catch(() => null);
+  }
+  async prTrunkTip(pr, early) {
+    const e = early ? await early : null; // what trunkEarly already asked, when it holds for this PR
+    if (e && !e.def) return null;
+    if (e && e.def === pr.baseRefName && fullOid.test(pr.baseRefOid)) return pr.baseRefOid;
+    if (e && fullOid.test(e.oid || '')) return e.oid;
+    if (e?.asked) return null; // it failed just now: the next refresh asks again, not this one a second time
     const { clone, owner, repo } = this.rec;
     const def = (await GH.mergeSettings(owner, repo))?.defaultBranchRef?.name;
     if (!def) return null;
@@ -525,6 +542,7 @@ export class Workspace {
   }
   fetchGithubNow() {
     return this.serial('github', async () => {
+      const writes = this.ghWrites || 0; // a write that lands while this reads (actions.mjs landed) makes this answer old
       let owner, repo, number;
       if (this.rec.kind === 'pr') ({ owner, repo, number } = this.rec);
       else {
@@ -541,6 +559,7 @@ export class Workspace {
         if (!before || before.pr || before.error || before.owner !== owner || before.repo !== repo) this.emit('github', {});
         return this.github;
       }
+      const early = this.rec.kind === 'pr' && this.status === 'ready' && this.meta ? this.trunkEarly() : null;
       const [pr, threads, pending] = await Promise.all([GH.pullRequest(owner, repo, number), GH.reviewThreads(owner, repo, number).catch(() => []), GH.pendingReview(owner, repo, number).catch((e) => ({ error: e.message }))]);
       // Your pending review's comments are threads too: the ones GitHub already lists as threads are marked pending
       // there; any it does not list yet are added, on the new side at their line.
@@ -552,6 +571,9 @@ export class Workspace {
       }
       const texts = [pr.body, ...pr.timeline.map((t) => t.body), ...threads.flatMap((t) => t.comments.map((c) => c.body))];
       const images = await GH.imageProxies(owner, repo, number, texts, this.github?.images).catch(() => this.github?.images || {});
+      // A write landed while this read was under way: what it put in loupe's copy stays, and the read it asked for,
+      // queued behind this one, brings the rest.
+      if ((this.ghWrites || 0) !== writes && this.github?.pr) return this.github;
       this.github = { at: Date.now(), pr, threads, images, owner, repo, number, repoFull: `${owner}/${repo}`, pending: pending?.review || null, pendingError: pending?.error, prId: pending?.prId || null };
       // A checkout's base follows its PR's base, once GitHub has said what that is.
       if (this.rec.kind === 'local' && this.meta && pr.headRefName === this.meta.branch) this.sync().catch(() => {});
@@ -560,7 +582,7 @@ export class Workspace {
         if (this.status === 'ready' && m) {
           const moved = pr.baseRefName !== m.base || pr.headRefName !== m.branch
             || (pr.headRefOid && pr.headRefOid !== m.headFull) || (pr.baseRefOid && pr.baseRefOid !== m.baseFull);
-          const trunk = moved ? undefined : await this.prTrunkTip(pr);
+          const trunk = await this.prTrunkTip(pr, early);
           if (moved || (trunk && trunk !== await revParse(this.gitDir, `refs/loupe/pr/${number}/trunk`).catch(() => ''))) {
             await this.prepareAgain(pr, trunk);
           } else {

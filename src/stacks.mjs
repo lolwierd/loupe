@@ -597,13 +597,17 @@ async function addCommitStack(root, kind, m, pr, repo, chain, stack, snapshot, r
   return rows.length < 2 ? stack : { ...stack, kind: stack.kind === 'none' ? 'commits' : stack.kind, trunk: stack.trunk || trunk || null, items: rows };
 }
 
+// What of a PR a stack is drawn from: a refresh that only changed its conversation, reviews or checks keeps the stack
+// it had (each GitHub refresh made a new PR object, and every stack was read again, a second or more each time)
+const STACK_PR = ['number', 'state', 'isDraft', 'title', 'headRefName', 'headRefOid', 'baseRefName', 'baseRefOid', 'mergedAt', 'crossRepo', 'isCrossRepository', 'url'];
+const stackFields = (pr) => (pr ? STACK_PR.map((k) => pr[k] ?? null) : null);
 export async function stackFor(ws, { fresh = false, snapshot, meta = ws.meta, github = ws.github, commits = true } = {}) {
   if (!meta) return { kind: 'none', items: [] };
   snapshot ||= await stackSnapshot(ws.gitDir);
   const { branch, headFull, trunk, base } = meta;
   const fetched = commits && ws.rec.kind === 'pr' && ws.rec.number
     ? await read(ws.gitDir, ['for-each-ref', '--format=%(objectname)', `refs/loupe/pr/${ws.rec.number}/`]) : '';
-  const key = JSON.stringify([snapshot.key, branch, headFull, trunk, base, fetched, github?.owner, github?.repo, github?.pr, ws.rec.pr]);
+  const key = JSON.stringify([snapshot.key, branch, headFull, trunk, base, fetched, github?.owner, github?.repo, stackFields(github?.pr), ws.rec.pr]);
   let entries = cache.get(ws);
   if (!entries) cache.set(ws, entries = new Map());
   if (fresh && commits) entries.delete(false);
