@@ -1029,7 +1029,7 @@ test('stack clicks prefer a checkout, then its PR, and an old request cannot ove
   const S = { id: 'old', stack: result };
   const targets = [], toasts = [], replies = [], requests = [];
   const { openStackItem, loadStack } = vm.runInNewContext(main.slice(main.indexOf('let stackRequest'), main.indexOf('// A PR gets its brief')) + '\n({ openStackItem, loadStack })',
-    { S, openTarget: (target) => targets.push(target), toast: (s) => toasts.push(s), renderGo() {}, renderStack() {},
+    { S, openTarget: (target) => targets.push(target), toast: (s) => toasts.push(s), renderGo() {}, renderStack() {}, typingInPanel: () => false,
       api: (url) => new Promise((resolve) => { requests.push(url); replies.push(resolve); }) });
   await openStackItem(0);
   await openStackItem(1);
@@ -1045,6 +1045,30 @@ test('stack clicks prefer a checkout, then its PR, and an old request cannot ove
   replies[1](result); await next;
   replies[0](null); await old;
   assert.equal(S.stack, result);
+});
+
+test('the minute’s stack read draws the Overview again only when the stack moved, and never under a comment being written', async () => {
+  const main = fs.readFileSync(new URL('../web/js/main.js', import.meta.url), 'utf8');
+  const S = { id: 'ws' }, drawn = [];
+  let typing = false, answer;
+  const { loadStack } = vm.runInNewContext(main.slice(main.indexOf('let stackRequest'), main.indexOf('async function openStackItem')) + '\n({ loadStack })',
+    { S, renderGo() {}, renderStack: () => drawn.push(S.stack), typingInPanel: () => typing, api: async () => answer() });
+  const stack = (title) => ({ kind: 'chain', trunk: 'main', items: [{ pr: 1, branch: 'a', title, current: true }, { pr: 2, branch: 'b', title: 'B' }] });
+  answer = () => stack('A');
+  await loadStack();
+  assert.equal(drawn.length, 1);
+  await loadStack(); // the same stack, read again
+  assert.equal(drawn.length, 1);
+  typing = true; answer = () => stack('A, retitled');
+  await loadStack();
+  assert.equal(drawn.length, 1, 'drawn over a comment being written');
+  assert.equal(S.stack.items[0].title, 'A, retitled');
+  typing = false;
+  await loadStack(); // unchanged since, but never drawn
+  assert.equal(drawn.length, 2);
+  S.stack = null; // the head moved, and the page dropped the old list
+  await loadStack();
+  assert.equal(drawn.length, 3);
 });
 
 test('an anonymous cut above two independently named copies of one commit does not pick a parent alphabetically', async () => {

@@ -59,7 +59,7 @@ Object.assign(hooks, {
     if (S.tab !== 'chat') renderPanel();
   },
   threadsChanged: (p) => { updateCard(p); renderTree(); renderTabs(); renderGo(); if (S.tab === 'review') renderPanel(); },
-  githubChanged: () => { hooks.reviewActionsChanged?.(); renderAllBodies(); renderTabs(); renderGo(); if (S.tab !== 'chat' && !document.activeElement?.closest?.('#pbody .composer')) renderPanel(); },
+  githubChanged: () => { hooks.reviewActionsChanged?.(); renderAllBodies(); renderTabs(); renderGo(); if (S.tab !== 'chat' && !typingInPanel()) renderPanel(); },
 });
 
 // ------------------------------------------------------------------ theme
@@ -297,15 +297,25 @@ async function loadFiles(reason) {
   if (S.ws.kind === 'local') loadShip(true);
 }
 
-// Read the Overview's stack after the diff opens. Each row opens its checkout or its PR.
-let stackRequest = 0;
+// A comment being written in the inspector: drawing the panel again would take its focus.
+function typingInPanel() { return !!document.activeElement?.closest?.('#pbody .composer'); }
+
+// Read the Overview's stack after the diff opens, and again on every read of GitHub (each minute while the page is
+// open). Each row opens its checkout or its PR.
+let stackRequest = 0, stackOwed = false;
 async function loadStack(fresh = false) {
   const id = S.id, request = ++stackRequest;
   const stack = await api(`/api/w/${id}/stack${fresh ? '?fresh=1' : ''}`).catch(() => null);
   // A reply from the previous workspace or before a newer refresh belongs to that view.
   if (id !== S.id || request !== stackRequest) return;
+  const before = S.stack;
   S.stack = stack;
-  renderStack(); renderGo();
+  // The same stack is not drawn again, and one that moved waits until you stop writing a comment.
+  if (!stackOwed && JSON.stringify(stack) === JSON.stringify(before)) return;
+  renderGo();
+  if (typingInPanel()) { stackOwed = true; return; }
+  stackOwed = false;
+  renderStack();
 }
 async function openStackItem(i) {
   const it = S.stack?.items?.[i];
