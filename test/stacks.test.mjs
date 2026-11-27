@@ -1048,15 +1048,21 @@ test('stack clicks prefer a checkout, then its PR, and an old request cannot ove
   assert.equal(S.stack, result);
 });
 
-test('a failed read of a repository’s merge settings is asked again, not kept until loupe restarts', async () => {
+test('a failed read of a repository’s merge settings is asked again a minute later, not kept until loupe restarts', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const root = repo();
   const gh = fixture(root, { settingsError: true });
+  const asked = () => calls(gh).filter((args) => args[0] === 'repo').length;
   assert.equal(await GH.mergeSettings('owner', gh.repo), null);
   fixture(root, { trunk: 'release' });
+  assert.equal(await GH.mergeSettings('owner', gh.repo), null, 'within the minute, the failure stands');
+  assert.equal(asked(), 1);
+  t.mock.timers.tick(60000);
   assert.equal((await GH.mergeSettings('owner', gh.repo))?.defaultBranchRef?.name, 'release');
-  assert.equal(calls(gh).filter((args) => args[0] === 'repo').length, 2);
+  assert.equal(asked(), 2);
+  t.mock.timers.tick(60 * 60000);
   await GH.mergeSettings('owner', gh.repo); // and once read, it is kept
-  assert.equal(calls(gh).filter((args) => args[0] === 'repo').length, 2);
+  assert.equal(asked(), 2);
 });
 
 test('the minute’s stack read draws the Overview again only when the stack moved, and not under a comment being written', async () => {

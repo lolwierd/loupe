@@ -12,13 +12,19 @@ export const ghJson = async (argv, opts) => JSON.parse(await gh(argv, opts));
 let viewerP = null;
 export const viewer = () => (viewerP ||= gh(['api', 'user', '--jq', '.login']).then((s) => s.trim()).catch((e) => { viewerP = null; throw e; }));
 
-// Kept for as long as loupe runs, once read. A read that failed is forgotten once it has answered, so the next caller
-// asks again: kept, it would leave the repository's default branch unknown until loupe restarted.
-const repoSettings = new Map();
+// Kept for as long as loupe runs, once read. A read that failed is asked again a minute later: kept, it would leave the
+// repository's default branch unknown until loupe restarted, and asked at once, a sync that needs it would wait on gh
+// failing every time.
+const repoSettings = new Map(); // owner/repo -> { value, failedAt }
+const SETTINGS_RETRY_MS = 60000;
 export function mergeSettings(owner, repo) {
-  const k = `${owner}/${repo}`;
-  if (!repoSettings.has(k)) repoSettings.set(k, ghJson(['repo', 'view', k, '--json', 'squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge,defaultBranchRef']).catch(() => { repoSettings.delete(k); return null; }));
-  return repoSettings.get(k);
+  const k = `${owner}/${repo}`, hit = repoSettings.get(k);
+  if (hit && !(hit.failedAt && Date.now() - hit.failedAt >= SETTINGS_RETRY_MS)) return hit.value;
+  const entry = { value: null, failedAt: 0 };
+  entry.value = ghJson(['repo', 'view', k, '--json', 'squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge,defaultBranchRef'])
+    .catch(() => { entry.failedAt = Date.now(); return null; });
+  repoSettings.set(k, entry);
+  return entry.value;
 }
 
 const PR_FIELDS = 'number,title,body,author,state,isDraft,url,baseRefName,headRefName,headRefOid,baseRefOid,reviewDecision,mergeStateStatus,mergeable,statusCheckRollup,latestReviews,reviewRequests,reviews,comments,labels,assignees,additions,deletions,changedFiles,createdAt,updatedAt,mergedAt,closedAt,isCrossRepository';
