@@ -64,6 +64,25 @@ GitHub, swap `github.com` for `loupe.local` in its link. https is optional: [doc
 repository) or a GitHub `owner/repo`, which covers its pull requests and every checkout of it. Blocking closes what is
 open of it; `loupe unblock <entry>` or home's footer lets it back in.
 
+### Updating the running loupe
+
+The service runs the clone you ran `install.sh` in, and it takes new code by itself: the daemon restarts when `src/`
+changes and open pages reload when `web/` changes. So `git pull` in that clone is the update (and `npm install` when
+`package.json` changed).
+
+If you change loupe itself, keep the service on a copy of its own (clone it again and run `install.sh` there), work in
+your first clone, and from it run:
+
+```bash
+./promote.sh --dry-run   # what would change in the copy the service runs
+./promote.sh             # copy this clone's committed HEAD into it
+```
+
+It finds the running copy from the service, copies only committed, tracked files (so a half-made edit never reaches
+the daemon you review with), removes files you deleted since the last promote, and backs the copy up first. It refuses
+while loupe is writing a brief or an answer, which a restart would cut off. `--to DIR` names the copy when there is no
+service.
+
 ## The browser extension
 
 `extension/` is a small Chromium extension, loaded unpacked. On github.com, `g` then `l` opens the pull request you
