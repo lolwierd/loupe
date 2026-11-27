@@ -22,12 +22,12 @@ const cache = new WeakMap();
 const READ_FRESH_MS = 30000, READ_STALE_MS = 5 * 60000;
 const reads = new Map(); // repo \0 what -> { at, value, written (the read it came from), reading, expired, failed }
 const generations = new Map(); // repo -> how many times its answers moved
-const expiries = new Map(); // repo -> the last read begun before its answers were expired: theirs are not kept
+const expiries = new Map(); // repo -> { seq: the last read begun before its answers were expired, at }
 const watchers = new Set();
 let readSeq = 0;
 const repoKey = (repo) => String(repo).toLowerCase();
 const repoOf = (k) => k.slice(0, k.indexOf('\0'));
-const blank = () => ({ at: -Infinity, value: undefined, written: 0, reading: null, expired: false, failed: false });
+const blank = () => ({ at: -Infinity, born: Date.now(), value: undefined, written: 0, reading: null, expired: false, failed: false });
 const bump = (r) => generations.set(r, (generations.get(r) || 0) + 1);
 export const stackGeneration = (repo) => (repo && generations.get(repoKey(repo))) || 0;
 export function onStackReadsChanged(fn) { watchers.add(fn); return () => watchers.delete(fn); }
@@ -36,14 +36,13 @@ export function onStackReadsChanged(fn) { watchers.add(fn); return () => watcher
 // joined and their answers are not kept. The stacks built from the old answers are read again, and the last answer
 // stays for a read that fails, while it is under five minutes old.
 export function expireStackReads(repo) {
-  const only = repo ? repoKey(repo) : null;
-  const touched = new Set(only ? [only] : []);
+  const only = repo ? repoKey(repo) : null, touched = new Set(); // a repository with no answers has nothing to expire
   for (const [k, e] of reads) {
     if (only && repoOf(k) !== only) continue;
     e.expired = true; e.reading = null;
     touched.add(repoOf(k));
   }
-  for (const r of touched) { expiries.set(r, readSeq); bump(r); }
+  for (const r of touched) { expiries.set(r, { seq: readSeq, at: Date.now() }); bump(r); }
 }
 // The generation moves at once; the pages hear of it once for the answers a round of reads changed together (they
 // land a second or two apart).
@@ -58,23 +57,31 @@ function changed(repo) {
     for (const fn of watchers) { try { fn(r); } catch { /* a watcher's own trouble */ } }
   }, 2000).unref?.();
 }
-// Keep an answer that came back, unless a newer read has already kept one or the answers were expired after its read
-// began. Answers whether it was kept.
+// Keep an answer that came back, unless a newer read has already kept one. One whose read began before the answers
+// were expired is kept only for a read that fails: it is not fresh. Answers whether it was kept as fresh.
 function keep(repo, k, seq, value) {
   let e = reads.get(k);
   if (!e) reads.set(k, e = blank());
-  if (seq < e.written || seq <= (expiries.get(repoKey(repo)) || 0)) return false;
-  const moved = e.value === undefined ? e.failed : JSON.stringify(e.value) !== JSON.stringify(value);
+  if (seq < e.written) return false;
+  if (seq <= (expiries.get(repoKey(repo))?.seq || 0)) {
+    Object.assign(e, { at: Date.now(), value, written: seq, expired: true });
+    return false;
+  }
+  // after a failure, even the same answer moves the generation: a stack built while it failed is read again
+  const moved = e.failed || (e.value !== undefined && JSON.stringify(e.value) !== JSON.stringify(value));
   Object.assign(e, { at: Date.now(), value, written: seq, expired: false, failed: false });
   if (moved) changed(repo);
   return true;
 }
 // Answers past any use (a quarter of an hour old) go, once there are many, and with the last of a repository's its
 // generation: the stacks keyed by it are long gone by then.
+// (a read still under way, though an expiry let go of it, is no older than gh's minute; an expiry stays as long)
 function sweep() {
-  for (const [k, e] of reads) if (!e.reading && !(Date.now() - e.at < 3 * READ_STALE_MS)) reads.delete(k);
+  const old = (t) => !(Date.now() - t < 3 * READ_STALE_MS);
+  for (const [k, e] of reads) if (!e.reading && old(Math.max(e.at, e.born))) reads.delete(k);
+  for (const [r, x] of expiries) if (old(x.at)) expiries.delete(r);
   const left = new Set([...reads.keys()].map(repoOf));
-  for (const map of [generations, expiries]) for (const r of [...map.keys()]) if (!left.has(r)) map.delete(r);
+  for (const r of [...generations.keys()]) if (!left.has(r) && !expiries.has(r)) generations.delete(r);
 }
 // run(seq) reads GitHub; seq orders its answer against the others for the same thing (see keep). rc is the stack read
 // asking: rc.fresh reads again, once for that stack read (rc.once), and rc.oldest learns how old the oldest answer it
@@ -83,7 +90,7 @@ function sharedRead(repo, what, run, rc) {
   rc ||= {};
   const k = repoKey(repo) + '\0' + what;
   const e = reads.get(k), age = e ? Date.now() - e.at : Infinity;
-  const used = (at) => { if (!(rc.oldest <= at)) rc.oldest = at; };
+  const used = (at) => { if (!(rc.oldest <= at)) { rc.oldest = at; rc.aged?.(at); } };
   const start = () => {
     const seq = ++readSeq;
     if (reads.size > 2000) sweep();
@@ -93,8 +100,10 @@ function sharedRead(repo, what, run, rc) {
       return now.written > seq ? now.value : value; // overtaken: the newer answer; begun before an expiry: its own
     }, (err) => {
       const last = reads.get(k);
-      if (last && last.value === undefined) last.failed = true;
-      if (last?.value === undefined || !(Date.now() - last.at < READ_STALE_MS)) throw err;
+      if (last?.value === undefined || !(Date.now() - last.at < READ_STALE_MS)) {
+        if (last) last.failed = true;
+        throw err;
+      }
       return last.value;
     }).finally(() => { const now = reads.get(k); if (now?.reading === p) now.reading = null; });
     let entry = reads.get(k);
@@ -355,7 +364,8 @@ async function githubStack(repo, number, fresh) {
     }
     for (const n of before) {
       const e = reads.get(repoKey(repo) + '\0stacks#' + n);
-      if (n !== number && !now.has(n) && e && !(e.written > seq)) { e.expired = true; e.reading = null; }
+      // what it had is disproven: neither fresh nor a fallback, and no read of it begun before this one is kept
+      if (n !== number && !now.has(n) && e && !(e.written > seq)) Object.assign(e, { value: undefined, written: seq, expired: true, reading: null });
     }
     return answer;
   }, fresh).catch(() => []);
@@ -750,13 +760,13 @@ export async function stackFor(ws, { fresh = false, snapshot, meta = ws.meta, gi
   const hit = entries.get(commits);
   if (!fresh && hit?.key === key && Date.now() < hit.until) return hit.value;
   // Share a read for the same state. A slower old request cannot replace a newer cache entry.
-  const rc = { fresh, oldest: Infinity };
-  const value = resolve(ws, snapshot, meta, github, commits, rc).catch((e) => ({ kind: 'none', items: [], error: e.message }));
-  // kept two minutes, and no longer than the oldest of GitHub's answers it was built from may be used
-  const entry = { key, until: Date.now() + 120000, value };
+  // kept two minutes, and no longer than the oldest of GitHub's answers it is built from may be used: that bound is
+  // set as each answer is used, so a request joining a build that is still running is held to it too
+  const entry = { key, until: Date.now() + 120000, value: null };
+  const rc = { fresh, oldest: Infinity, aged: (at) => { entry.until = Math.min(entry.until, at + READ_STALE_MS); } };
+  entry.value = resolve(ws, snapshot, meta, github, commits, rc).catch((e) => ({ kind: 'none', items: [], error: e.message }));
   entries.set(commits, entry);
-  value.then(() => { entry.until = Math.min(entry.until, rc.oldest + READ_STALE_MS); });
-  return value;
+  return entry.value;
 }
 
 // fresh: the stack read asking GitHub's answers (see sharedRead), passed to every read of them.
@@ -767,7 +777,11 @@ async function resolve(ws, snapshot, m, github, commits, fresh = {}) {
   let g = ws.rec.kind === 'local' && github?.pr && (github.pr.headRefName !== m.branch || oldPR)
     ? { ...github, pr: null } : github;
   if (commits && ws.rec.kind === 'pr' && !g?.pr && ws.rec.pr) {
-    g = { owner: ws.rec.owner, repo: ws.rec.repo, pr: { number: ws.rec.number, ...ws.rec.pr } };
+    // A record from before isCrossRepository was kept, with GitHub unread: its head's owner says, or it counts as a
+    // fork's, which links no branch of this clone to it.
+    const owner = ws.rec.pr.headRepositoryOwner?.login;
+    const fork = ws.rec.pr.isCrossRepository ?? (owner ? owner.toLowerCase() !== String(ws.rec.owner).toLowerCase() : true);
+    g = { owner: ws.rec.owner, repo: ws.rec.repo, pr: { number: ws.rec.number, ...ws.rec.pr, isCrossRepository: fork } };
   }
   const repo = g?.owner && `${g.owner}/${g.repo}`;
   const co = checkouts(snapshot.worktrees);

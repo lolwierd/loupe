@@ -50,7 +50,7 @@ else if (args[0] === 'pr' && args[1] === 'list' && option('--json')) {
     (!option('--base') || option('--base') === p.baseRefName) &&
     (state === 'all' || state === p.state.toLowerCase()))
     .slice(0, Number(option('--limit')));
-} else if (args[0] === 'pr' && args[1] === 'view') result = data.prs?.find((p) => p.number === Number(args[2])) || 'error';
+} else if (args[0] === 'pr' && args[1] === 'view') result = (!data.viewError && data.prs?.find((p) => p.number === Number(args[2]))) || 'error';
 else if (args[0] === 'repo' && args[1] === 'view') result = data.settingsError ? 'error' : { defaultBranchRef: { name: data.trunk || 'main' } };
 else throw Error('Unexpected gh arguments: ' + args.join(' '));
 if (result === 'error') process.exit(1);
@@ -575,7 +575,7 @@ async function openPR(t, state) {
   if (state !== 'new') {
     const refs = state === 'halfway' ? [['head', 'topic'], ['trunk', 'main']] : [['head', 'topic'], ['base', 'main'], ['trunk', 'main']];
     for (const [name, ref] of refs) sh(clone, 'update-ref', `refs/loupe/pr/101/${name}`, ref);
-    const rec = { id, kind: 'pr', owner: 'owner', repo: gh.repo, number: 101, slug: `owner/${gh.repo}/pull/101`, clone, remote: 'origin', pr: current };
+    const rec = { id, kind: 'pr', owner: 'owner', repo: gh.repo, number: 101, slug: `owner/${gh.repo}/pull/101`, clone, remote: 'origin', pr: { ...current, isCrossRepository: false } };
     if (state === 'fetched') {
       rec.worktree = path.join(path.dirname(clone), 'pr-worktree');
       sh(clone, 'worktree', 'add', '-q', '--detach', rec.worktree, current.headRefOid);
@@ -1141,10 +1141,10 @@ test('a PR that left a stack asks GitHub for its own the next time', async () =>
   const { prs, at, asked, write } = sharedStack();
   await stackFor(at(2)); // #1 and #3 kept from #2's answer
   const two = [prs[0], prs[1]];
-  write({ prs, stacks: { 1: [{ number: 7, base: { ref: 'main' }, pull_requests: two.map((p) => ({ number: p.number, head: { ref: p.headRefName } })) }], 2: [{ number: 7, base: { ref: 'main' }, pull_requests: two.map((p) => ({ number: p.number, head: { ref: p.headRefName } })) }], 3: [] } });
+  write({ prs, stacks: { 1: [{ number: 7, base: { ref: 'main' }, pull_requests: two.map((p) => ({ number: p.number, head: { ref: p.headRefName } })) }], 2: [{ number: 7, base: { ref: 'main' }, pull_requests: two.map((p) => ({ number: p.number, head: { ref: p.headRefName } })) }], 3: 'error' } });
   assert.deepEqual(numbers(await stackFor(at(2), { fresh: true })), [1, 2]);
   const before = asked();
-  assert.notEqual((await stackFor(at(3))).kind, 'github');
+  assert.notEqual((await stackFor(at(3))).kind, 'github', 'GitHub failing, #3 fell back to the stack it had left');
   assert.ok(asked() > before, '#3 used the stack it had left');
 });
 
@@ -1162,6 +1162,30 @@ test('a stack is kept no longer than the oldest answer it was built from may be 
   await delay(300);
   t.mock.timers.tick(60000); // past five minutes
   assert.deepEqual(numbers(await stackFor(ws)), [], 'the same workspace kept a stack built from answers past use');
+});
+
+test('a failure past five minutes, then the same answer again, reads again the stack that failed', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { at, write } = sharedStack();
+  await stackFor(at(2));
+  t.mock.timers.tick(6 * 60000);
+  write({ listError: true, stacks: { 1: 'error', 2: 'error', 3: 'error' } });
+  const ws = at(3);
+  assert.deepEqual(numbers(await stackFor(ws)), []);
+  write(); // GitHub is back, with the same answers as before
+  assert.deepEqual(numbers(await stackFor(at(1))), [1, 2, 3]);
+  assert.deepEqual(numbers(await stackFor(ws)), [1, 2, 3], 'the stack that failed stayed empty');
+});
+
+test('an answer whose read began before an expiry is the last answer for a read that fails', async () => {
+  const { gh, at, write } = sharedStack({ listDelay: 1500, stacks: {} });
+  const slow = stackFor(at(2));
+  await until(() => fs.existsSync(path.join(tmp, gh.repo + '.calls')));
+  await delay(400);
+  expireStackReads(`owner/${gh.repo}`); // a write made meanwhile
+  assert.deepEqual(numbers(await slow), [1, 2, 3]);
+  write({ listError: true, stacks: {} });
+  assert.deepEqual(numbers(await stackFor(at(3))), [1, 2, 3], 'the answer that came back was thrown away');
 });
 
 test('the first answer after a failed read reads again the stacks that failed', async () => {
@@ -1269,6 +1293,23 @@ test('a PR’s stack is read from its own record while GitHub’s read of it is 
   const waited = Date.now();
   await pageStack(old);
   assert.ok(Date.now() - waited >= 2000, 'it did not wait for GitHub');
+});
+
+test('a fork PR whose record cannot tell it is one, with GitHub failing, links no branch of this clone to it', async (t) => {
+  const root = repo();
+  cut(root, 'parent', 'main', 'parent');
+  cut(root, 'child', 'parent', 'child'); // the fork's branch, fetched here as the PR's head
+  cut(root, 'grandchild', 'parent', 'grandchild'); // based on this repository's own branch named child
+  const parent = committedPR(root, 1, 'parent'), child = committedPR(root, 2, 'child', 'parent');
+  const grandchild = committedPR(root, 3, 'grandchild', 'child');
+  const clone = fetchedPR(root, child, 'parent');
+  const gh = fixture(root, { prs: [parent, { ...child, isCrossRepository: true }, grandchild], viewError: true }, child);
+  const ws = new Workspace({ id: gh.repo + '-legacy', kind: 'pr', owner: gh.owner, repo: gh.repo, number: 2, clone, pr: child });
+  await ws.ready();
+  t.after(() => ws.stopWatching());
+  const stack = await pageStack(ws);
+  assert.equal(stack.items.find((i) => i.current)?.crossRepo, true);
+  assert.deepEqual(numbers(stack), [1, 2], 'a PR based on a branch named like the fork’s was taken for its child');
 });
 
 test('a failed read of a repository’s merge settings is asked again a minute later, not kept until loupe restarts', async (t) => {
