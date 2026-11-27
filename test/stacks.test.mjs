@@ -1058,7 +1058,7 @@ function sharedStack(extra = {}) {
   const data = (more = {}) => ({ prs, stacks: { 1: [stack], 2: [stack], 3: [stack] }, ...more });
   const gh = fixture(root, data(extra), prs[1]);
   const at = (n) => prWorkspace(bare, { ...gh, number: n, pr: prs[n - 1] });
-  const asked = () => calls(gh).filter((args) => (args[0] === 'pr' && args[1] === 'list') || (args[0] === 'api' && args[1].includes('/stacks'))).length;
+  const asked = () => (fs.existsSync(path.join(tmp, gh.repo + '.calls')) ? calls(gh) : []).filter((args) => (args[0] === 'pr' && args[1] === 'list') || (args[0] === 'api' && args[1].includes('/stacks'))).length;
   return { root, bare, prs, gh, at, asked, data, write: (more) => fixture(root, data(more), prs[1]) };
 }
 
@@ -1110,6 +1110,69 @@ test('an old answer is used while a read behind it runs; that read keeps the las
   assert.deepEqual(numbers(await stackFor(at(3))), []);
 });
 
+test('a read begun before the answers were expired is not kept, and an overtaken read hands back the newer answer', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { gh, at, asked, write } = sharedStack();
+  await stackFor(at(2));
+  t.mock.timers.tick(60000);
+  write({ listDelay: 1500 }); // a slow read behind the old answer, begun before a merge
+  const before = asked();
+  await stackFor(at(3));
+  await until(() => asked() > before);
+  await delay(400);
+  expireStackReads(`owner/${gh.repo}`); // the merge
+  write();
+  await delay(1600); // the slow read lands after it
+  const openReads = () => calls(gh).filter((args) => args[0] === 'pr' && args[1] === 'list' && args.includes('open')).length;
+  const after = openReads();
+  await stackFor(at(1));
+  assert.ok(openReads() > after, 'the open PRs read before the merge were kept as fresh');
+  // cold: a slow read, overtaken by a fresh one, hands its caller the fresh answer
+  const other = sharedStack({ listDelay: 1500, stacks: {} }); // a stack the open PRs' bases make
+  const slow = stackFor(other.at(2));
+  await until(() => other.asked() > 0);
+  await delay(400);
+  other.write({ prs: [pr(1, 'one', 'main'), pr(2, 'two', 'one')], stacks: {} });
+  assert.deepEqual(numbers(await stackFor(other.at(1), { fresh: true })), [1, 2]);
+  assert.deepEqual(numbers(await slow), [1, 2]);
+});
+
+test('a PR that left a stack asks GitHub for its own the next time', async () => {
+  const { prs, at, asked, write } = sharedStack();
+  await stackFor(at(2)); // #1 and #3 kept from #2's answer
+  const two = [prs[0], prs[1]];
+  write({ prs, stacks: { 1: [{ number: 7, base: { ref: 'main' }, pull_requests: two.map((p) => ({ number: p.number, head: { ref: p.headRefName } })) }], 2: [{ number: 7, base: { ref: 'main' }, pull_requests: two.map((p) => ({ number: p.number, head: { ref: p.headRefName } })) }], 3: [] } });
+  assert.deepEqual(numbers(await stackFor(at(2), { fresh: true })), [1, 2]);
+  const before = asked();
+  assert.notEqual((await stackFor(at(3))).kind, 'github');
+  assert.ok(asked() > before, '#3 used the stack it had left');
+});
+
+test('a stack is kept no longer than the oldest answer it was built from may be used, and Read again keeps the last answer for a failure', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { gh, at, write } = sharedStack();
+  await stackFor(at(2));
+  t.mock.timers.tick(10000);
+  expireStackReads(`owner/${gh.repo}`); // Read again, with GitHub down: the ten-second-old answer stands
+  write({ listError: true, stacks: { 1: 'error', 2: 'error', 3: 'error' } });
+  assert.deepEqual(numbers(await stackFor(at(1))), [1, 2, 3]);
+  t.mock.timers.tick(4.5 * 60000);
+  const ws = at(3);
+  assert.deepEqual(numbers(await stackFor(ws)), [1, 2, 3]); // nearly five minutes old: used, and a read behind it fails
+  await delay(300);
+  t.mock.timers.tick(60000); // past five minutes
+  assert.deepEqual(numbers(await stackFor(ws)), [], 'the same workspace kept a stack built from answers past use');
+});
+
+test('the first answer after a failed read reads again the stacks that failed', async () => {
+  const { at, write } = sharedStack({ listError: true, stacks: { 1: 'error', 2: 'error', 3: 'error' } });
+  const ws = at(2);
+  assert.deepEqual(numbers(await stackFor(ws)), []);
+  write();
+  assert.deepEqual(numbers(await stackFor(at(3))), [1, 2, 3]);
+  assert.deepEqual(numbers(await stackFor(ws)), [1, 2, 3], 'the stack that failed stayed empty');
+});
+
 test('a fresh stack is not overtaken by an older read that lands after it', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const { at, asked, write } = sharedStack();
@@ -1152,7 +1215,7 @@ test('a write made in loupe reads GitHub’s answers behind its stack again', as
   await stackFor(at2(ws));
   assert.equal(asked(), before, 'within half a minute, what was read stands');
   await ws.runAction(async () => ({ message: 'merged' }));
-  await stackFor(at2(ws));
+  await stackFor(ws); // the same workspace: its own stack, built from the old answers, is read again too
   assert.ok(asked() > before, 'the write did not read the open PRs again');
 });
 
@@ -1192,13 +1255,20 @@ test('a PR’s stack is read from its own record while GitHub’s read of it is 
   const parent = committedPR(root, 1, 'parent'), child = committedPR(root, 2, 'child', 'parent');
   const clone = fetchedPR(root, child, 'parent');
   const gh = fixture(root, { prs: [parent, child], viewDelay: 3000 }, child);
-  const ws = new Workspace({ id: gh.repo + '-slow', kind: 'pr', owner: gh.owner, repo: gh.repo, number: 2, clone, pr: child });
+  const ws = new Workspace({ id: gh.repo + '-slow', kind: 'pr', owner: gh.owner, repo: gh.repo, number: 2, clone, pr: { ...child, isCrossRepository: false } });
   await ws.ready(); // GitHub's read starts here, and takes three seconds
   t.after(() => ws.stopWatching());
   const start = Date.now(), stack = await pageStack(ws);
   assert.ok(Date.now() - start < 2000, `waited ${Date.now() - start} ms for GitHub`);
   assert.deepEqual(numbers(stack), [1, 2]);
   assert.ok(!ws.github?.pr, 'GitHub had not answered yet');
+  // a record from before isCrossRepository was kept cannot tell a fork's branch from the repository's own: it waits
+  const old = new Workspace({ id: gh.repo + '-old', kind: 'pr', owner: gh.owner, repo: gh.repo, number: 2, clone, pr: child });
+  await old.ready();
+  t.after(() => old.stopWatching());
+  const waited = Date.now();
+  await pageStack(old);
+  assert.ok(Date.now() - waited >= 2000, 'it did not wait for GitHub');
 });
 
 test('a failed read of a repository’s merge settings is asked again a minute later, not kept until loupe restarts', async (t) => {
@@ -1647,7 +1717,8 @@ test('a fork is only the parent of a same-repo branch when its precise head is i
   assert.deepEqual(numbers(await stackFor(workspace(root, 'unrelated', 'origin/main', gh))), []);
 });
 
-test('GraphQL failure or a changed head leaves the known stack and adds no speculative child', async () => {
+test('GraphQL failure or a changed head leaves the known stack and adds no speculative child', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const root = repo();
   cut(root, 'parent', 'main', 'parent');
   cut(root, 'current', 'parent', 'current');
@@ -1665,7 +1736,7 @@ test('GraphQL failure or a changed head leaves the known stack and adds no specu
   }
   sh(bare, 'update-ref', 'refs/remotes/origin/parent', parent.headRefOid);
   const gh = fixture(bare, { prs: [parent, current, child], listError: true, settingsError: true, stacks: { 2: 'error' } }, current);
-  expireStackReads(`owner/${gh.repo}`); // GitHub cannot be read, and nothing read of it before is recent enough to use
+  t.mock.timers.tick(6 * 60000); // GitHub cannot be read, and nothing read of it before is recent enough to use
   const result = await stackFor(prWorkspace(bare, gh));
   assert.equal(order(result), 'parent / current*');
   assert.equal(result.items[0].pr, undefined);

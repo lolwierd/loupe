@@ -535,7 +535,7 @@ export class Workspace {
   runAction(fn) {
     // A write (a review, a merge, a push, a new PR, a stack link) can change what GitHub says of this repository's
     // stacks: the next stack read asks it again instead of using what was read before.
-    const next = (this.actionTail || Promise.resolve()).then(fn).finally(() => { if (stackRepo(this)) expireStackReads(stackRepo(this)); });
+    const next = (this.actionTail || Promise.resolve()).then(fn).finally(() => expireStackReads()); // every repository's: a push can go to another remote's
     this.actionTail = next.catch(() => {});
     return next;
   }

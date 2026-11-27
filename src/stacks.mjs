@@ -11,32 +11,46 @@ const cache = new WeakMap();
 // GitHub's answers a stack is read from (the open PRs, the recent ones, GitHub's own stacks, a PR's details), kept per
 // repository and shared by every PR and checkout of it: a hop from one PR of a stack to the next reads them once, not
 // again. Each read takes a second or two in a large repository. An answer is used as it is for half a minute. For
-// five minutes after that it is still used, and a new read starts behind it; past that a stack waits for a new one.
+// five minutes after that it is still used, and a new read starts behind it; past that a stack waits for a new one,
+// and a stack built from an answer is kept no longer than that answer is used (stackFor).
 // Only answers that came back are kept: a read that failed answers the last one while it is under five minutes old,
-// and past that fails as it would have (a stack read then shows only what git proves). A fresh stack (the page's
-// Read again) reads again and keeps what it got, and an older read landing after it changes nothing.
-// When a read behind a stack changes an answer, the stacks of that repository are read again (their key has the
-// repository's generation in it) and the pages open on it are told.
+// and past that fails as it would have (a stack read then shows only what git proves). Each read is numbered when it
+// begins, and an answer is kept only over older ones, so a read overtaken by a newer one hands its callers the newer
+// answer. A fresh stack (the page's Read again) reads again and keeps what it got.
+// When an answer changes (or first comes back after a failure), the repository's generation moves: it is in the key of
+// every stack built from its answers, so those are read again, and the pages open on the repository are told.
 const READ_FRESH_MS = 30000, READ_STALE_MS = 5 * 60000;
-const reads = new Map(); // repo \0 what -> { at, value, written (the read it came from), reading }
-const generations = new Map(); // repo -> how many times a read behind its stacks changed an answer
+const reads = new Map(); // repo \0 what -> { at, value, written (the read it came from), reading, expired, failed }
+const generations = new Map(); // repo -> how many times its answers moved
+const expiries = new Map(); // repo -> the last read begun before its answers were expired: theirs are not kept
 const watchers = new Set();
 let readSeq = 0;
 const repoKey = (repo) => String(repo).toLowerCase();
+const repoOf = (k) => k.slice(0, k.indexOf('\0'));
+const blank = () => ({ at: -Infinity, value: undefined, written: 0, reading: null, expired: false, failed: false });
+const bump = (r) => generations.set(r, (generations.get(r) || 0) + 1);
 export const stackGeneration = (repo) => (repo && generations.get(repoKey(repo))) || 0;
 export function onStackReadsChanged(fn) { watchers.add(fn); return () => watchers.delete(fn); }
-// The next stack of this repository reads GitHub again (Read again, or after a write), and a read that was already
-// under way is not joined: it began before. What was read stays only to tell whether the new answer changed.
+// The next stack of a repository (of every one, with none named) reads GitHub again: Read again, or a write made in
+// loupe, whose push can go to another remote's repository. Reads already under way began before it: they are not
+// joined and their answers are not kept. The stacks built from the old answers are read again, and the last answer
+// stays for a read that fails, while it is under five minutes old.
 export function expireStackReads(repo) {
-  const prefix = repoKey(repo) + '\0';
-  for (const [k, e] of reads) if (k.startsWith(prefix)) { e.at = -Infinity; e.reading = null; }
+  const only = repo ? repoKey(repo) : null;
+  const touched = new Set(only ? [only] : []);
+  for (const [k, e] of reads) {
+    if (only && repoOf(k) !== only) continue;
+    e.expired = true; e.reading = null;
+    touched.add(repoOf(k));
+  }
+  for (const r of touched) { expiries.set(r, readSeq); bump(r); }
 }
 // The generation moves at once; the pages hear of it once for the answers a round of reads changed together (they
 // land a second or two apart).
 const telling = new Set();
 function changed(repo) {
   const r = repoKey(repo);
-  generations.set(r, (generations.get(r) || 0) + 1);
+  bump(r);
   if (telling.has(r)) return;
   telling.add(r);
   setTimeout(() => {
@@ -44,50 +58,63 @@ function changed(repo) {
     for (const fn of watchers) { try { fn(r); } catch { /* a watcher's own trouble */ } }
   }, 2000).unref?.();
 }
-// Keep an answer that came back, unless a newer read has already kept one.
+// Keep an answer that came back, unless a newer read has already kept one or the answers were expired after its read
+// began. Answers whether it was kept.
 function keep(repo, k, seq, value) {
   let e = reads.get(k);
-  if (!e) reads.set(k, e = { at: -Infinity, value: undefined, written: 0 });
-  if (seq < e.written) return false;
-  const moved = e.value !== undefined && JSON.stringify(e.value) !== JSON.stringify(value);
-  Object.assign(e, { at: Date.now(), value, written: seq });
+  if (!e) reads.set(k, e = blank());
+  if (seq < e.written || seq <= (expiries.get(repoKey(repo)) || 0)) return false;
+  const moved = e.value === undefined ? e.failed : JSON.stringify(e.value) !== JSON.stringify(value);
+  Object.assign(e, { at: Date.now(), value, written: seq, expired: false, failed: false });
   if (moved) changed(repo);
   return true;
 }
-// Answers past any use (a quarter of an hour old) go, once there are many.
+// Answers past any use (a quarter of an hour old) go, once there are many, and with the last of a repository's its
+// generation: the stacks keyed by it are long gone by then.
 function sweep() {
   for (const [k, e] of reads) if (!e.reading && !(Date.now() - e.at < 3 * READ_STALE_MS)) reads.delete(k);
+  const left = new Set([...reads.keys()].map(repoOf));
+  for (const map of [generations, expiries]) for (const r of [...map.keys()]) if (!left.has(r)) map.delete(r);
 }
-// run(seq) reads GitHub; seq orders its answer against the others for the same thing (see keep).
-function sharedRead(repo, what, run, { fresh = false } = {}) {
+// run(seq) reads GitHub; seq orders its answer against the others for the same thing (see keep). rc is the stack read
+// asking: rc.fresh reads again, once for that stack read (rc.once), and rc.oldest learns how old the oldest answer it
+// was given is.
+function sharedRead(repo, what, run, rc) {
+  rc ||= {};
   const k = repoKey(repo) + '\0' + what;
   const e = reads.get(k), age = e ? Date.now() - e.at : Infinity;
+  const used = (at) => { if (!(rc.oldest <= at)) rc.oldest = at; };
   const start = () => {
     const seq = ++readSeq;
     if (reads.size > 2000) sweep();
-    const p = run(seq).then((value) => { keep(repo, k, seq, value); return value; }, (err) => {
+    const p = run(seq).then((value) => {
+      if (keep(repo, k, seq, value)) return value;
+      const now = reads.get(k);
+      return now.written > seq ? now.value : value; // overtaken: the newer answer; begun before an expiry: its own
+    }, (err) => {
       const last = reads.get(k);
+      if (last && last.value === undefined) last.failed = true;
       if (last?.value === undefined || !(Date.now() - last.at < READ_STALE_MS)) throw err;
       return last.value;
     }).finally(() => { const now = reads.get(k); if (now?.reading === p) now.reading = null; });
     let entry = reads.get(k);
-    if (!entry) reads.set(k, entry = { at: -Infinity, value: undefined, written: 0 });
+    if (!entry) reads.set(k, entry = blank());
     entry.reading = p;
     return p;
   };
-  // fresh is the one stack read that asked for it: each answer is read once for it, and shared by its callers
-  if (fresh) {
-    if (fresh instanceof Map && fresh.has(k)) return fresh.get(k);
-    const p = start();
-    if (fresh instanceof Map) fresh.set(k, p);
-    return p;
+  const read = (p) => p.then((v) => { const now = reads.get(k); used(now?.value === v ? now.at : Date.now()); return v; });
+  if (rc.fresh) {
+    rc.once ||= new Map();
+    if (!rc.once.has(k)) rc.once.set(k, start());
+    return read(rc.once.get(k));
   }
-  if (e?.value !== undefined && age < READ_FRESH_MS) return Promise.resolve(e.value);
-  if (e?.value !== undefined && age < READ_STALE_MS) {
+  if (e?.value !== undefined && !e.expired && age < READ_FRESH_MS) { used(e.at); return Promise.resolve(e.value); }
+  if (e?.value !== undefined && !e.expired && age < READ_STALE_MS) {
     if (!e.reading) start().catch(() => {});
+    used(e.at);
     return Promise.resolve(e.value);
   }
-  return e?.reading || start();
+  return read(e?.reading || start());
 }
 
 const localPrefix = 'refs/heads/';
@@ -299,7 +326,7 @@ const openPRLimit = 1000;
 
 // The recently merged PRs into a trunk.
 function mergedPRs(repo, trunk, fresh) {
-  return sharedRead(repo, 'merged\0' + trunk, () => prList(repo, 'merged', 200, ['--base', trunk], prFields + ',mergeCommit'), { fresh }).catch(() => []);
+  return sharedRead(repo, 'merged\0' + trunk, () => prList(repo, 'merged', 200, ['--base', trunk], prFields + ',mergeCommit'), fresh).catch(() => []);
 }
 
 function listClosedPRs(repo, head, fresh) {
@@ -309,21 +336,29 @@ function listClosedPRs(repo, head, fresh) {
       const list = await prList(repo, 'closed', limit, ['--head', head]);
       if (list.length < limit) return list;
     }
-  }, { fresh });
+  }, fresh);
 }
 
 // GitHub's stack holding this PR. Its answer names every PR in that stack, so it is kept for each of them too, as an
 // answer of the same read: the next PR of the stack opened has its answer already, and a read of its own begun
-// after this one still replaces it.
+// after this one still replaces it. A PR the last answer named and this one does not left the stack: what was kept
+// for it is expired, so its next stack asks GitHub.
+const members = (stacks) => new Set((Array.isArray(stacks) ? stacks : []).flatMap((s) => (s.pull_requests || []).map((p) => p.number)));
 async function githubStack(repo, number, fresh) {
+  const own = repoKey(repo) + '\0stacks#' + number, before = members(reads.get(own)?.value);
   const stacks = await sharedRead(repo, 'stacks#' + number, async (seq) => {
     const answer = await GH.ghJson(['api', `repos/${repo}/stacks?pull_request=${number}`]);
     if (!Array.isArray(answer)) throw new Error('GitHub answered no list of stacks');
-    for (const n of new Set(answer.flatMap((s) => (s.pull_requests || []).map((p) => p.number)))) {
+    const now = members(answer);
+    for (const n of now) {
       if (n !== number) keep(repo, repoKey(repo) + '\0stacks#' + n, seq, answer.filter((s) => s.pull_requests?.some((p) => p.number === n)));
     }
+    for (const n of before) {
+      const e = reads.get(repoKey(repo) + '\0stacks#' + n);
+      if (n !== number && !now.has(n) && e && !(e.written > seq)) { e.expired = true; e.reading = null; }
+    }
     return answer;
-  }, { fresh }).catch(() => []);
+  }, fresh).catch(() => []);
   return stacks.find((s) => s.pull_requests?.some((p) => p.number === number)) || null;
 }
 
@@ -696,7 +731,8 @@ const stackFields = (pr) => (pr ? STACK_PR.map((k) => pr[k] ?? null) : null);
 // and the page asks for the stack again then.
 export async function pageStack(ws, { fresh = false } = {}) {
   const github = ws.fetchGithub().catch(() => {});
-  if (ws.rec.kind !== 'pr') await github;
+  // A record from before isCrossRepository was kept cannot tell a fork's branch from the repository's own: it waits.
+  if (ws.rec.kind !== 'pr' || ws.rec.pr?.isCrossRepository === undefined) await github;
   return stackFor(ws, { fresh });
 }
 
@@ -712,14 +748,19 @@ export async function stackFor(ws, { fresh = false, snapshot, meta = ws.meta, gi
   if (!entries) cache.set(ws, entries = new Map());
   if (fresh && commits) entries.delete(false);
   const hit = entries.get(commits);
-  if (!fresh && hit?.key === key && Date.now() - hit.at < 120000) return hit.value;
+  if (!fresh && hit?.key === key && Date.now() < hit.until) return hit.value;
   // Share a read for the same state. A slower old request cannot replace a newer cache entry.
-  const value = resolve(ws, snapshot, meta, github, commits, fresh && new Map()).catch((e) => ({ kind: 'none', items: [], error: e.message }));
-  entries.set(commits, { key, at: Date.now(), value });
+  const rc = { fresh, oldest: Infinity };
+  const value = resolve(ws, snapshot, meta, github, commits, rc).catch((e) => ({ kind: 'none', items: [], error: e.message }));
+  // kept two minutes, and no longer than the oldest of GitHub's answers it was built from may be used
+  const entry = { key, until: Date.now() + 120000, value };
+  entries.set(commits, entry);
+  value.then(() => { entry.until = Math.min(entry.until, rc.oldest + READ_STALE_MS); });
   return value;
 }
 
-async function resolve(ws, snapshot, m, github, commits, fresh = false) {
+// fresh: the stack read asking GitHub's answers (see sharedRead), passed to every read of them.
+async function resolve(ws, snapshot, m, github, commits, fresh = {}) {
   const { gitDir } = ws;
   // The GitHub refresh can lag a checkout, and a branch name can outlive its closed PR.
   const oldPR = github?.pr && github.pr.state !== 'OPEN' && m.headFull && github.pr.headRefOid !== m.headFull;
@@ -740,7 +781,7 @@ async function resolve(ws, snapshot, m, github, commits, fresh = false) {
       const [list, settings] = await Promise.all([
         // A full result can omit other PRs with the same branch name, so links require matching head OIDs.
         // If no open PR for the base appears in the list, a closed PR with the exact head still qualifies.
-        sharedRead(repo, 'open', () => prList(repo, 'open', openPRLimit), { fresh }).catch(() => null),
+        sharedRead(repo, 'open', () => prList(repo, 'open', openPRLimit), fresh).catch(() => null),
         trunkName ? null : GH.mergeSettings(g.owner, g.repo),
       ]);
       let trunk = trunkName || settings?.defaultBranchRef?.name;
@@ -789,13 +830,13 @@ async function resolve(ws, snapshot, m, github, commits, fresh = false) {
       const open = commits ? (await prHistory()).list : [];
       const known = new Set([number, ...open.map((p) => p.number)]);
       const recent = s.pull_requests.some((p) => !known.has(p.number))
-        ? await sharedRead(repo, 'all', () => prList(repo, 'all', 200), { fresh }).catch(() => []) : [];
+        ? await sharedRead(repo, 'all', () => prList(repo, 'all', 200), fresh).catch(() => []) : [];
       const list = [...open, ...recent];
       const details = new Map(list.map((p) => [p.number, p]));
       details.set(number, g.pr);
       const items = await Promise.all(s.pull_requests.map(async (p) => {
         // The stack can contain a PR older than the recent list, including a closed or fork PR.
-        const detail = details.get(p.number) || await sharedRead(repo, 'pr#' + p.number, () => GH.ghJson(['pr', 'view', String(p.number), '--repo', repo, '--json', prFields]), { fresh }).catch(() => null);
+        const detail = details.get(p.number) || await sharedRead(repo, 'pr#' + p.number, () => GH.ghJson(['pr', 'view', String(p.number), '--repo', repo, '--json', prFields]), fresh).catch(() => null);
         const item = prItem(p), extra = detail && prItem(detail);
         return { ...item, branch: item.branch || extra?.branch, title: extra?.title || item.title,
           state: item.state || extra?.state, draft: item.draft || !!extra?.draft, merged: item.merged || !!extra?.merged,
