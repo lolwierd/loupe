@@ -302,20 +302,17 @@ function typingInPanel() { return !!document.activeElement?.closest?.('#pbody .c
 
 // Read the Overview's stack after the diff opens, and again on every read of GitHub (each minute while the page is
 // open). Each row opens its checkout or its PR.
-let stackRequest = 0, stackOwed = false;
+let stackRequest = 0;
 async function loadStack(fresh = false) {
   const id = S.id, request = ++stackRequest;
   const stack = await api(`/api/w/${id}/stack${fresh ? '?fresh=1' : ''}`).catch(() => null);
   // A reply from the previous workspace or before a newer refresh belongs to that view.
   if (id !== S.id || request !== stackRequest) return;
-  const before = S.stack;
+  // The same stack is not drawn again. One that moved while you write a comment under it waits for the next read,
+  // and S.stack stays the one on screen meanwhile: its rows open by their place in it.
+  if (JSON.stringify(stack) === JSON.stringify(S.stack) || (S.stack && typingInPanel())) return;
   S.stack = stack;
-  // The same stack is not drawn again, and one that moved waits until you stop writing a comment.
-  if (!stackOwed && JSON.stringify(stack) === JSON.stringify(before)) return;
-  renderGo();
-  if (typingInPanel()) { stackOwed = true; return; }
-  stackOwed = false;
-  renderStack();
+  renderStack(); renderGo();
 }
 async function openStackItem(i) {
   const it = S.stack?.items?.[i];

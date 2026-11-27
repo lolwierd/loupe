@@ -1059,7 +1059,7 @@ test('a failed read of a repository’s merge settings is asked again, not kept 
   assert.equal(calls(gh).filter((args) => args[0] === 'repo').length, 2);
 });
 
-test('the minute’s stack read draws the Overview again only when the stack moved, and never under a comment being written', async () => {
+test('the minute’s stack read draws the Overview again only when the stack moved, and not under a comment being written', async () => {
   const main = fs.readFileSync(new URL('../web/js/main.js', import.meta.url), 'utf8');
   const S = { id: 'ws' }, drawn = [];
   let typing = false, answer;
@@ -1071,14 +1071,15 @@ test('the minute’s stack read draws the Overview again only when the stack mov
   assert.equal(drawn.length, 1);
   await loadStack(); // the same stack, read again
   assert.equal(drawn.length, 1);
-  typing = true; answer = () => stack('A, retitled');
+  typing = true; answer = () => ({ ...stack('A'), items: [stack('A').items[1], stack('A').items[0]] }); // reordered
   await loadStack();
   assert.equal(drawn.length, 1, 'drawn over a comment being written');
-  assert.equal(S.stack.items[0].title, 'A, retitled');
+  assert.equal(S.stack.items[0].pr, 1, 'the rows on screen still open what they show');
   typing = false;
-  await loadStack(); // unchanged since, but never drawn
+  await loadStack(); // the next read, once the comment is done
   assert.equal(drawn.length, 2);
-  S.stack = null; // the head moved, and the page dropped the old list
+  assert.equal(S.stack.items[0].pr, 2);
+  S.stack = null; typing = true; // the head moved and the page dropped the old list: nothing to keep on screen
   await loadStack();
   assert.equal(drawn.length, 3);
 });
