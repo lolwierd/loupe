@@ -143,6 +143,20 @@ const ICONS = {
     for (const [x, y] of [[4, 4], [5, 3], [3, 5]]) g[y][x] = 'o';
     return g.map((r) => r.join(''));
   })(),
+  // a newer loupe: the same ring and handle, with an arrow rising in the lens (a pixel clear of the ring all round),
+  // its tail in the lifted tone as it comes up
+  update: (() => {
+    const g = Array.from({ length: 16 }, () => Array(16).fill('.'));
+    for (let x = 0; x < 16; x++) for (let y = 0; y < 16; y++) {
+      const r = Math.hypot(x - 6.5, y - 6.5);
+      if (r >= 4.2 && r <= 6.2) g[y][x] = '#';
+      if (Math.abs(x - y) <= 1 && x + y >= 21 && x <= 15 && y <= 15) g[y][x] = '#';
+    }
+    const head = { 3: [6, 7], 4: [5, 6, 7, 8], 5: [4, 5, 6, 7, 8, 9], 6: [6, 7], 7: [6, 7] }, tail = { 8: [6, 7], 9: [6, 7] };
+    for (const [y, xs] of Object.entries(head)) for (const x of xs) g[y][x] = '#';
+    for (const [y, xs] of Object.entries(tail)) for (const x of xs) g[y][x] = 'o';
+    return g.map((r) => r.join(''));
+  })(),
 };
 function paintIcon(cv) {
   const rows = ICONS[cv.dataset.i];

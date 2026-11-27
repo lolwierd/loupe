@@ -34,7 +34,7 @@ try {
   state.settings.autoNotes = false;
   await writeFile(stateFile, JSON.stringify(state));
   const env = { ...process.env, LOUPE_NAME: 'animdemo2', LOUPE_PORT: '4640', LOUPE_HOME: home,
-    LOUPE_GH: join(fixture, 'gh'), LOUPE_SEARCH: fixture, LOUPE_MODELS: 'fixed', CODEX_HOME: join(fixture, 'codex-home') };
+    LOUPE_GH: join(fixture, 'gh'), LOUPE_SEARCH: fixture, LOUPE_MODELS: 'fixed', LOUPE_NO_UPDATE: '1', CODEX_HOME: join(fixture, 'codex-home') };
   delete env.LOUPE_TLS_PORT;
   daemon = spawn(process.execPath, ['bin/loupe.mjs', 'serve', '--no-80', '--no-mdns'], { cwd: root, env, stdio: ['ignore', 'ignore', 'inherit'] });
   await until(async () => daemon.exitCode === null

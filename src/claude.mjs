@@ -1190,3 +1190,30 @@ ${diff}`;
   for await (const m of query({ prompt, options })) if (m.type === 'result') { if (m.structured_output) return m.structured_output; throw new Error(m.subtype.replace(/_/g, ' ')); }
   throw new Error('no draft came back');
 }
+
+// ------------------------------------------------------------------ what an update to loupe brings
+// A short account of the commits an update of loupe itself would bring (update.mjs), for the person who will run it:
+// what they will see change. The commits are someone's words, so the model has no tools and its answer is shown as
+// text; any failure leaves the page with the commits' own subjects.
+const UPDATE_SCHEMA = { type: 'object', properties: { tldr: { type: 'string', description: 'Two or three plain sentences: what someone using loupe will notice change, most noticeable first. No list, no markdown, no commit ids.' } }, required: ['tldr'], additionalProperties: false };
+export async function summarizeUpdate(cwd, commits, stat) {
+  const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 90000);
+  const prompt = `loupe, a local code review app, is about to update itself with these commits (newest first). In two or three sentences, say what the person using it will notice change.\n\n${stat ? `In all: ${stat.trim()}\n\n` : ''}${commits.slice(0, 60000)}`;
+  const options = {
+    cwd, abortController: abort, env: ENV, settingSources: [], strictMcpConfig: true, mcpServers: {}, tools: [], maxTurns: 3, persistSession: false, includePartialMessages: false,
+    systemPrompt: 'You summarize changes to an app for the person who uses it: plain, specific, no filler, no emoji. Answer only through the structured output.',
+    model: pickModel(DEFAULTS.notesModel, DEFAULTS.notesModel), effort: 'low',
+    outputFormat: { type: 'json_schema', schema: UPDATE_SCHEMA },
+  };
+  if (BIN.claude) options.pathToClaudeCodeExecutable = BIN.claude;
+  try {
+    for await (const m of query({ prompt, options })) {
+      if (m.type !== 'result') continue;
+      if (m.is_error) throw new Error(String(m.result || m.subtype).slice(0, 200)); // a sign-in that lapsed answers as a result too
+      const text = m.structured_output?.tldr || (typeof m.result === 'string' && m.subtype === 'success' ? m.result : ''); // its plain answer, when the structured one did not come
+      if (text.trim()) return text.replace(/[*`]/g, '').replace(/^\s*[#>]+\s*/gm, '').trim().slice(0, 1200); // markdown's marks, not a name's underscores
+      throw new Error(m.subtype.replace(/_/g, ' '));
+    }
+    throw new Error('no summary came back');
+  } finally { clearTimeout(timer); }
+}

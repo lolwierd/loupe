@@ -19,7 +19,8 @@ else gets a new entry here first. Values are tokens from the top of `web/style.c
   left and right edges. A key hint for a field sits inside the field. Measure it (the sweep's `misaligned`,
   `mixed-heights` and `edge` checks), do not eyeball it.
 - Icons: 16 in icon buttons, 14 beside 13 px text, 12 beside 11 px text. Line icons 1.5 stroke. Pixel sprites only:
-  the spark (Claude), the check (viewed), avatars.
+  the spark (Claude), the check (viewed), avatars, and the loupe (the mark; with an arrow rising in its lens, an
+  update to loupe).
 
 ## Colour jobs (one each)
 - Ink (`--act`, `--ink`): acting. Primary buttons, checks in menus, checked boxes, your marks.
@@ -152,6 +153,20 @@ menu or card (`test/ground.test.mjs` keeps this). Dither is a plate (see Plates)
   token-bucket", "Approve acme/widgets#12"), from the moment it opens; the preview only makes it exact. The body is what
   you write, or, for a dialog with nothing to write, what will happen drawn as itself (a push: the branch → its remote
   ref as chips, and the commits that go), never a list of one bullet. The footer says what else comes of it.
+- **Updating loupe** (`update.js`; the daemon's side is `src/update.mjs`): when the copy loupe runs from is behind its
+  source's main (the clone it runs or was promoted from, or that clone's origin), it asks once per new commit with a
+  toast ("loupe can update: 3 new commits on origin/main." and **See what changes**), on home and on a change alike;
+  after that an icon button keeps the offer (the loupe's own pixel mark with an arrow rising in its lens, in the mark's
+  blue: the first of the top bar's tools, and at the end of home's name row, there only while an update waits or runs,
+  its title the offer), as do home's footer and ⌘K.
+  Nothing is asked while the running copy holds what its source has. The dialog,
+  weighted as a local write: its title is "Update loupe to 6fa08fb", its body what will happen as itself (a short
+  account of the commits in reading type, written by a model with no tools and shown as text, their first subject
+  standing in until it lands or if it never does; then the commits, as the push dialog lists them; then where they
+  come from and that loupe restarts and the page comes back, your reviews kept), its footer what it does (copies the
+  commit into the copy loupe runs, or fast-forwards the clone). **Update** takes exactly that commit, through the
+  running copy's own `promote.sh`; while a brief, scene, file notes or an answer is being written it says so and waits
+  for you. How it went is a toast once the page is back ("loupe updated to 6fa08fb.", or the failure and its log).
 - **List box** (files in a dialog, commits, home lists): a fill with no rule round it (paper on home's sheet, `--floor` in a
   dialog), `--r3`, rows divided by 1 px `--rule`.
 - **Mark row in the code**: one line, glyph at the code's text edge, 13 px, hover `--hover`. A draft's words sit in a well that

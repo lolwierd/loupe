@@ -37,7 +37,7 @@ mkdirSync(isolatedHome);
 const roots = { small: join(demo, 'ratelimit'), large: join(temp, 'large') };
 const env = { ...process.env, HOME: isolatedHome, CODEX_HOME: join(isolatedHome, '.codex'),
   LOUPE_HOME: temp, LOUPE_PORT: '4650', LOUPE_NAME: 'loupe-perf', LOUPE_TLS_PORT: '',
-  LOUPE_GH: join(demo, 'gh'), LOUPE_SEARCH: `${demo}:${temp}`, LOUPE_MODELS: 'fixed', GIT_OPTIONAL_LOCKS: '0' };
+  LOUPE_GH: join(demo, 'gh'), LOUPE_SEARCH: `${demo}:${temp}`, LOUPE_MODELS: 'fixed', LOUPE_NO_UPDATE: '1', GIT_OPTIONAL_LOCKS: '0' };
 const active = new Set();
 function startProcess(command, args, log, extra = {}, cwd) {
   const fd = openSync(log, 'w');

@@ -262,17 +262,19 @@ export class Workspace {
   constructor(rec) {
     this.rec = rec;
     this.review = new JsonFile(path.join(STATE_DIR, 'ws', rec.id, 'review.json'), () => ({ viewed: {}, threads: [], convs: {}, chats: [], brief: null, seenHead: null }));
-    // Work that was in flight when the daemon stopped will never finish: say so.
+    // Work that was in flight when the daemon stopped will never finish: say so, on disk too (promote.sh reads it there
+    // to know whether loupe is busy, and a stale "being written" would hold every promote off)
+    let interrupted = false;
     for (const c of Object.values(this.review.data.convs || {})) for (const m of c.messages || []) {
-      if (m.pending) { m.pending = false; m.queued = false; if (!m.text) m.error = 'Interrupted: loupe restarted before the answer came back. Ask again.'; }
+      if (m.pending) { m.pending = false; m.queued = false; interrupted = true; if (!m.text) m.error = 'Interrupted: loupe restarted before the answer came back. Ask again.'; }
     }
-    if (this.review.data.brief?.pending) { this.review.data.brief.pending = false; this.review.data.brief.error ||= 'Interrupted: loupe restarted while writing it.'; }
-    if (this.review.data.brief?.scene?.pending) { this.review.data.brief.scene = { ...this.review.data.brief.scene, pending: false, step: null, error: 'Interrupted: loupe restarted while drawing it.' }; }
+    if (this.review.data.brief?.pending) { this.review.data.brief.pending = false; interrupted = true; this.review.data.brief.error ||= 'Interrupted: loupe restarted while writing it.'; }
+    if (this.review.data.brief?.scene?.pending) { interrupted = true; this.review.data.brief.scene = { ...this.review.data.brief.scene, pending: false, step: null, error: 'Interrupted: loupe restarted while drawing it.' }; }
     if (this.review.data.notes?.pending) {
-      this.review.data.notes.pending = false;
+      this.review.data.notes.pending = false; interrupted = true;
       this.review.data.notes.error ||= 'Interrupted: loupe restarted while writing file notes.';
-      this.review.save(true);
     }
+    if (interrupted) this.review.save(true);
     this.meta = null;
     this.clients = new Set();
     this.cache = new Lru(64);        // scope key -> files

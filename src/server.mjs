@@ -18,6 +18,7 @@ import * as G from './guide.mjs';
 import { handleMcp } from './mcp.mjs';
 import { takeDraft, docPage } from './scene-render.mjs';
 import * as L from './live.mjs';
+import * as U from './update.mjs';
 import * as A from './actions.mjs';
 import { stackFor } from './stacks.mjs';
 import { highlightJSON, initHighlightCache, primeHighlight } from './highlight-cache.mjs';
@@ -148,6 +149,7 @@ async function route(req, res, url) {
 
   // ---------------------------------------------------------------- the daemon
   if (method === 'GET' && p === '/api/state') {
+    U.stale(); // a page is looking: read loupe's source again if it has not been read for a while (its answer is an event)
     return send(res, 200, {
       version: VERSION, boot: BOOT, user: USER, host: HOSTNAME, name: NAME, display: DISPLAY,
       ...modelState(),
@@ -156,6 +158,7 @@ async function route(req, res, url) {
       tools: { gh: !!BIN.gh, gopls: !!BIN.gopls, claude: BIN.claude || 'bundled' },
       reach,
       settings: W.settings(),
+      update: U.view(),
     });
   }
   if (method === 'POST' && p === '/api/settings') {
@@ -181,6 +184,12 @@ async function route(req, res, url) {
     for (const ws of W.all()) ws.emit('settings', st);
     return send(res, 200, st);
   }
+  // loupe's own updates (update.mjs): what its source has that this copy does not, a short account of it, and taking it
+  if (method === 'GET' && p === '/api/update') { U.stale(); return send(res, 200, U.view()); }
+  if (method === 'GET' && p === '/api/busy') return send(res, 200, { busy: busyNow() }); // promote.sh asks this before it copies
+  if (method === 'POST' && p === '/api/update/check') { await U.check(); return send(res, 200, U.view()); }
+  if (method === 'POST' && p === '/api/update/summary') return send(res, 200, await U.summary(String((await readBody(req)).sha || '')));
+  if (method === 'POST' && p === '/api/update') return send(res, 200, await U.take(String((await readBody(req)).sha || '')));
   if (method === 'GET' && p === '/api/inbox') return send(res, 200, await (await import('./github.mjs')).inbox(url.searchParams.get('fresh') === '1'));
   if (method === 'GET' && p === '/api/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
@@ -661,6 +670,19 @@ function liveAsk(ws, conv, msg, raw) {
 
 
 
+// what loupe is in the middle of, which a restart would cut off (an update waits for it, as promote.sh does)
+function busyNow() {
+  const why = [];
+  for (const ws of W.all()) {
+    const d = ws.review?.data || {}, name = ws.rec?.slug || ws.rec?.id;
+    if (d.brief?.pending) why.push(`a brief is being written (${name})`);
+    if (d.brief?.scene?.pending) why.push(`a scene is being drawn (${name})`);
+    if (d.notes?.pending) why.push(`file notes are being written (${name})`);
+    if (Object.values(d.convs || {}).some((c) => (c.messages || []).some((m) => m?.pending))) why.push(`an answer is being written (${name})`);
+  }
+  return why;
+}
+
 // ------------------------------------------------------------------ the listeners
 function handler(req, res) {
   let url;
@@ -737,6 +759,7 @@ export async function start() {
   DISPLAY = !mdnsOn ? `http://127.0.0.1:${PORT}` : HTTPS_ORIGIN || `http://${HOSTNAME}${on80 ? '' : ':' + PORT}`;
   console.log(`open ${DISPLAY}`);
   watchWeb();
+  U.init({ onChange: (v) => { homeEmit('update', v); for (const ws of W.all()) ws.emit('update', v); }, busy: busyNow });
   const stop = () => { stopAll(); for (const p of mdns) p.kill(); for (const ws of W.all()) ws.review.flush?.(); W.registry.flush(); process.exit(0); };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);

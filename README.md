@@ -67,9 +67,15 @@ open of it; `loupe unblock <entry>` or home's footer lets it back in.
 
 ### Updating the running loupe
 
-The service runs the clone you ran `install.sh` in, and it takes new code by itself: the daemon restarts when `src/`
-changes and open pages reload when `web/` changes. So `git pull` in that clone is the update (and `npm install` when
-`package.json` changed).
+loupe watches for its own updates and asks. Every ten minutes it reads `main` on its source (the clone it runs, or
+the clone it was promoted from, and that clone's `origin`); when either has commits the running copy does not, a
+toast says so, and **See what changes** opens a dialog with a short account of the commits and the commits
+themselves. **Update** takes exactly that commit, loupe restarts, and the page comes back by itself. It waits while
+loupe is writing a brief or an answer, and never updates unasked. ⌘K's "Check for an update to loupe" looks at once.
+
+By hand, the same: the service runs the clone you ran `install.sh` in, and it takes new code by itself (the daemon
+restarts when `src/` changes and open pages reload when `web/` changes), so `git pull` in that clone is the update
+(and `npm install` when `package.json` changed).
 
 If you change loupe itself, keep the service on a copy of its own (clone it again and run `install.sh` there) and work
 in your first clone. From it, `./install.sh` again is the update: it sees the service runs the other copy, asks

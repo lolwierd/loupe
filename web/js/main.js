@@ -18,6 +18,7 @@ import { moteHTML, wakeMotes } from './mote.js';
 import { spark, icon, avatar } from './pixel.js';
 import { decorateState, endOpening } from './press.js';
 import { animateTheme, systemTheme, themeOrigin } from './theme-wave.js';
+import { readUpdate, homeUpdateLine, checkUpdate, openUpdate } from './update.js';
 
 // Every part that shows the review's state, redrawn together, so no part ever disagrees with another. The inspector is
 // not one of them: the Overview says nothing about what is viewed, and redrawing it (the PR's description and its
@@ -87,7 +88,7 @@ function setMotion(still) {
 
 // ------------------------------------------------------------------ boot
 async function boot() {
-  try { S.app = await api('/api/state'); }
+  try { S.app = await api('/api/state'); hooks.updateChanged?.(S.app.update); }
   catch (e) { $('#root').innerHTML = `<div class="state"><div class="box"><div class="big">loupe's daemon is not answering</div><div>${esc(e.message)}</div></div></div>`; return; }
   const path = location.pathname.replace(/^\/+|\/+$/g, '');
   if (!path || path === 'home') { listenHome(); return renderHome(); }
@@ -130,7 +131,7 @@ function frame() {
     <span class="lsp" id="lsp"></span>
     <button class="btn ghost tally" id="tally" data-act="nextleft"></button>
     <span class="go" id="go"></span>
-    <span class="tools"><a class="icon" id="ghlink" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open on GitHub" hidden>${I.github}</a><button class="icon" data-act="refresh" title="Read the change again (r)">${I.refresh}</button><button class="icon" data-act="theme" title="View: theme, layout, settings">${document.documentElement.dataset.theme === 'dark' ? I.moon : I.sun}</button>
+    <span class="tools"><button class="icon" data-act="loupeupdate" id="updbtn" hidden>${icon('update', '--pencil')}</button><a class="icon" id="ghlink" target="_blank" rel="noopener noreferrer" title="Open on GitHub" aria-label="Open on GitHub" hidden>${I.github}</a><button class="icon" data-act="refresh" title="Read the change again (r)">${I.refresh}</button><button class="icon" data-act="theme" title="View: theme, layout, settings">${document.documentElement.dataset.theme === 'dark' ? I.moon : I.sun}</button>
     <span class="layout-toggles"><button class="icon" data-act="togglebin" title="Files (t)">${I.sidebarL}</button><button class="icon" data-act="toggledock" title="The map under the code (b)" hidden>${I.sidebarB}</button><button class="icon" data-act="togglepanel" title="Inspector (p)">${I.sidebarR}</button></span></span>
   </header>
   <div class="main" id="main">
@@ -140,6 +141,7 @@ function frame() {
     <aside class="panel" id="panel"><div class="resizer" data-resize="panel"></div><div class="ptabs" role="tablist"><button class="tab" role="tab" id="ptab-overview" data-tab="overview">Overview</button><button class="tab" role="tab" id="ptab-chat" data-tab="chat">Chat</button><button class="tab" role="tab" id="ptab-review" data-tab="review">Marks</button><span class="sp"></span><button class="icon" data-act="keys" title="Keys (?)" aria-label="Keys">${I.keys}</button></div><div class="pbody" id="pbody"></div></aside><div class="motefloat" id="motedock"></div>
   </div></div>`;
   applyMode(S.mode, true);
+  hooks.paintUpdate?.();
   // only a width you dragged is set here; the defaults live in the style sheet, where the narrow-window rule can change them
   for (const [v, k] of [['--bin-w', 'binW'], ['--panel-w', 'panelW']]) { const w = pref.get(k, null); if (w) document.documentElement.style.setProperty(v, w + 'px'); }
   for (const b of $$('.ptabs .tab')) b.setAttribute('aria-selected', String(b.dataset.tab === S.tab));
@@ -599,6 +601,7 @@ function listenWs() {
     if (S.boot && S.boot !== d.boot) {
       notesChange = undefined;
       loadWorkspace('loupe restarted; the change is read again');
+      readUpdate(); // an update it took may be why
     } else if (S.lost && S.ws) {
       resetNotesAttempt(notesChange);
       loadWorkspace();
@@ -698,6 +701,7 @@ function listenWs() {
     if (S.ws) loadStack(); // the stack's other PRs can move with this one unchanged
   });
   on('page', () => location.reload());
+  on('update', (v) => hooks.updateChanged?.(v));
 }
 let changedT = null;
 let undoToast = null; // the chat edit the toast offers to undo
@@ -749,7 +753,10 @@ function listenHome() {
   const es = homeEs = new EventSource('/api/events');
   es.addEventListener('page', () => location.reload());
   es.addEventListener('workspaces', () => { if (!S.id) renderHome(); });
+  es.addEventListener('update', (e) => { try { hooks.updateChanged?.(JSON.parse(e.data)); } catch { /* a bad line */ } });
+  es.addEventListener('hello', (e) => { try { const b = JSON.parse(e.data).boot; if (S.homeBoot && S.homeBoot !== b) readUpdate(); S.homeBoot = b; } catch { /* a bad line */ } });
 }
+hooks.homeUpdate = () => { const el = !S.id && $('#homeupdate'); if (el) el.innerHTML = homeUpdateLine(); hooks.paintUpdate?.(); };
 
 // ------------------------------------------------------------------ the palette (⌘K): open anything, do anything
 // The same acts the buttons run, grouped by the stage of the work they belong to.
@@ -819,6 +826,8 @@ function commands() {
     { group: 'GO', label: 'Read the change again', key: 'r', run: () => $('[data-act="refresh"]')?.click() },
     { group: 'GO', label: 'Home', run: () => { location.href = '/home'; } },
     { group: 'GO', label: 'Keys', key: '?', run: keySheet },
+    S.app.update?.available ? { group: 'GO', label: `Update loupe to ${S.app.update.target.slice(0, 7)}…`, sub: plural(S.app.update.count, 'new commit'), also: 'upgrade new version promote', run: openUpdate }
+      : { group: 'GO', label: 'Check for an update to loupe', also: 'upgrade new version promote', run: checkUpdate },
     { group: 'GO', label: 'Close this change here…', sub: 'its marks stay for next time', typed: true, run: () => hooks.openSheet?.('close') },
     ...S.files.map((f) => ({ group: 'FILES', label: f.path, f, typed: true, file: true, run: () => goLoc({ path: f.path, line: 0 }) })),
   ];
@@ -1103,14 +1112,14 @@ async function renderHome(error) {
     // the section heads already count each list; the footer says only what they do not: what is left out
     const counts = bots ? plural(bots, 'bot PR') + ' not shown' : '';
     return `<div class="home"><div class="homein">
-      <div class="brand">${icon('loupe', '--pencil', 2)}<span class="nm">loupe</span><span class="host">${esc(st.display)}</span></div>
+      <div class="brand">${icon('loupe', '--pencil', 2)}<span class="nm">loupe</span><span class="host">${esc(st.display)}</span><span class="sp"></span><button class="icon" data-act="loupeupdate" id="updbtn" hidden>${icon('update', '--pencil')}</button></div>
       <form class="openbox" id="go"><input class="field lg" name="t" placeholder="Paste a PR link, owner/repo#123, or a local path" autocomplete="off" autofocus><button class="btn primary">Open</button></form>
       ${error ? `<div class="lost">${moteHTML('failed')}<div><b>Nothing under the loupe.</b><div class="faint">${esc(sentence(error))}</div></div></div>` : ''}
       ${ib?.error ? `<div class="err">${esc(ib.error)}</div>` : ''}
       ${section('h-review', 'Review', review.length, ib ? stacked(review) : '', ib ? `<span class="calm">${moteHTML('idle')}<span>Nothing is waiting on your review.</span></span>` : '<span class="calm">Asking GitHub…</span>')}
       ${section('h-yours', 'Yours', yours.length, ib ? stacked(yours) : '', ib ? '<span class="calm">No open pull requests of yours.</span>' : '<span class="calm">Asking GitHub…</span>')}
       ${section('h-open', 'Open here', open.length, open.map(wsRow).join(''), '<span class="calm">Nothing else open. Paste a pull request above, or run <code>loupe</code> in a repository.</span>')}
-      <footer class="homefoot">${counts || hidden.size ? `<p>${counts}${hidden.size ? `${counts ? ' · ' : ''}Hiding ${[...hidden].map((o) => `<button class="link unhide" data-unhide="${esc(o)}" title="Show ${esc(o)}'s pull requests again">${esc(o)} ×</button>`).join(' ')}${hiddenN ? ` (${hiddenN})` : ''}` : ''}</p>` : ''}
+      <footer class="homefoot"><div id="homeupdate" class="homeupdate">${homeUpdateLine()}</div>${counts || hidden.size ? `<p>${counts}${hidden.size ? `${counts ? ' · ' : ''}Hiding ${[...hidden].map((o) => `<button class="link unhide" data-unhide="${esc(o)}" title="Show ${esc(o)}'s pull requests again">${esc(o)} ×</button>`).join(' ')}${hiddenN ? ` (${hiddenN})` : ''}` : ''}</p>` : ''}
       ${blocked.length ? `<p>Never opened here: ${blocked.map((e) => `<button class="link unhide" data-unblock="${esc(e)}" title="${esc(e)}: let loupe open it again">${esc(e.startsWith('/') ? e.split('/').pop() || e : e)} ×</button>`).join(' ')}</p>` : ''}
       <p>Swap <code>github.com</code> for <code>${host}</code> in a pull request link to open it here. <code>loupe</code> in a repository opens its branch and uncommitted work. <span class="nobr"><kbd>j</kbd> <kbd>k</kbd> move, <kbd>↵</kbd> opens.</span></p></footer>
     </div></div>`;
@@ -1118,6 +1127,7 @@ async function renderHome(error) {
   const paint = (ib) => {
     const v = $('#go')?.t?.value || '', focused = document.activeElement?.closest?.('.hrow')?.querySelector('.hl')?.getAttribute('href');
     $('#root').innerHTML = draw(ib);
+    hooks.paintUpdate?.();
     wakeMotes();
     if (v) $('#go').t.value = v;
     if (focused) $(`.hl[href="${CSS.escape(focused)}"]`)?.focus();

@@ -1011,6 +1011,10 @@ canvas.avatar.bot.in { opacity: 0.6; filter: grayscale(0.6); }
 .sheet .shb { overflow: auto; min-height: 0; display: grid; gap: var(--s5); align-content: start; padding: var(--s1) var(--s6) var(--s6); }
 .sheet .hint, .sheet .note { margin: 0; color: var(--ink-3); }
 .sheet .note { font-size: var(--t-ui); }
+/* updating loupe (update.js): what the commits bring, in reading type, over their list; home keeps the offer in its footer */
+.sheet .uptldr { margin: 0; font-size: var(--t-read); line-height: 1.5; color: var(--ink); text-wrap: pretty; }
+.sheet .uptldr:empty { display: none; }
+.homeupdate { display: contents; }
 /* the message box: subject over body, one border, focus shown by the border alone */
 .sheet .box { display: grid; border: 1px solid transparent; border-radius: var(--r2); background: var(--floor); box-shadow: var(--well); transition: box-shadow 120ms var(--ease); }
 .sheet .subjrow { display: flex; align-items: center; gap: var(--s3); height: var(--h4); padding: 0 var(--s4); border-bottom: 1px solid var(--rule); }
