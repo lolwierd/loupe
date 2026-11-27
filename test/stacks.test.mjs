@@ -58,7 +58,7 @@ process.stdout.write(JSON.stringify(result));
 `, { mode: 0o755 });
 
 const { localParent, stackFor, stackSnapshot } = await import('../src/stacks.mjs');
-const { Workspace, openTarget } = await import('../src/workspaces.mjs');
+const { Workspace, openTarget, get, registry } = await import('../src/workspaces.mjs');
 const { ACTIONS, shipState } = await import('../src/actions.mjs');
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: {
   ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
@@ -556,6 +556,88 @@ for (const moved of ['head', 'base', 'target']) {
     assert.equal(hash(root, ns + 'trunk'), moved === 'base' ? head : base);
   });
 }
+
+// A PR opened by name (a stack row, the open box, the CLI) in its clone, registered as loupe would have left it:
+//   fetched  every ref and loupe's worktree, with the remote gone so that any fetch fails;
+//   halfway  the head and trunk with no base, and no worktree yet, as when prepare() stopped after its first fetch;
+//   new      nothing of it, and GitHub cannot read it.
+// The fake client records every line of progress the page would draw.
+async function openPR(t, state) {
+  // The working clone is the PR's clone, as a clone of yours under ~/Projects would be.
+  const clone = repo();
+  cut(clone, 'topic', 'main', 'first');
+  const current = committedPR(clone, 101, 'topic');
+  sh(clone, 'push', '-q', 'origin', 'topic:refs/pull/101/head');
+  const gh = fixture(clone, { prs: state === 'new' ? [] : [current] }, current);
+  const key = `owner/${gh.repo}`.toLowerCase(), id = `pr-owner-${gh.repo.toLowerCase()}-101`;
+  registry.data.clones[key] = { path: clone, remote: 'origin' }; // or findClone would search the real ~/Projects
+  if (state !== 'new') {
+    const refs = state === 'halfway' ? [['head', 'topic'], ['trunk', 'main']] : [['head', 'topic'], ['base', 'main'], ['trunk', 'main']];
+    for (const [name, ref] of refs) sh(clone, 'update-ref', `refs/loupe/pr/101/${name}`, ref);
+    const rec = { id, kind: 'pr', owner: 'owner', repo: gh.repo, number: 101, slug: `owner/${gh.repo}/pull/101`, clone, remote: 'origin', pr: current };
+    if (state === 'fetched') {
+      rec.worktree = path.join(path.dirname(clone), 'pr-worktree');
+      sh(clone, 'worktree', 'add', '-q', '--detach', rec.worktree, current.headRefOid);
+      sh(clone, 'remote', 'set-url', 'origin', path.join(clone, 'missing-remote'));
+    }
+    registry.data.workspaces.push(rec);
+  }
+  const lines = [];
+  const ws = await openTarget(`owner/${gh.repo}#101`);
+  const opening = ws.status;
+  assert.equal(ws.id, id);
+  ws.clients.add({ write: (line) => { if (line.startsWith('event: progress\n')) lines.push(JSON.parse(line.split('\n')[1].slice(6))); } });
+  t.after(() => {
+    ws.clients.clear(); ws.stopWatching();
+    registry.data.workspaces = registry.data.workspaces.filter((w) => w.id !== id);
+    delete registry.data.clones[key];
+  });
+  const asked = () => (fs.existsSync(path.join(tmp, gh.repo + '.calls')) ? calls(gh) : []).filter((args) => args[0] === 'pr' && args[1] === 'view');
+  return { ws, gh, current, lines, opening, asked };
+}
+const until = async (ok, ms = 10000) => { for (const end = Date.now() + ms; !ok() && Date.now() < end;) await delay(50); };
+
+test('opening a PR loupe has already fetched reads its refs instead of fetching it again', async (t) => {
+  const { ws, current, lines, opening, asked } = await openPR(t, 'fetched');
+  assert.notEqual(opening, 'preparing', 'the page would draw "Opening…" over a change it already has');
+  await ws.ready();
+  await delay(200); // a gh pr view started by opening has spawned by now
+  assert.equal(ws.status, 'ready');
+  assert.equal(ws.meta.headFull, current.headRefOid);
+  assert.deepEqual(asked(), []);
+  assert.deepEqual(lines.filter((l) => /Reading|Fetching|Cloning/.test(l.text || '')), []);
+});
+
+test('opening a PR whose earlier fetch stopped halfway fetches it again, and the page waits for that', async (t) => {
+  const { ws, current } = await openPR(t, 'halfway');
+  const meta = await ws.ready(); // the page's own look, while the fetch runs
+  assert.equal(meta?.baseFull, current.baseRefOid);
+  await until(() => ws.rec.worktreeReady);
+  assert.equal(hash(ws.gitDir, 'refs/loupe/pr/101/base'), current.baseRefOid);
+  assert.equal(hash(ws.root), current.headRefOid);
+});
+
+test('opening a PR whose refs went while loupe held it fetches it again', async (t) => {
+  const { ws, gh, current } = await openPR(t, 'fetched');
+  await ws.ready();
+  const clone = ws.rec.clone, ref = (r) => { try { return hash(clone, r); } catch { return null; } };
+  sh(clone, 'remote', 'set-url', 'origin', path.join(path.dirname(clone), 'up'));
+  for (const name of ['head', 'base', 'trunk']) sh(clone, 'update-ref', '-d', `refs/loupe/pr/101/${name}`);
+  await openTarget(`owner/${gh.repo}#101`);
+  await until(() => ref('refs/loupe/pr/101/base') && ws.status === 'ready');
+  assert.equal(ref('refs/loupe/pr/101/head'), current.headRefOid);
+  assert.equal(ref('refs/loupe/pr/101/base'), current.baseRefOid);
+  await ws.ready();
+  await until(() => ws.rec.worktreeReady);
+});
+
+test('opening a PR that GitHub cannot read asks once and says why', async (t) => {
+  const { ws, asked } = await openPR(t, 'new');
+  await until(() => ws.status === 'error');
+  await delay(500); // a second attempt would have asked by now
+  assert.equal(ws.status, 'error');
+  assert.equal(asked().length, 1);
+});
 
 test('refresh fetches an unseen PR tip and repairs a missing or stale same-head worktree locally', async () => {
   const root = repo();

@@ -200,7 +200,10 @@ export async function openTarget(input, cwd, opts = {}) {
     registry.data.last = id;
     registry.save();
     const ws = get(id);
-    ws.prepare().catch(() => {}); // fetch in the background; the page shows progress
+    // A PR fetched before opens from its refs, as a link to its page does, and the page's visit asks GitHub what
+    // moved. A new one is fetched in the background while the page shows progress, and so is one whose clone or refs
+    // went while loupe held it (ready() trusts what it already read). One whose fetch just failed says why.
+    ws.ready().then(async () => { if (!await ws.prRefsHere()) await ws.prepare(); }).catch(() => {});
     return ws;
   }
   if (!fs.existsSync(t.path)) throw new Error(`no such path: ${t.path}`);
@@ -336,7 +339,7 @@ export class Workspace {
         return this.sync(true);
       }
       if (this.meta && this.status === 'ready') return this.meta;
-      if (this.rec.pr && this.rec.clone && await gitOk(this.rec.clone, ['rev-parse', '--verify', '--quiet', `refs/loupe/pr/${this.rec.number}/head`])) {
+      if (this.rec.pr && await this.prRefsHere()) {
         this.status = 'ready';
         await this.sync(true);
         this.rec.worktreeReady = await this.worktreeAtHead();
@@ -348,6 +351,14 @@ export class Workspace {
       await this.prepare();
       return this.meta;
     });
+  }
+
+  // The refs a PR's diff is read from, both there. A fetch that stopped halfway leaves the head without its base.
+  async prRefsHere() {
+    const { clone, number } = this.rec;
+    if (this.rec.kind !== 'pr' || !clone) return false;
+    const has = (name) => gitOk(clone, ['rev-parse', '--verify', '--quiet', `refs/loupe/pr/${number}/${name}`]);
+    return (await Promise.all([has('head'), has('base')])).every(Boolean);
   }
 
   localRootExists() {
