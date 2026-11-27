@@ -49,9 +49,9 @@ class Lsp {
     });
     p.stderr.on('data', () => {});
     p.on('exit', (code) => {
+      if (this.proc !== p) return; // stopped already, and a newer gopls may be running: stop() let this one go
       this.proc = null; this.state = code ? `exited (${code})` : 'idle';
-      for (const w of this.pending.values()) w.reject(new Error('gopls exited'));
-      this.pending.clear(); this.openCount.clear();
+      this.ended();
     });
     const root = pathToFileURL(this.root).href;
     this.ready = this.request('initialize', {
@@ -66,7 +66,19 @@ class Lsp {
     this.touch();
     return this.ready;
   }
-  stop() { this.proc?.kill(); this.proc = null; clearTimeout(this.idle); }
+  // What a gopls held ends with it: its requests fail and its open files close, so the next one starts clean.
+  ended() {
+    for (const w of this.pending.values()) w.reject(new Error('gopls exited'));
+    this.pending.clear(); this.openCount.clear();
+  }
+  stop() {
+    const p = this.proc;
+    clearTimeout(this.idle);
+    if (!p) return;
+    this.proc = null; this.state = 'idle';
+    this.ended(); // at once: a hover between the kill and the exit starts a new gopls, which the old exit must not touch
+    p.kill();
+  }
   touch() { clearTimeout(this.idle); this.idle = setTimeout(() => this.stop(), IDLE_MS); this.idle.unref?.(); }
   write(o) { if (!this.proc) return; const s = JSON.stringify(o); this.proc.stdin.write(`Content-Length: ${Buffer.byteLength(s)}\r\n\r\n${s}`); }
   request(method, params) {
