@@ -996,15 +996,19 @@ async function requestNotes(ws, run, abort, prompt, schema) {
 }
 
 const notesRuns = new Map();
-const failedNotesKeys = new WeakMap();
-const NOTES_RETRY_MS = 10 * 60 * 1000;
+// A batch that failed is asked again by itself after ten minutes, then after an hour, then not again for the same
+// change: each try is a model run, and one that failed three times (a schema it will not fill, turns that run out) fails
+// the next too. Kept with the review, so a restart or a promote does not try again at once. A change with other
+// content starts over, and Write notes asks whenever you do.
+const NOTES_RETRY_MS = [10 * 60 * 1000, 60 * 60 * 1000];
 
 async function notesPlan(ws, { again, expectedKey }) {
   const files = await ws.files('all', { fresh: true });
   const key = contentKey(files);
   if (expectedKey !== undefined) {
     if (!settings().autoNotes || expectedKey !== key) return { started: false };
-    const failure = failedNotesKeys.get(ws);
+    const failure = ws.review.data.notesFailure;
+    if (failure?.key === key && !failure.retryAt) return { started: false };
     if (failure?.key === key && failure.retryAt > Date.now()) return { started: false, retryAt: failure.retryAt };
   }
   const previous = ws.review.data.notes;
@@ -1104,8 +1108,12 @@ async function runNotes(ws, run, key, targets, previous, request) {
   } catch (e) {
     state.error = String(e.message || e);
   } finally {
-    if (state.error) failedNotesKeys.set(ws, { key, retryAt: Date.now() + NOTES_RETRY_MS });
-    else if (failedNotesKeys.get(ws)?.key === key) failedNotesKeys.delete(ws);
+    const failure = ws.review.data.notesFailure;
+    if (state.error) {
+      const tries = failure?.key === key ? failure.tries + 1 : 1;
+      ws.review.data.notesFailure = { key, tries, retryAt: tries <= NOTES_RETRY_MS.length ? Date.now() + NOTES_RETRY_MS[tries - 1] : null };
+      ws.review.save();
+    } else if (failure?.key === key) { delete ws.review.data.notesFailure; ws.review.save(); }
     state.pending = false;
     publish();
   }

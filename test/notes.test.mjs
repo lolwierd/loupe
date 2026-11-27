@@ -190,6 +190,32 @@ test('automatic requests report whether they started and retry failures after te
   assert.deepEqual(await notes(ws, { expectedKey }), { started: false });
 });
 
+test('a batch that keeps failing is asked again after ten minutes, then an hour, then not by itself, a restart included', { timeout: 10000 }, async (t) => {
+  const repo = checkout('failure-backoff');
+  repo.write('a.ts', 'test\n');
+  let ws = repo.open(repo.base);
+  const expectedKey = contentKey(await ws.files());
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const fail = async () => { throw new Error('error max turns'); };
+  const failOnce = async () => { const done = watchNotes(ws, (state) => !state.pending); assert.deepEqual(await notes(ws, { expectedKey }, fail), { started: true }); await done; };
+  await failOnce();
+  assert.deepEqual(await notes(ws, { expectedKey }), { started: false, retryAt: now + 600000 });
+  now += 600000;
+  await failOnce();
+  assert.deepEqual(await notes(ws, { expectedKey }), { started: false, retryAt: now + 3600000 });
+  now += 3600000;
+  await failOnce();
+  assert.deepEqual(await notes(ws, { expectedKey }), { started: false }, 'a third failure is not asked again by itself');
+  ws.review.flush();
+  ws = repo.open(repo.base); // loupe restarted
+  now += 24 * 3600000;
+  assert.deepEqual(await notes(ws, { expectedKey }), { started: false });
+  const asked = watchNotes(ws, (state) => !state.pending);
+  assert.deepEqual(await notes(ws, {}, async () => answered()), { started: true }, 'Write notes still asks');
+  assert.equal((await asked).error, null);
+});
+
 test('an active notes run queues model changes and Write again, keeping only the latest', { timeout: 10000 }, async () => {
   const repo = checkout('notes-queue');
   repo.write('a.ts', 'test\n');
