@@ -343,6 +343,19 @@ test('a flow runs across as tall as its parts, keeps its words off the lanes, an
   assert.equal(size(vm.runInContext('diagramSVG(short, "tb", 2000)', context))[0], size(vm.runInContext('flowSVG(short, fonts(), "n", 0)', context))[0]);
 });
 
+test('the stack asked for beside files that could not be read is still drawn', async () => {
+  const source = fs.readFileSync(new URL('../web/js/main.js', import.meta.url), 'utf8');
+  const load = source.slice(source.indexOf('let fileRequest'), source.indexOf('  S.github ||='));
+  const S = { id: 'pr', review: {} };
+  let drawn = 0, shown = 0;
+  await vm.runInNewContext(load + '\n}\nloadFiles()', {
+    S, wsApi: (p) => p, askStack: () => () => { drawn++; }, showState: () => { shown++; },
+    api: (url) => url === '/files' ? Promise.reject(new Error('gone')) : Promise.resolve({}),
+  });
+  assert.equal(shown, 1);
+  assert.equal(drawn, 1);
+});
+
 test('a file refresh keeps a brief event newer than its review snapshot', async () => {
   const source = fs.readFileSync(new URL('../web/js/main.js', import.meta.url), 'utf8');
   const load = source.slice(source.indexOf('let fileRequest'), source.indexOf('  S.github ||='));

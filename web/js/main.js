@@ -228,7 +228,7 @@ async function loadFiles(reason) {
   const drawStack = askStack(); // beside the files: it is drawn once they are
   try {
     [files, review] = await Promise.all([api(wsApi('/files')), api(`/api/w/${S.id}/review`)]);
-  } catch (e) { if (current()) showState('Could not read the change', e.message, true); return; }
+  } catch (e) { if (current()) { showState('Could not read the change', e.message, true); drawStack(); } return; } // its stack still lands
   if (!current()) return;
   const comparison = `${files.old}:${files.new}`;
   // A read again of the change already drawn: coming back to a tab whose stream slept, or the daemon saying it moved.
