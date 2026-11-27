@@ -12,10 +12,12 @@ export const ghJson = async (argv, opts) => JSON.parse(await gh(argv, opts));
 let viewerP = null;
 export const viewer = () => (viewerP ||= gh(['api', 'user', '--jq', '.login']).then((s) => s.trim()).catch((e) => { viewerP = null; throw e; }));
 
+// Kept for as long as loupe runs, once read. A read that failed is forgotten once it has answered, so the next caller
+// asks again: kept, it would leave the repository's default branch unknown until loupe restarted.
 const repoSettings = new Map();
 export function mergeSettings(owner, repo) {
   const k = `${owner}/${repo}`;
-  if (!repoSettings.has(k)) repoSettings.set(k, ghJson(['repo', 'view', k, '--json', 'squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge,defaultBranchRef']).catch(() => null));
+  if (!repoSettings.has(k)) repoSettings.set(k, ghJson(['repo', 'view', k, '--json', 'squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,deleteBranchOnMerge,defaultBranchRef']).catch(() => { repoSettings.delete(k); return null; }));
   return repoSettings.get(k);
 }
 

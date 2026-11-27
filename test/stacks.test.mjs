@@ -60,6 +60,7 @@ process.stdout.write(JSON.stringify(result));
 const { localParent, stackFor, stackSnapshot } = await import('../src/stacks.mjs');
 const { Workspace, openTarget, get, registry } = await import('../src/workspaces.mjs');
 const { ACTIONS, shipState } = await import('../src/actions.mjs');
+const GH = await import('../src/github.mjs');
 const sh = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: {
   ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
   GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t',
@@ -1045,6 +1046,17 @@ test('stack clicks prefer a checkout, then its PR, and an old request cannot ove
   replies[1](result); await next;
   replies[0](null); await old;
   assert.equal(S.stack, result);
+});
+
+test('a failed read of a repository’s merge settings is asked again, not kept until loupe restarts', async () => {
+  const root = repo();
+  const gh = fixture(root, { settingsError: true });
+  assert.equal(await GH.mergeSettings('owner', gh.repo), null);
+  fixture(root, { trunk: 'release' });
+  assert.equal((await GH.mergeSettings('owner', gh.repo))?.defaultBranchRef?.name, 'release');
+  assert.equal(calls(gh).filter((args) => args[0] === 'repo').length, 2);
+  await GH.mergeSettings('owner', gh.repo); // and once read, it is kept
+  assert.equal(calls(gh).filter((args) => args[0] === 'repo').length, 2);
 });
 
 test('the minute’s stack read draws the Overview again only when the stack moved, and never under a comment being written', async () => {
