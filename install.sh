@@ -1,25 +1,31 @@
 #!/usr/bin/env bash
 # Sets loupe up on this machine, start to finish: its dependencies, the `loupe` command, https if you want it, the
 # service that keeps it running at http://loupe.local (and l.local), Claude Code's mod and skill, then `loupe doctor`
-# checks every piece, the sign-ins included. Run it again any time: a step that is already done is left as it is.
+# checks every piece, the sign-ins included. Run it again any time: a step that is already done is left as it is. Run
+# again in a checkout while the service runs another copy of loupe, it promotes this checkout's HEAD to that copy
+# (promote.sh) and keeps the command and the mod on it, so the copy you review with is updated, not swapped.
 #
-#   ./install.sh                everything; asks whether to set up https
+#   ./install.sh                everything; asks whether to set up https, and whether to promote
 #   ./install.sh --https        set up https without asking (mkcert: your password once, for its local CA)
 #   ./install.sh --no-https     do not ask about https
+#   ./install.sh --promote      promote to the copy the service runs without asking
+#   ./install.sh --no-promote   do not promote; ask instead whether to move loupe to this checkout
 #   ./install.sh --no-service   no LaunchAgent: run `loupe serve` yourself
 #   ./install.sh --no-claude    leave Claude Code's plugins alone
 set -euo pipefail
 cd "$(dirname "$0")"
 ROOT=$(pwd -P)
 ORIG_PATH=$PATH
-service=1 claude=1 https=ask
+service=1 claude=1 https=ask promote=ask
 for a in "$@"; do
   case $a in
     --no-service) service=0 ;;
     --no-claude) claude=0 ;;
     --https) https=yes ;;
     --no-https) https=no ;;
-    -h | --help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --promote) promote=yes ;;
+    --no-promote) promote=no ;;
+    -h | --help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $a (see ./install.sh --help)" >&2; exit 2 ;;
   esac
 done
@@ -52,21 +58,48 @@ ok "npm install"
 # Without a terminal to ask in, it keeps what is there.
 replace_ok() {
   [ -t 0 ] || { note "kept: $1"; return 1; }
-  read -r -p "$1. Use this copy ($ROOT) instead? [y/N] " yn
+  read -r -p "$1. Use this copy ($TARGET) instead? [y/N] " yn
   case $yn in [yY]*) return 0 ;; *) note "kept it"; return 1 ;; esac
 }
 real() { "$NODE" -e 'try { console.log(require("fs").realpathSync(process.argv[1])) } catch {}' "$1"; }
 
+# The copy loupe runs from: this checkout, or, when the service already runs another copy and this checkout is a git
+# checkout of its own, that copy, brought up to this checkout's committed HEAD by promote.sh (asked first; Enter says
+# yes). Without a terminal to ask in it promotes only with --promote, and otherwise keeps what is there.
+PLIST="$HOME/Library/LaunchAgents/dev.${LOUPE_NAME:-loupe}.daemon.plist"
+LIVE=$( [ $service = 1 ] && [ "$(uname)" = Darwin ] && [ -f "$PLIST" ] && /usr/libexec/PlistBuddy -c 'Print :WorkingDirectory' "$PLIST" 2>/dev/null || true)
+TARGET=$ROOT
+if [ -n "$LIVE" ] && [ "$LIVE" != "$ROOT" ] && [ -f "$LIVE/bin/loupe.mjs" ] && [ $promote != no ] && git rev-parse --git-dir >/dev/null 2>&1; then
+  step "Promote"
+  what="$(git rev-parse --abbrev-ref HEAD) at $(git log -1 --format=%h)"
+  if [ $promote = ask ]; then
+    if [ -t 0 ]; then
+      note "The service runs another copy of loupe, $LIVE: running this again updates it from this checkout."
+      read -r -p "Promote $what to it? [Y/n] " yn
+      case $yn in [nN]*) promote=no ;; *) promote=yes ;; esac
+    else
+      promote=no
+      note "not promoted (no terminal to ask in): ./install.sh --promote, or ./promote.sh"
+    fi
+  fi
+  if [ $promote = yes ]; then
+    ./promote.sh || fail "not promoted (see above): the running loupe is as it was"
+    TARGET=$LIVE
+    ok "promoted $what  $D$LIVE$Z"
+  fi
+fi
+[ "$TARGET" = "$LIVE" ] || promote=no
+
 step "The loupe command"
 BIN="$(npm prefix -g)/bin"
-mine="$ROOT/bin/loupe.mjs" linked=1
+mine="$TARGET/bin/loupe.mjs" linked=1
 for c in "$BIN/loupe" "$(PATH=$ORIG_PATH command -v loupe || true)"; do
   [ -n "$c" ] || continue
   r=$(real "$c")
   if [ -n "$r" ] && [ "$r" != "$mine" ] && [ $linked = 1 ]; then replace_ok "loupe ($c) runs $(dirname "$(dirname "$r")")" || linked=0; fi
 done
 if [ $linked = 1 ]; then
-  npm link --no-audit --no-fund --loglevel=error >/dev/null 2>&1 ||
+  (cd "$TARGET" && npm link --no-audit --no-fund --loglevel=error >/dev/null 2>&1) ||
     fail "npm link could not write to $(npm prefix -g). Use a prefix you own (npm config set prefix ~/.local) and run this again"
   ok "loupe  $D$BIN/loupe$Z"
   case ":$ORIG_PATH:" in
@@ -112,13 +145,15 @@ else
 fi
 
 step "The service"
-PLIST="$HOME/Library/LaunchAgents/dev.${LOUPE_NAME:-loupe}.daemon.plist"
 if [ $service = 0 ]; then
   note "skipped (--no-service): run loupe serve to start it"
 elif [ "$(uname)" != Darwin ]; then
   note "no service on $(uname): run loupe serve (http://127.0.0.1:${LOUPE_PORT:-4500})"
+elif [ $promote = yes ]; then # it runs the copy just promoted to, and takes the new files by itself
+  ok "runs $LIVE"
+  [ $made_tls = 0 ] || { "$NODE" bin/loupe.mjs service restart >/dev/null && ok "restarted the service, so it takes the certificate"; }
 else
-  was=$( [ -f "$PLIST" ] && /usr/libexec/PlistBuddy -c 'Print :WorkingDirectory' "$PLIST" 2>/dev/null || true)
+  was=$LIVE
   if [ -z "$was" ] || [ "$was" = "$ROOT" ] || replace_ok "the service runs $was"; then
     "$NODE" bin/loupe.mjs service install
   elif [ $made_tls = 1 ]; then
@@ -137,7 +172,7 @@ else
   if [ -n "$have" ] && [ "$have" != loupe@loupe ]; then
     ok "the loupe mod is already installed as $have; left as it is"
   else
-    claude plugin marketplace add "$ROOT" >/dev/null 2>&1 || claude plugin marketplace update loupe >/dev/null
+    claude plugin marketplace add "$TARGET" >/dev/null 2>&1 || claude plugin marketplace update loupe >/dev/null
     if [ "$have" = loupe@loupe ]; then claude plugin update loupe@loupe >/dev/null; else claude plugin install loupe@loupe --scope user >/dev/null; fi
     ok "the loupe mod and skill (loupe@loupe): /loupe in a session; they load in new sessions"
   fi

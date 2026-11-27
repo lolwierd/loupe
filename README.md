@@ -47,7 +47,8 @@ git clone https://github.com/lolwierd/loupe && cd loupe
 
 `install.sh` installs the `loupe` command, starts a service that keeps loupe at http://loupe.local and l.local
 (macOS), adds the Claude Code plugin and skill, asks whether to set up https, and runs `loupe doctor` to check the
-sign-ins. Run it again any time; `--no-service`, `--no-claude`, `--https` and `--no-https` skip or answer those steps.
+sign-ins. Run it again any time (in another clone, it updates the one the service runs: below); `--no-service`,
+`--no-claude`, `--https`, `--no-https`, `--promote` and `--no-promote` skip or answer those steps.
 
 Then, in any repository:
 
@@ -70,8 +71,11 @@ The service runs the clone you ran `install.sh` in, and it takes new code by its
 changes and open pages reload when `web/` changes. So `git pull` in that clone is the update (and `npm install` when
 `package.json` changed).
 
-If you change loupe itself, keep the service on a copy of its own (clone it again and run `install.sh` there), work in
-your first clone, and from it run:
+If you change loupe itself, keep the service on a copy of its own (clone it again and run `install.sh` there) and work
+in your first clone. From it, `./install.sh` again is the update: it sees the service runs the other copy, asks
+`Promote <branch> at <commit> to it? [Y/n]`, and on Enter brings that copy up to this clone's committed HEAD, keeping
+the `loupe` command and the mod on it (`--promote` answers yes ahead, `--no-promote` asks to move loupe here instead).
+The step on its own:
 
 ```bash
 ./promote.sh --dry-run   # what would change in the copy the service runs
@@ -79,9 +83,9 @@ your first clone, and from it run:
 ```
 
 It finds the running copy from the service, copies only committed, tracked files (so a half-made edit never reaches
-the daemon you review with), removes files you deleted since the last promote, and backs the copy up first. It refuses
-while loupe is writing a brief or an answer, which a restart would cut off. `--to DIR` names the copy when there is no
-service.
+the daemon you review with), removes files you deleted since the last promote, runs `npm install` there when the
+dependencies changed, and backs the copy up first. It refuses while loupe is writing a brief or an answer, which a
+restart would cut off. `--to DIR` names the copy when there is no service.
 
 ## The browser extension
 
