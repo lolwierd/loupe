@@ -68,6 +68,9 @@ function serveFile(res, file) {
 }
 
 // ------------------------------------------------------------------ events for the launcher (workspace list)
+// How soon a page's stream tries again once it drops: the browser's own wait is three seconds, and loupe is back from a
+// restart (every update) in under one.
+const RETRY_MS = 500;
 const homeClients = new Set();
 function homeEmit(event, data) { for (const r of homeClients) r.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
 setInterval(() => {
@@ -193,7 +196,7 @@ async function route(req, res, url) {
   if (method === 'GET' && p === '/api/inbox') return send(res, 200, await (await import('./github.mjs')).inbox(url.searchParams.get('fresh') === '1'));
   if (method === 'GET' && p === '/api/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(`event: hello\ndata: ${JSON.stringify({ boot: BOOT })}\n\n`);
+    res.write(`retry: ${RETRY_MS}\nevent: hello\ndata: ${JSON.stringify({ boot: BOOT })}\n\n`);
     homeClients.add(res);
     req.on('close', () => homeClients.delete(res));
     return;
@@ -262,13 +265,14 @@ async function route(req, res, url) {
   if (method === 'DELETE' && sub === '') { await W.close(ws.id); homeEmit('workspaces', {}); return send(res, 200, { closed: true }); }
   if (method === 'GET' && sub === '/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
-    res.write(`event: hello\ndata: ${JSON.stringify({ boot: BOOT, status: ws.status, progress: ws.progress, pr: ws.openingPr(), ...modelState() })}\n\n`);
+    res.write(`retry: ${RETRY_MS}\nevent: hello\ndata: ${JSON.stringify({ boot: BOOT, status: ws.status, progress: ws.progress, pr: ws.openingPr(), ...modelState() })}\n\n`);
     ws.addClient(res);
     req.on('close', () => ws.removeClient(res));
     ws.ready().catch(() => {});
     return;
   }
   if (method === 'GET' && sub === '') {
+    ws.openingPage(); // a checkout's page asks this first: one watched read of it, not two (see openingPage)
     try { await ws.ready(); } catch (e) { return send(res, 200, { id: ws.id, kind: ws.rec.kind, url: ws.url, status: ws.status, progress: ws.progress || e.message, rec: publicRec(ws) }); }
     if (ws.status !== 'ready') return send(res, 200, { id: ws.id, kind: ws.rec.kind, url: ws.url, status: ws.status, progress: ws.progress, rec: publicRec(ws) });
     return send(res, 200, { ...ws.meta, status: ws.status, progress: ws.progress, rec: publicRec(ws), lsp: ws.root ? lspState(ws.root) : 'off', worktreeReady: !!ws.root });
@@ -469,7 +473,13 @@ async function route(req, res, url) {
       return send(res, 200, { deleted: true });
     }
   }
-  if (method === 'GET' && sub === '/ship') { await ws.fetchGithub().catch(() => {}); try { return send(res, 200, A.shipOut(await A.shipState(ws))); } catch (e) { return send(res, 409, { error: e.message }); } }
+  if (method === 'GET' && sub === '/ship') {
+    // what git says is answered at once: with GitHub not read yet (a first open, a restart), the answer says so
+    // (githubRead), and the page reads this again once it has GitHub's answer, for the branch's PR and repository
+    const gh = ws.fetchGithub().catch(() => {});
+    const githubRead = !!ws.github;
+    if (githubRead) await gh;
+    try { return send(res, 200, { ...A.shipOut(await A.shipState(ws)), githubRead }); } catch (e) { return send(res, 409, { error: e.message }); } }
   if (method === 'POST' && sub === '/draft') {
     const b = await readBody(req);
     try { return send(res, 200, await C.draft(ws, b.what, { paths: Array.isArray(b.paths) ? b.paths.filter(safeRel) : [], model: b.model, effort: b.effort })); }
@@ -781,6 +791,8 @@ function startMdns() {
   }
 }
 
-// Warm the inbox at start and every two minutes after, so home answers from memory.
+// Warm the inbox at start and every two minutes after, so home answers from memory (from the last run's answer until
+// the first read lands), and redraws when a read brings a different one.
+import('./github.mjs').then((g) => g.onInboxChanged(() => homeEmit('inbox', {}))).catch(() => {});
 setTimeout(() => import('./github.mjs').then((g) => g.inbox(true)).catch(() => {}), 1500);
 setInterval(() => import('./github.mjs').then((g) => g.inbox(true)).catch(() => {}), 120000).unref?.();

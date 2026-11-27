@@ -112,6 +112,7 @@ const review = {
       throw fail(event === 'APPROVE' ? 'you already approved this commit' : 'you already requested changes on this commit');
     }
     if (ws.github.pendingError) await ws.fetchGithub(true).catch(() => {}); // one fresh read before refusing
+    if (!ws.github?.pr || ws.github.number !== t.number) throw fail('this would now go to another PR: look again'); // a branch switch meanwhile
     if (ws.github.pendingError) throw fail('GitHub could not confirm your pending review: try again');
     const pend = ws.github.pending;
     const comments = pend?.comments || [];
@@ -151,7 +152,7 @@ const review = {
       try { const r = await ghPost(`repos/${t.owner}/${t.repo}/pulls/${t.number}/reviews`, req); url = r.html_url || url; head = r.commit_id || head; }
       catch (e) { throw fail(`GitHub refused the review: ${clip(`${e.stderr || ''} ${e.message}`.replace(/\s+/g, ' '), 300)}`, 502); }
     }
-    const n = ws.github.pending?.comments?.length || 0;
+    const n = ws.github?.pending?.comments?.length || 0; // (a branch switch while it was sent leaves no answer here)
     // your verdict, with the head it was given on (the one you read and the preview pinned): the page prints it on the
     // pull request, and can say when the head has moved on past it
     if (payload.event !== 'COMMENT' && ws.review?.data) { // a newer verdict replaces the last; one without a named commit clears it
@@ -185,7 +186,7 @@ const reviewcomment = {
     const place = await commentPlace(ws, t, payload);
     let id = fresh.review?.id; // the pending review GitHub holds now, begun here or on GitHub
     if (!id) {
-      const prId = fresh.prId || ws.github.prId;
+      const prId = fresh.prId || ws.github?.prId;
       const d = await gql(ADD_REVIEW, { pr: prId, commit: guard.head });
       if (d.errors?.length) throw fail(`GitHub would not start a review: ${clip(d.errors[0].message, 300)}`, 502);
       id = d.data?.addPullRequestReview?.pullRequestReview?.id;

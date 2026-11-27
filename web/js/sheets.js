@@ -16,17 +16,23 @@ import { reviewEventBlock } from './review-state.js';
 
 // ------------------------------------------------------------------ the branch, read from git (checkouts only)
 let loading = null;
-export async function loadShip(force = false) {
+export async function loadShip(force = false, again = true) {
   if (S.ws?.kind !== 'local') { S.ship = null; return null; }
   if (loading && !force) return loading;
   loading = api(wsApi('/ship')).then((st) => {
     S.ship = st;
     S.shipSel ||= new Set();
     const known = S.shipKnown ||= new Set();
-    for (const f of st.wip) if (!known.has(f.path)) { known.add(f.path); S.shipSel.add(f.path); } // new files start picked
+    // new files start picked, but not under an open commit sheet, whose list was drawn without them: they are picked when
+    // it next opens
+    if (cur?.kind !== 'commit') for (const f of st.wip) if (!known.has(f.path)) { known.add(f.path); S.shipSel.add(f.path); }
     for (const p of [...S.shipSel]) if (!st.wip.some((f) => f.path === p)) S.shipSel.delete(p);
     return st;
-  }).catch((e) => { S.ship = { error: e.message }; return S.ship; }).finally(() => { loading = null; hooks.shipChanged?.(); });
+  }).catch((e) => { S.ship = { error: e.message }; return S.ship; }).finally(() => {
+    loading = null; hooks.shipChanged?.();
+    // read before the daemon had GitHub's answer, which the page has now (it landed while this was on its way): once more
+    if (again && S.ship?.githubRead === false && S.github?.at) loadShip(true, false);
+  });
   return loading;
 }
 const picked = () => (S.ship?.wip || []).filter((f) => S.shipSel.has(f.path)).map((f) => f.path);
@@ -363,8 +369,8 @@ document.addEventListener('click', (e) => {
   if (a === 'go') go();
   if (a === 'draft') draft(b);
   if (a === 'all' || a === 'none') {
-    for (const f of S.ship.wip) a === 'all' ? S.shipSel.add(f.path) : S.shipSel.delete(f.path);
-    for (const cb of $$('[data-sp]', cur.el)) cb.checked = a === 'all';
+    // the files the sheet shows (one found since it opened is not on it, so not in the commit)
+    for (const cb of $$('[data-sp]', cur.el)) { cb.checked = a === 'all'; if (a === 'all') S.shipSel.add(cb.dataset.sp); else S.shipSel.delete(cb.dataset.sp); }
     countFiles(); refreshSoon();
   }
 });

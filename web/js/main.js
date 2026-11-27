@@ -91,7 +91,7 @@ async function boot() {
   try { S.app = await api('/api/state'); hooks.updateChanged?.(S.app.update); }
   catch (e) { $('#root').innerHTML = `<div class="state"><div class="box"><div class="big">loupe's daemon is not answering</div><div>${esc(e.message)}</div></div></div>`; return; }
   const path = location.pathname.replace(/^\/+|\/+$/g, '');
-  if (!path || path === 'home') { listenHome(); return renderHome(); }
+  if (!path || path === 'home') { S.home = true; listenHome(); return renderHome(); }
   let r;
   const nav = document.querySelector('meta[name="loupe-nav"]')?.content;
   try { r = await api('/api/resolve?path=' + encodeURIComponent(path)); }
@@ -259,6 +259,7 @@ async function loadFiles(reason) {
     if (!gh || !current()) return;
     if (ghSame(gh, S.github)) { S.github.at = gh.at; return; }
     S.github = gh; hooks.githubChanged(); renderGo(); syncMote(); renderGhLink(); $('#wsbtn').innerHTML = wsTitle();
+    if (S.ws.kind === 'local' && S.ship && !S.ship.error) loadShip(true); // read before GitHub answered: its PR and repository
   });
   S.wsWip = new Set(S.ws.wipPaths || []);
   if (S.order === 'guide' && !S.review.brief?.sections?.length) S.order = 'tree';
@@ -703,7 +704,10 @@ function listenWs() {
     const id = S.id, github = await api(`/api/w/${S.id}/github`).catch(() => null);
     if (id !== S.id || !github) return;
     if (ghSame(github, S.github)) S.github.at = github.at;
-    else { S.github = github; hooks.githubChanged(); if (S.ws) $('#wsbtn').innerHTML = wsTitle(); }
+    else {
+      S.github = github; hooks.githubChanged(); if (S.ws) $('#wsbtn').innerHTML = wsTitle();
+      if (S.ws?.kind === 'local') loadShip(true); // its PR and repository: the first ship read did not wait for GitHub
+    }
     if (S.ws) loadStack(); // the stack's other PRs can move with this one unchanged
   });
   on('stack', () => { if (S.ws) loadStack(); }); // what GitHub says of the stack moved, with this PR unchanged
@@ -751,17 +755,24 @@ document.addEventListener('visibilitychange', () => {
   clearTimeout(sleepT);
   if (!asleep) return;
   asleep = false;
-  if (S.id) listenWs(); else listenHome();
+  if (S.id) listenWs(); else if (S.home) { listenHome(); renderHome(); } // home heard nothing while its stream slept
 });
 // A page kept in the back/forward cache would hold its stream open and starve the next page's requests.
 addEventListener('pagehide', () => { wsEs?.close(); homeEs?.close(); });
 addEventListener('pageshow', (e) => { if (e.persisted) location.reload(); });
 function listenHome() {
   const es = homeEs = new EventSource('/api/events');
+  let lost = false; // the stream dropped and came back: what it said meanwhile was missed
+  es.addEventListener('error', () => { lost = true; });
   es.addEventListener('page', () => location.reload());
   es.addEventListener('workspaces', () => { if (!S.id) renderHome(); });
+  es.addEventListener('inbox', () => { if (!S.id) renderHome(); }); // GitHub's answer moved (home opens with the last one)
   es.addEventListener('update', (e) => { try { hooks.updateChanged?.(JSON.parse(e.data)); } catch { /* a bad line */ } });
-  es.addEventListener('hello', (e) => { try { const b = JSON.parse(e.data).boot; if (S.homeBoot && S.homeBoot !== b) readUpdate(); S.homeBoot = b; } catch { /* a bad line */ } });
+  // back after a drop (a restart, or the stream alone): home drawn again from what the daemon has now, and after a
+  // restart, how its update went
+  es.addEventListener('hello', (e) => {
+    try { const b = JSON.parse(e.data).boot; if (S.homeBoot && S.homeBoot !== b) readUpdate(); if (lost && !S.id && S.home) renderHome(); lost = false; S.homeBoot = b; } catch { /* a bad line */ }
+  });
 }
 hooks.homeUpdate = () => { const el = !S.id && $('#homeupdate'); if (el) el.innerHTML = homeUpdateLine(); hooks.paintUpdate?.(); };
 
@@ -1050,7 +1061,7 @@ function openPalette() {
 // ------------------------------------------------------------------ home: whose move it is
 let homeRender = 0; // the newest home render: an older one's late answers paint nothing
 async function renderHome(error) {
-  S.id = null;
+  S.id = null; S.home = true;
   const gen = ++homeRender;
   const st = await api('/api/state').catch(() => S.app);
   document.title = 'loupe';

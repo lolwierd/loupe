@@ -1,7 +1,8 @@
 // GitHub, through the gh CLI and its login: a pull request's details, checks, reviews and review threads, and the
 // pull request (if any) behind a local branch. Reads here; the writes are in actions.mjs, each behind a confirm.
-import { BIN } from './config.mjs';
-import { run } from './util.mjs';
+import path from 'node:path';
+import { BIN, STATE_DIR } from './config.mjs';
+import { run, JsonFile } from './util.mjs';
 
 const gh = (argv, opts = {}) => {
   if (!BIN.gh) return Promise.reject(new Error('gh is not installed'));
@@ -208,18 +209,53 @@ export function githubRepoOf(url) {
 
 // The inbox, sorted by whose move it is. One GraphQL search each for "review requested from me" and "mine", with
 // each PR's review decision and check state, so home can say "your move" or "waiting on others" and why.
-const SEARCH = `query($q:String!){search(query:$q,type:ISSUE,first:40){nodes{... on PullRequest{number title url isDraft updatedAt
+const SEARCH = `query($q:String!){viewer{login} search(query:$q,type:ISSUE,first:40){nodes{... on PullRequest{number title url isDraft updatedAt
   additions deletions changedFiles headRefName baseRefName
   repository{nameWithOwner} author{login __typename} reviewDecision commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}`;
-let inboxCache = null, inboxBusy = false;
+// The last whole answer is kept on disk as well, with whose it is (the login its searches ran as), so home has it at once
+// after a restart (every update restarts loupe, and the page reloads with it) while a new one is read, once gh is known
+// to be signed in as the same person. Home is told when a read brings an answer other than one its tabs were given.
+const INBOX = new JsonFile(path.join(STATE_DIR, 'inbox.json'), null);
+const inboxShape = (v) => JSON.stringify([v?.prs, v?.error]);
+let kept = Array.isArray(INBOX.data?.value?.prs) && INBOX.data.who ? INBOX.data : null; // the last run's, not yet checked
+let keptShape = kept ? inboxShape(kept.value) + kept.who : null;
+let inboxCache = null, inboxBusy = false, inboxReading = null;
+let inboxSeq = 0, inboxApplied = 0; // reads in the order they began: one that began earlier never replaces a later one
+const served = new Set(); // what home's tabs were given since they were last told
+const serve = (v) => { served.add(inboxShape(v)); return v; };
+const inboxWatchers = new Set();
+export function onInboxChanged(fn) { inboxWatchers.add(fn); return () => inboxWatchers.delete(fn); }
 export async function inbox(fresh = false) {
+  if (!fresh && !inboxCache && kept) {
+    const k = kept, me = await viewer().catch(() => null);
+    if (kept === k) kept = null; // checked once
+    if (!inboxCache && me && me.toLowerCase() === String(k.who).toLowerCase()) inboxCache = { at: k.at, value: k.value };
+  }
   // Home never waits on GitHub once it has asked once: past two minutes it gets the last answer and a refresh starts.
   if (!fresh && inboxCache) {
-    if (Date.now() - inboxCache.at > 120000 && !inboxBusy) { inboxBusy = true; inbox(true).catch(() => {}).finally(() => { inboxBusy = false; }); }
-    return inboxCache.value;
+    if (Date.now() - inboxCache.at > 120000 && !inboxBusy && !inboxReading) { inboxBusy = true; inbox(true).catch(() => {}).finally(() => { inboxBusy = false; }); }
+    return serve(inboxCache.value);
   }
-  const q = (query) => ghJson(['api', 'graphql', '-f', `query=${SEARCH}`, '-f', `q=${query}`]).then((d) => d.data?.search?.nodes || []).catch(() => null);
-  const [review, mine, assigned] = await Promise.all([q('is:pr is:open review-requested:@me archived:false'), q('is:pr is:open author:@me archived:false'), q('is:pr is:open assignee:@me archived:false')]);
+  if (!fresh && inboxReading) return inboxReading.then(serve); // nothing to show yet: the read under way (the one at boot)
+  const read = readInbox();
+  inboxReading = read;
+  const done = () => { if (inboxReading === read) inboxReading = null; };
+  read.then(done, done);
+  return fresh ? read : read.then(serve);
+}
+async function readInbox() {
+  const seq = ++inboxSeq;
+  const q = (query) => ghJson(['api', 'graphql', '-f', `query=${SEARCH}`, '-f', `q=${query}`])
+    .then((d) => (d.data?.search ? { nodes: d.data.search.nodes || [], login: d.data.viewer?.login || null } : null)).catch(() => null);
+  const found = await Promise.all([q('is:pr is:open review-requested:@me archived:false'), q('is:pr is:open author:@me archived:false'), q('is:pr is:open assignee:@me archived:false')]);
+  const [review, mine, assigned] = found.map((r) => r?.nodes ?? null);
+  if (seq < inboxApplied && inboxCache) return inboxCache.value; // a read begun after this one has already answered
+  inboxApplied = seq;
+  // whose it is: the one login all three searches ran as (gh switched accounts mid-read: nobody's, and it is not kept)
+  const logins = new Set(found.filter(Boolean).map((r) => r.login));
+  // searches that came back as different people: two accounts' rows, none of them kept
+  if (logins.size > 1) return inboxCache?.value || { prs: [], error: 'gh changed accounts while home was read: look again', at: Date.now() };
+  const me = logins.size === 1 ? [...logins][0] : null;
   const mineAssigned = new Set((assigned || []).map((p) => `${p.repository?.nameWithOwner}#${p.number}`));
   const row = (p, whose) => {
     const checks = p.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state || null; // SUCCESS FAILURE ERROR PENDING EXPECTED
@@ -240,5 +276,14 @@ export async function inbox(fresh = false) {
     error: review === null && mine === null ? 'GitHub search failed (is gh signed in?)' : null, at: Date.now(),
   };
   inboxCache = { at: Date.now(), value };
+  // A read that failed, or found only part (a search that failed drops its rows), is neither what home opens with next
+  // time nor a reason to redraw it now: it shows when home next asks.
+  if (review !== null && mine !== null && assigned !== null) {
+    const shape = inboxShape(value);
+    if (me && shape + me !== keptShape) {
+      try { INBOX.data = { ...inboxCache, who: me }; INBOX.flush(); keptShape = shape + me; } catch { /* a full disk: kept in memory only */ }
+    }
+    if ([...served].some((x) => x !== shape)) { served.clear(); for (const fn of inboxWatchers) { try { fn(); } catch { /* a watcher's own trouble */ } } }
+  }
   return value;
 }

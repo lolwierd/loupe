@@ -338,13 +338,16 @@ export class Workspace {
     return p ? { additions: p.additions, deletions: p.deletions, changedFiles: p.changedFiles, baseRefName: p.baseRefName, headRefName: p.headRefName } : null;
   }
 
-  // Local metadata is reusable only after a sync that began with the current watcher attached.
+  // Local metadata is reusable only after a sync that began with the current watcher attached, and once a page has held
+  // that watcher's stream: until then (a request with no page open, or a page's record asked before its stream arrives)
+  // the checkout is read again, since an edit made just before may not have reached the watcher yet. With a page, an
+  // edit the watcher has seen is read once the writes settle, and the page is told.
   ready() {
     if (this.rec.kind === 'local' && !this.localRootExists()) return Promise.reject(new Error(this.progress));
     if (this.watch?.opening) return this.watch.opening;
     return this.once('ready', async () => {
       if (this.rec.kind === 'local') {
-        if (this.meta && this.watch?.fs && this.syncedWatch === this.watch && this.status === 'ready') return this.meta;
+        if (this.meta && this.watch?.fs && this.watch.paged && this.syncedWatch === this.watch && this.status === 'ready') return this.meta;
         return this.sync(true);
       }
       if (this.meta && this.status === 'ready') return this.meta;
@@ -545,24 +548,42 @@ export class Workspace {
   fetchGithubComments() { return this.fetchGithub(true); }
   fetchGithub(force = false) {
     if (!force && this.github && Date.now() - this.github.at < 60000) return Promise.resolve(this.github);
-    // A caller that did not ask for a fresh read joins the one under way: one more queued behind it would read
-    // GitHub twice, and a page's first look would wait for both.
-    const run = (!force && this.githubReading) || this.fetchGithubNow();
+    // A caller that did not ask for a fresh read joins the newest one asked for, when it is about the same PR or branch:
+    // one more queued behind it would read GitHub twice, and a page's first look would wait for both. (A checkout
+    // switched to another branch since that read was asked for waits for the one its switch asks for.)
+    const run = (!force && this.githubReading?.target === this.ghTarget() && this.githubReading) || this.fetchGithubNow();
     if (!force && this.github && !this.github.error) { run.catch(() => {}); return Promise.resolve(this.github); }
     return run;
   }
+  // what a read of GitHub is about: a PR, or the branch a checkout is on
+  ghTarget() { return this.rec.kind === 'pr' ? `#${this.rec.number}` : this.meta?.branch || ''; }
+  // One read at a time, and one more queued behind it for everyone who asks meanwhile (a write's read must begin after
+  // the write).
   fetchGithubNow() {
-    const read = this.serial('github', async () => {
+    const read = this.serial('github', () => this.readGithub());
+    // the newest read asked for, running or queued, and what it is about: the one a caller with no need of a fresh one joins
+    read.target = this.ghTarget();
+    this.githubReading = read;
+    read.finally(() => { if (this.githubReading === read) this.githubReading = null; }).catch(() => {});
+    return read;
+  }
+  readGithub() {
+    return (async () => {
       const writes = this.ghWrites || 0; // a write that lands while this reads (actions.mjs landed) makes this answer old
+      const branch = this.meta?.branch; // the branch it is about (ghTarget), as it began
       let owner, repo, number;
       if (this.rec.kind === 'pr') ({ owner, repo, number } = this.rec);
       else {
         const remotes = await git(this.rec.root, ['remote', '-v']).catch(() => '');
         const origin = remotes.split('\n').find((l) => l.startsWith('origin\t')) || remotes.split('\n')[0] || '';
         const gr = GH.githubRepoOf(origin.split(/\s+/)[1]);
-        if (gr && this.meta?.branch) { owner = gr.owner; repo = gr.repo; number = await GH.prForBranch(owner, repo, this.meta.branch); }
+        if (gr && branch) { owner = gr.owner; repo = gr.repo; number = await GH.prForBranch(owner, repo, branch); }
       }
+      // A checkout switched to another branch while this read: its answer is about the old one, and the read the switch
+      // asked for (queued behind this one) brings the new one's. Nothing is kept, and those who joined get what there is.
+      const switched = () => this.rec.kind === 'local' && (this.meta?.branch || '') !== (branch || '');
       if (!number) {
+        if (switched()) return this.github || { at: 0, pr: null, threads: [] };
         const before = this.github;
         this.github = { at: Date.now(), pr: null, threads: [], owner, repo, repoFull: owner ? `${owner}/${repo}` : null };
         if (before?.pr) this.sync().catch(() => {});
@@ -585,6 +606,7 @@ export class Workspace {
       // A write landed while this read was under way: what it put in loupe's copy stays, and the read it asked for,
       // queued behind this one, brings the rest.
       if ((this.ghWrites || 0) !== writes && this.github?.pr) return this.github;
+      if (switched()) return this.github || { at: 0, pr: null, threads: [] };
       this.github = { at: Date.now(), pr, threads, images, owner, repo, number, repoFull: `${owner}/${repo}`, pending: pending?.review || null, pendingError: pending?.error, prId: pending?.prId || null };
       // A checkout's base follows its PR's base, once GitHub has said what that is.
       if (this.rec.kind === 'local' && this.meta && pr.headRefName === this.meta.branch) this.sync().catch(() => {});
@@ -606,15 +628,11 @@ export class Workspace {
       }
       this.emit('github', {});
       return this.github;
-    }).catch((e) => {
+    })().catch((e) => {
       // A failed refresh keeps what we had (marked as old, so the next ask tries again), rather than blanking the PR.
       if (this.github?.pr) { this.github = { ...this.github, at: Date.now() - 50000, stale: e.message }; return this.github; }
       this.github = { at: Date.now(), pr: null, threads: [], error: e.message }; return this.github;
     });
-    // the newest read asked for, running or queued: the one a caller with no need of a fresh one joins
-    this.githubReading = read;
-    read.finally(() => { if (this.githubReading === read) this.githubReading = null; }).catch(() => {});
-    return read;
   }
   async refresh() {
     // Read again reads GitHub's answers behind the stack again too, for the whole-stack range as for the Overview.
@@ -743,7 +761,11 @@ export class Workspace {
       this.syncedWatch = watch;
       const recovered = this.rec.kind === 'local' && this.status === 'error';
       if (this.rec.kind === 'local') { this.status = 'ready'; this.progress = ''; }
-      if (this.rec.kind === 'local' && before && (before.branch !== branch || before.headFull !== head)) this.fetchGithub(true).catch(() => {});
+      if (this.rec.kind === 'local' && before && (before.branch !== branch || before.headFull !== head)) {
+        // another branch: what GitHub said was about the old one's PR, and nothing may be read or written by it now
+        if (before.branch !== branch) this.github = null;
+        this.fetchGithub(true).catch(() => {});
+      }
       if (recovered) this.emit('changed', { reason: 'workspace available' });
       else if (before && before.sig !== sig) {
         const reason = before.branch !== branch ? `switched to ${branch}` : before.headFull !== head ? 'new commits' : 'the base moved';
@@ -890,16 +912,27 @@ export class Workspace {
   addClient(res) {
     this.clients.add(res);
     this.startWatching();
+    if (this.watch) this.watch.paged = true; // its reads count as current from now (ready)
     if (this.rec.kind === 'pr' && this.clients.size === 1) {
       // its checkout may have gone while nobody looked, even when GitHub says nothing moved
-      this.ready().then(() => { this.ensureWorktree().catch(() => {}); return this.fetchGithub(true); }).catch(() => {});
+      // (a read already under way, as the record's own first read often is, is as new as one begun now)
+      this.ready().then(() => { this.ensureWorktree().catch(() => {}); return this.githubReading || this.fetchGithub(true); }).catch(() => {});
     }
     // Checks and reviews move on their own: read GitHub again every minute while a page is open.
     if (!this.ghPoll) { this.ghPoll = setInterval(() => { if (this.clients.size) this.fetchGithub(true).catch(() => {}); }, 60000); this.ghPoll.unref?.(); }
   }
   removeClient(res) {
     this.clients.delete(res);
-    if (!this.clients.size) setTimeout(() => { if (!this.clients.size) this.stopWatching(); }, 30000).unref?.();
+    if (!this.clients.size) this.stopIfAlone();
+  }
+  stopIfAlone() { setTimeout(() => { if (!this.clients.size) this.stopWatching(); }, 30000).unref?.(); }
+  // A page is opening a checkout: it asks for the record first and opens its stream a moment later. Watching from now
+  // makes the read the record waits for one the watcher saw begin, so the stream's arrival does not read the whole
+  // checkout a second time before the files can answer. With no page after all, the watching stops in half a minute.
+  openingPage() {
+    if (this.rec.kind !== 'local' || this.watch || !this.localRootExists()) return;
+    this.startWatching();
+    if (!this.clients.size) this.stopIfAlone();
   }
   startWatching() {
     if (this.watch || this.rec.kind !== 'local') return;

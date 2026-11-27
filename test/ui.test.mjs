@@ -540,7 +540,7 @@ test('a failed notes event and a daemon restart rearm automatic notes on the cur
   `, {
     S, resetNotesAttempt, console,
     EventSource: class { addEventListener(name, fn) { events.set(name, fn); } },
-    loadWorkspace: () => reloads++, updateFileNotes() {}, maybeAutoNotes: () => scheduled++,
+    loadWorkspace: () => reloads++, updateFileNotes() {}, maybeAutoNotes: () => scheduled++, readUpdate() {},
   });
   const emit = (name, data) => events.get(name)({ data: JSON.stringify(data) });
   const change = { key: 'current', attempted: true };
