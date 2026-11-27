@@ -23,7 +23,7 @@ const repo = match?.[1] || option('--repo') || field('name') || field('r') || ar
 const file = require('node:path').join(__dirname, repo.split('/').at(-1));
 const data = JSON.parse(fs.readFileSync(file + '.json'));
 fs.appendFileSync(file + '.calls', JSON.stringify(args) + '\\n');
-const delay = data.delay || (args[1] === 'graphql' ? data.graphqlDelay : 0);
+const delay = data.delay || (args[1] === 'graphql' ? data.graphqlDelay : 0) || (args[0] === 'pr' && args[1] === 'view' ? data.viewDelay : 0);
 if (delay) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delay);
 let result;
 if (match) result = data.stacks?.[match[2]] || [];
@@ -57,7 +57,7 @@ if (result === 'error') process.exit(1);
 process.stdout.write(JSON.stringify(result));
 `, { mode: 0o755 });
 
-const { localParent, stackFor, stackSnapshot } = await import('../src/stacks.mjs');
+const { localParent, pageStack, stackFor, stackSnapshot } = await import('../src/stacks.mjs');
 const { Workspace, openTarget, get, registry } = await import('../src/workspaces.mjs');
 const { ACTIONS, shipState } = await import('../src/actions.mjs');
 const GH = await import('../src/github.mjs');
@@ -1046,6 +1046,22 @@ test('stack clicks prefer a checkout, then its PR, and an old request cannot ove
   replies[1](result); await next;
   replies[0](null); await old;
   assert.equal(S.stack, result);
+});
+
+test('a PR’s stack is read from its own record while GitHub’s read of it is slow', async (t) => {
+  const root = repo();
+  cut(root, 'parent', 'main', 'parent');
+  cut(root, 'child', 'parent', 'child');
+  const parent = committedPR(root, 1, 'parent'), child = committedPR(root, 2, 'child', 'parent');
+  const clone = fetchedPR(root, child, 'parent');
+  const gh = fixture(root, { prs: [parent, child], viewDelay: 3000 }, child);
+  const ws = new Workspace({ id: gh.repo + '-slow', kind: 'pr', owner: gh.owner, repo: gh.repo, number: 2, clone, pr: child });
+  await ws.ready(); // GitHub's read starts here, and takes three seconds
+  t.after(() => ws.stopWatching());
+  const start = Date.now(), stack = await pageStack(ws);
+  assert.ok(Date.now() - start < 2000, `waited ${Date.now() - start} ms for GitHub`);
+  assert.deepEqual(numbers(stack), [1, 2]);
+  assert.ok(!ws.github?.pr, 'GitHub had not answered yet');
 });
 
 test('a failed read of a repository’s merge settings is asked again a minute later, not kept until loupe restarts', async (t) => {

@@ -20,7 +20,7 @@ import { takeDraft, docPage } from './scene-render.mjs';
 import * as L from './live.mjs';
 import * as U from './update.mjs';
 import * as A from './actions.mjs';
-import { stackFor } from './stacks.mjs';
+import { pageStack } from './stacks.mjs';
 import { highlightJSON, initHighlightCache, primeHighlight } from './highlight-cache.mjs';
 import { goplsFor, lspState, stopAll, readableExternal, lineAt } from './lsp.mjs';
 import { uid, safeRel } from './util.mjs';
@@ -484,7 +484,7 @@ async function route(req, res, url) {
     for (const block of out.split('\x01').filter(Boolean)) { const [sha, ...rest] = block.split('\n'); files[sha.trim()] = rest.map((x) => x.trim()).filter(Boolean); }
     return send(res, 200, { files });
   }
-  if (method === 'GET' && sub === '/stack') { await ws.fetchGithub().catch(() => {}); return send(res, 200, await stackFor(ws, { fresh: url.searchParams.get('fresh') === '1' })); }
+  if (method === 'GET' && sub === '/stack') return send(res, 200, await pageStack(ws, { fresh: url.searchParams.get('fresh') === '1' }));
   if (method === 'POST' && sub === '/checks') {
     // A guide's "what to check" item ticked or not, keyed to the brief it came from.
     const b = await readBody(req);

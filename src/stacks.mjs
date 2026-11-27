@@ -601,6 +601,15 @@ async function addCommitStack(root, kind, m, pr, repo, chain, stack, snapshot, r
 // it had (each GitHub refresh made a new PR object, and every stack was read again, a second or more each time)
 const STACK_PR = ['number', 'state', 'isDraft', 'title', 'headRefName', 'headRefOid', 'baseRefName', 'baseRefOid', 'mergedAt', 'crossRepo', 'isCrossRepository', 'url'];
 const stackFields = (pr) => (pr ? STACK_PR.map((k) => pr[k] ?? null) : null);
+// The stack the page's Overview asks for. A checkout waits for GitHub's read, which says what PR its branch has. A PR
+// has its own record, so its stack is read from that while GitHub's read runs: its answer lands as a 'github' event,
+// and the page asks for the stack again then.
+export async function pageStack(ws, { fresh = false } = {}) {
+  const github = ws.fetchGithub().catch(() => {});
+  if (ws.rec.kind !== 'pr') await github;
+  return stackFor(ws, { fresh });
+}
+
 export async function stackFor(ws, { fresh = false, snapshot, meta = ws.meta, github = ws.github, commits = true } = {}) {
   if (!meta) return { kind: 'none', items: [] };
   snapshot ||= await stackSnapshot(ws.gitDir);
