@@ -533,7 +533,9 @@ export class Workspace {
     };
   }
   runAction(fn) {
-    const next = (this.actionTail || Promise.resolve()).then(fn);
+    // A write (a review, a merge, a push, a new PR, a stack link) can change what GitHub says of this repository's
+    // stacks: the next stack read asks it again instead of using what was read before.
+    const next = (this.actionTail || Promise.resolve()).then(fn).finally(() => { if (stackRepo(this)) expireStackReads(stackRepo(this)); });
     this.actionTail = next.catch(() => {});
     return next;
   }
@@ -593,7 +595,8 @@ export class Workspace {
           if (moved || (trunk && trunk !== await revParse(this.gitDir, `refs/loupe/pr/${number}/trunk`).catch(() => ''))) {
             await this.prepareAgain(pr, trunk);
           } else {
-            this.rec.pr = { ...this.rec.pr, title: pr.title, body: pr.body, state: pr.state, isDraft: pr.isDraft, labels: pr.labels };
+            // (a record from before isCrossRepository was kept gets it here: a PR's stack is read from its record first)
+            this.rec.pr = { ...this.rec.pr, title: pr.title, body: pr.body, state: pr.state, isDraft: pr.isDraft, labels: pr.labels, isCrossRepository: pr.crossRepo };
             registry.save();
             this.sync().catch(() => {});
           }
@@ -626,6 +629,7 @@ export class Workspace {
     pr ||= await GH.pullRequest(owner, repo, number);
     await this.updatePrRefs(pr, trunk);
     this.rec.pr = { ...this.rec.pr, ...pr, isCrossRepository: pr.crossRepo };
+    registry.save(); // a PR's stack is read from this record until GitHub answers, after a restart too
     await this.sync(true);
     await this.ensureWorktree(); // after every refresh, through the one serial check: a repair for the old head may have just finished
     if (this.rec.worktreeReady) this.setProgress('');

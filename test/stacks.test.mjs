@@ -1143,6 +1143,19 @@ test('Read again reads GitHub’s answers behind a stack again', async (t) => {
   assert.ok(asked() > before, 'Read again did not read the open PRs again');
 });
 
+test('a write made in loupe reads GitHub’s answers behind its stack again', async (t) => {
+  const { ws, gh } = await openPR(t, 'fetched');
+  await ws.ready();
+  const asked = () => calls(gh).filter((args) => args[0] === 'pr' && args[1] === 'list').length;
+  await stackFor(ws);
+  const before = asked();
+  await stackFor(at2(ws));
+  assert.equal(asked(), before, 'within half a minute, what was read stands');
+  await ws.runAction(async () => ({ message: 'merged' }));
+  await stackFor(at2(ws));
+  assert.ok(asked() > before, 'the write did not read the open PRs again');
+});
+
 test('a page open on a repository hears when a read behind its stack changed an answer', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const { ws, gh, current } = await openPR(t, 'fetched');
