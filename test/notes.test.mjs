@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { attemptFileNotes, eligibleForNotes, fileNoteKey, filesNeedingNotes, resetNotesAttempt } from '../web/js/file-notes.js';
+import { attemptFileNotes, eligibleForNotes, fileNoteKey, filesNeedingNotes, resetNotesAttempt, NOTES_VERSION } from '../web/js/file-notes.js';
 
 const home = process.env.LOUPE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'loupe-notes-'));
 const { normalizeNotes, notes } = await import('../src/claude.mjs');
@@ -216,6 +216,28 @@ test('a batch that keeps failing is asked again after ten minutes, then an hour,
   assert.equal((await asked).error, null);
 });
 
+test('each change keeps its own count of failed batches, and one from an older notes version does not count', { timeout: 10000 }, async (t) => {
+  const repo = checkout('failure-per-key');
+  repo.write('a.ts', 'one\n');
+  const ws = repo.open(repo.base);
+  const keyA = contentKey(await ws.files('all', { fresh: true }));
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  const fail = async () => { throw new Error('error max turns'); };
+  const failOnce = async (key) => { const done = watchNotes(ws, (state) => !state.pending); assert.deepEqual(await notes(ws, { expectedKey: key }, fail), { started: true }); await done; };
+  for (let i = 0; i < 3; i++) { await failOnce(keyA); now += 2 * 3600000; }
+  assert.deepEqual(await notes(ws, { expectedKey: keyA }), { started: false });
+  repo.write('a.ts', 'two\n'); // another branch, say
+  const keyB = contentKey(await ws.files('all', { fresh: true }));
+  await failOnce(keyB);
+  repo.write('a.ts', 'one\n'); // and back
+  assert.deepEqual(await notes(ws, { expectedKey: keyA }), { started: false }, 'the other change’s failure reset this one’s');
+  ws.review.data.notesFailures[keyA].v = NOTES_VERSION - 1; // the notes' version moved on since
+  const asked = watchNotes(ws, (state) => !state.pending);
+  assert.deepEqual(await notes(ws, { expectedKey: keyA }, async () => answered()), { started: true });
+  assert.equal((await asked).error, null);
+});
+
 test('an active notes run queues model changes and Write again, keeping only the latest', { timeout: 10000 }, async () => {
   const repo = checkout('notes-queue');
   repo.write('a.ts', 'test\n');
@@ -286,7 +308,7 @@ test('the change fingerprint keeps its formula, so briefs written before still m
 });
 
 test('notes from an older prompt count as unwritten, so they are written again', async () => {
-  const { currentNotes, NOTES_VERSION } = await import('../web/js/file-notes.js');
+  const { currentNotes } = await import('../web/js/file-notes.js');
   const old = { key: 'a.go::b:o', note: 'old words' }, fresh = { key: 'b.go::b:o', note: 'new words', v: NOTES_VERSION };
   // per note: a run cut short leaves the notes it did not reach marked old
   assert.deepEqual(currentNotes({ files: { 'a.go': old, 'b.go': fresh } }), { 'b.go': fresh });

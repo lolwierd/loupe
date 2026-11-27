@@ -761,7 +761,7 @@ export async function pageStack(ws, { fresh = false } = {}) {
     const remotes = await git(ws.gitDir, ['remote', '-v']).catch(() => '');
     const origin = remotes.split('\n').find((l) => l.startsWith('origin\t')) || '';
     const gr = GH.githubRepoOf(origin.split(/\s+/)[1]);
-    if (gr) return stackFor(ws, { fresh, github: { owner: gr.owner, repo: gr.repo, pr: null } });
+    if (gr) return stackFor(ws, { fresh, github: { owner: gr.owner, repo: gr.repo, pr: null, standIn: true } });
   }
   await github;
   return stackFor(ws, { fresh });
@@ -857,7 +857,9 @@ async function resolve(ws, snapshot, m, github, commits, fresh = {}) {
       local = await localGraph(gitDir, m.trunk || m.base, snapshot.refs);
       const cut = await local?.parentOf(localPrefix + m.branch);
       // At a recorded cut, an equal PR head may be the parent. It doesn't make this checkout that PR.
-      const current = cut?.sha === tip ? chain.fromBranch(m.branch) : chain.changeFor(m.branch, tip);
+      // A stand-in for GitHub's read does not know the branch's own PR, which may be closed: by name only, so another
+      // branch's open PR at the same commit is not taken for it (GitHub's answer says, when it lands).
+      const current = cut?.sha === tip || g.standIn ? chain.fromBranch(m.branch) : chain.changeFor(m.branch, tip);
       if (current) g = { ...g, pr: current };
     }
   }

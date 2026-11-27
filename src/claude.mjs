@@ -1001,15 +1001,31 @@ const notesRuns = new Map();
 // the next too. Kept with the review, so a restart or a promote does not try again at once. A change with other
 // content starts over, and Write notes asks whenever you do.
 const NOTES_RETRY_MS = [10 * 60 * 1000, 60 * 60 * 1000];
+// Kept per change (its content key), the last twenty, so going between branches keeps each one's count; a failure
+// from notes of an older version does not count, since a new version asks again for every file.
+const notesFailureOf = (ws, key) => { const f = ws.review.data.notesFailures?.[key]; return f?.v === NOTES_VERSION ? f : null; };
+function noteFailure(ws, key, failed) {
+  const all = { ...ws.review.data.notesFailures };
+  delete ws.review.data.notesFailure; // the single record an earlier loupe kept
+  if (failed) {
+    const tries = (notesFailureOf(ws, key)?.tries || 0) + 1;
+    delete all[key];
+    all[key] = { v: NOTES_VERSION, tries, retryAt: tries <= NOTES_RETRY_MS.length ? Date.now() + NOTES_RETRY_MS[tries - 1] : null };
+    for (const k of Object.keys(all).slice(0, -20)) delete all[k];
+  } else if (all[key]) delete all[key];
+  else return;
+  ws.review.data.notesFailures = all;
+  ws.review.save();
+}
 
 async function notesPlan(ws, { again, expectedKey }) {
   const files = await ws.files('all', { fresh: true });
   const key = contentKey(files);
   if (expectedKey !== undefined) {
     if (!settings().autoNotes || expectedKey !== key) return { started: false };
-    const failure = ws.review.data.notesFailure;
-    if (failure?.key === key && !failure.retryAt) return { started: false };
-    if (failure?.key === key && failure.retryAt > Date.now()) return { started: false, retryAt: failure.retryAt };
+    const failure = notesFailureOf(ws, key);
+    if (failure && !failure.retryAt) return { started: false };
+    if (failure && failure.retryAt > Date.now()) return { started: false, retryAt: failure.retryAt };
   }
   const previous = ws.review.data.notes;
   return { key, previous, targets: filesNeedingNotes(files, currentNotes(previous), again) };
@@ -1108,12 +1124,7 @@ async function runNotes(ws, run, key, targets, previous, request) {
   } catch (e) {
     state.error = String(e.message || e);
   } finally {
-    const failure = ws.review.data.notesFailure;
-    if (state.error) {
-      const tries = failure?.key === key ? failure.tries + 1 : 1;
-      ws.review.data.notesFailure = { key, tries, retryAt: tries <= NOTES_RETRY_MS.length ? Date.now() + NOTES_RETRY_MS[tries - 1] : null };
-      ws.review.save();
-    } else if (failure?.key === key) { delete ws.review.data.notesFailure; ws.review.save(); }
+    noteFailure(ws, key, !!state.error);
     state.pending = false;
     publish();
   }

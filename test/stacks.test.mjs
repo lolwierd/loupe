@@ -1350,6 +1350,23 @@ test('a fork PR whose record cannot tell it is one, with GitHub failing, links n
   assert.deepEqual(numbers(stack), [1, 2], 'a PR based on a branch named like the fork’s was taken for its child');
 });
 
+test('a checkout read as its origin does not take another branch’s PR at the same commit for its own', async (t) => {
+  const root = repo();
+  cut(root, 'fix', 'origin/main', 'fix'); // its own PR, #23, is closed
+  sh(root, 'branch', 'resubmit', 'fix'); // the same commit, opened again as #37
+  cut(root, 'above', 'resubmit', 'above');
+  sh(root, 'push', '-q', 'origin', 'fix', 'resubmit', 'above');
+  checkout(root, 'fix');
+  const resubmit = committedPR(root, 37, 'resubmit'), above = committedPR(root, 38, 'above', 'resubmit');
+  const gh = fixture(root, { prs: [{ ...committedPR(root, 23, 'fix'), state: 'CLOSED' }, resubmit, above], viewDelay: 3000 }, null);
+  sh(root, 'remote', 'set-url', 'origin', `https://github.com/owner/${gh.repo}.git`);
+  const ws = local(root);
+  await ws.ready();
+  t.after(() => ws.stopWatching());
+  const stack = await pageStack(ws);
+  assert.notEqual(stack.items.find((i) => i.current)?.pr, 37, 'another branch’s PR was shown as this one’s');
+});
+
 test('a look that does not need a fresh read of GitHub joins the one under way', async (t) => {
   const root = repo();
   cut(root, 'topic', 'main', 'first');
