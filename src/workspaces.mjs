@@ -545,12 +545,14 @@ export class Workspace {
   fetchGithubComments() { return this.fetchGithub(true); }
   fetchGithub(force = false) {
     if (!force && this.github && Date.now() - this.github.at < 60000) return Promise.resolve(this.github);
-    const run = this.fetchGithubNow();
+    // A caller that did not ask for a fresh read joins the one under way: one more queued behind it would read
+    // GitHub twice, and a page's first look would wait for both.
+    const run = (!force && this.githubReading) || this.fetchGithubNow();
     if (!force && this.github && !this.github.error) { run.catch(() => {}); return Promise.resolve(this.github); }
     return run;
   }
   fetchGithubNow() {
-    return this.serial('github', async () => {
+    const read = this.serial('github', async () => {
       const writes = this.ghWrites || 0; // a write that lands while this reads (actions.mjs landed) makes this answer old
       let owner, repo, number;
       if (this.rec.kind === 'pr') ({ owner, repo, number } = this.rec);
@@ -609,6 +611,10 @@ export class Workspace {
       if (this.github?.pr) { this.github = { ...this.github, at: Date.now() - 50000, stale: e.message }; return this.github; }
       this.github = { at: Date.now(), pr: null, threads: [], error: e.message }; return this.github;
     });
+    // the newest read asked for, running or queued: the one a caller with no need of a fresh one joins
+    this.githubReading = read;
+    read.finally(() => { if (this.githubReading === read) this.githubReading = null; }).catch(() => {});
+    return read;
   }
   async refresh() {
     // Read again reads GitHub's answers behind the stack again too, for the whole-stack range as for the Overview.

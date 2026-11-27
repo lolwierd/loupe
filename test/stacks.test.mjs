@@ -1350,6 +1350,21 @@ test('a fork PR whose record cannot tell it is one, with GitHub failing, links n
   assert.deepEqual(numbers(stack), [1, 2], 'a PR based on a branch named like the fork’s was taken for its child');
 });
 
+test('a look that does not need a fresh read of GitHub joins the one under way', async (t) => {
+  const root = repo();
+  cut(root, 'topic', 'main', 'first');
+  const current = committedPR(root, 101, 'topic');
+  const clone = fetchedPR(root, current);
+  const gh = fixture(root, { prs: [current], viewDelay: 1500 }, current);
+  const ws = new Workspace({ id: gh.repo + '-join', kind: 'pr', owner: gh.owner, repo: gh.repo, number: 101, clone, pr: { ...current, isCrossRepository: false } });
+  await ws.ready(); // GitHub's read starts here
+  t.after(() => ws.stopWatching());
+  const start = Date.now();
+  await ws.fetchGithub(); // a page's first look, with nothing read yet
+  assert.ok(Date.now() - start < 2500, `waited ${Date.now() - start} ms: two reads of GitHub`);
+  assert.equal(calls(gh).filter((args) => args[0] === 'pr' && args[1] === 'view').length, 1);
+});
+
 test('a checkout’s stack is read as its origin’s repository while GitHub’s read of it is slow', async (t) => {
   const root = repo();
   cut(root, 'parent', 'origin/main', 'parent');
