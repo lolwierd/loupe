@@ -1350,6 +1350,24 @@ test('a fork PR whose record cannot tell it is one, with GitHub failing, links n
   assert.deepEqual(numbers(stack), [1, 2], 'a PR based on a branch named like the fork’s was taken for its child');
 });
 
+test('a checkout’s stack is read as its origin’s repository while GitHub’s read of it is slow', async (t) => {
+  const root = repo();
+  cut(root, 'parent', 'origin/main', 'parent');
+  cut(root, 'current', 'parent', 'current');
+  sh(root, 'push', '-q', 'origin', 'parent', 'current');
+  const parent = committedPR(root, 1, 'parent'), current = committedPR(root, 2, 'current', 'parent');
+  const gh = fixture(root, { prs: [parent, current], viewDelay: 3000 }, current);
+  sh(root, 'remote', 'set-url', 'origin', `https://github.com/owner/${gh.repo}.git`);
+  const ws = local(root);
+  await ws.ready();
+  t.after(() => ws.stopWatching());
+  assert.ok(!ws.github?.owner);
+  const start = Date.now(), stack = await pageStack(ws);
+  assert.ok(Date.now() - start < 2000, `waited ${Date.now() - start} ms for GitHub`);
+  assert.deepEqual(numbers(stack), [1, 2]);
+  assert.equal(stack.items.find((i) => i.current)?.pr, 2, 'its branch’s PR, found among the open PRs');
+});
+
 test('a failed read of a repository’s merge settings is asked again a minute later, not kept until loupe restarts', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const root = repo();

@@ -745,13 +745,25 @@ async function addCommitStack(root, kind, m, pr, repo, chain, stack, snapshot, r
 // it had (each GitHub refresh made a new PR object, and every stack was read again, a second or more each time)
 const STACK_PR = ['number', 'state', 'isDraft', 'title', 'headRefName', 'headRefOid', 'baseRefName', 'baseRefOid', 'mergedAt', 'crossRepo', 'isCrossRepository', 'url'];
 const stackFields = (pr) => (pr ? STACK_PR.map((k) => pr[k] ?? null) : null);
-// The stack the page's Overview asks for. A checkout waits for GitHub's read, which says what PR its branch has. A PR
-// has its own record, so its stack is read from that while GitHub's read runs: its answer lands as a 'github' event,
-// and the page asks for the stack again then.
+// The stack the page's Overview asks for, while GitHub's read of the change runs: its answer lands as a 'github'
+// event, and the page asks for the stack again then. A PR's stack is read from its own record. A checkout GitHub has
+// not been read for yet is read as its origin's repository, its branch's PR found among the open PRs (shared, and
+// mostly read already), as for a branch GitHub has no PR for. A PR record from before isCrossRepository was kept
+// cannot tell a fork's branch from the repository's own, and a checkout with no GitHub origin has nothing to stand
+// in: they wait.
 export async function pageStack(ws, { fresh = false } = {}) {
   const github = ws.fetchGithub().catch(() => {});
-  // A record from before isCrossRepository was kept cannot tell a fork's branch from the repository's own: it waits.
-  if (ws.rec.kind !== 'pr' || ws.rec.pr?.isCrossRepository === undefined) await github;
+  if (ws.rec.kind === 'pr') {
+    if (ws.rec.pr?.isCrossRepository === undefined) await github;
+    return stackFor(ws, { fresh });
+  }
+  if (!ws.github?.owner) {
+    const remotes = await git(ws.gitDir, ['remote', '-v']).catch(() => '');
+    const origin = remotes.split('\n').find((l) => l.startsWith('origin\t')) || '';
+    const gr = GH.githubRepoOf(origin.split(/\s+/)[1]);
+    if (gr) return stackFor(ws, { fresh, github: { owner: gr.owner, repo: gr.repo, pr: null } });
+  }
+  await github;
   return stackFor(ws, { fresh });
 }
 
