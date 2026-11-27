@@ -7,6 +7,81 @@ import { git } from './util.mjs';
 import * as GH from './github.mjs';
 
 const cache = new WeakMap();
+
+// GitHub's answers a stack is read from (the open PRs, the recent ones, GitHub's own stacks, a PR's details), kept per
+// repository and shared by every PR and checkout of it: a hop from one PR of a stack to the next reads them once, not
+// again. Each read takes a second or two in a large repository. An answer is used as it is for half a minute. For
+// five minutes after that it is still used, and a new read starts behind it; past that a stack waits for a new one.
+// Only answers that came back are kept: a read that failed answers the last one while it is under five minutes old,
+// and past that fails as it would have (a stack read then shows only what git proves). A fresh stack (the page's
+// Read again) reads again and keeps what it got, and an older read landing after it changes nothing.
+// When a read behind a stack changes an answer, the stacks of that repository are read again (their key has the
+// repository's generation in it) and the pages open on it are told.
+const READ_FRESH_MS = 30000, READ_STALE_MS = 5 * 60000;
+const reads = new Map(); // repo \0 what -> { at, value, written (the read it came from), reading }
+const generations = new Map(); // repo -> how many times a read behind its stacks changed an answer
+const watchers = new Set();
+let readSeq = 0;
+const repoKey = (repo) => String(repo).toLowerCase();
+export const stackGeneration = (repo) => (repo && generations.get(repoKey(repo))) || 0;
+export function onStackReadsChanged(fn) { watchers.add(fn); return () => watchers.delete(fn); }
+// The next stack of this repository reads GitHub again: what was read is kept only for a read that fails.
+export function expireStackReads(repo) {
+  const prefix = repoKey(repo) + '\0';
+  for (const [k, e] of reads) if (k.startsWith(prefix)) e.at = -Infinity;
+}
+// The generation moves at once; the pages hear of it once for the answers a round of reads changed together.
+const telling = new Set();
+function changed(repo) {
+  const r = repoKey(repo);
+  generations.set(r, (generations.get(r) || 0) + 1);
+  if (telling.has(r)) return;
+  telling.add(r);
+  setTimeout(() => {
+    telling.delete(r);
+    for (const fn of watchers) { try { fn(r); } catch { /* a watcher's own trouble */ } }
+  }, 250).unref?.();
+}
+// Keep an answer that came back, unless a newer read has already kept one.
+function keep(repo, k, seq, value) {
+  let e = reads.get(k);
+  if (!e) reads.set(k, e = { at: -Infinity, value: undefined, written: 0 });
+  if (seq < e.written) return false;
+  const moved = e.value !== undefined && JSON.stringify(e.value) !== JSON.stringify(value);
+  Object.assign(e, { at: Date.now(), value, written: seq });
+  if (moved) changed(repo);
+  return true;
+}
+function sharedRead(repo, what, run, { fresh = false } = {}) {
+  const k = repoKey(repo) + '\0' + what;
+  const e = reads.get(k), age = e ? Date.now() - e.at : Infinity;
+  const start = () => {
+    const seq = ++readSeq;
+    const p = run().then((value) => { keep(repo, k, seq, value); return value; }, (err) => {
+      const last = reads.get(k);
+      if (last?.value === undefined || !(Date.now() - last.at < READ_STALE_MS)) throw err;
+      return last.value;
+    }).finally(() => { const now = reads.get(k); if (now?.reading === p) now.reading = null; });
+    let entry = reads.get(k);
+    if (!entry) reads.set(k, entry = { at: -Infinity, value: undefined, written: 0 });
+    entry.reading = p;
+    return p;
+  };
+  // fresh is the one stack read that asked for it: each answer is read once for it, and shared by its callers
+  if (fresh) {
+    if (fresh instanceof Map && fresh.has(k)) return fresh.get(k);
+    const p = start();
+    if (fresh instanceof Map) fresh.set(k, p);
+    return p;
+  }
+  if (e?.value !== undefined && age < READ_FRESH_MS) return Promise.resolve(e.value);
+  if (e?.value !== undefined && age < READ_STALE_MS) {
+    if (!e.reading) start().catch(() => {});
+    return Promise.resolve(e.value);
+  }
+  return e?.reading || start();
+}
+
 const localPrefix = 'refs/heads/';
 const remotePrefix = 'refs/remotes/origin/';
 // Reading a missing object in a partial clone must not fetch it behind the stack reader's back.
@@ -214,30 +289,37 @@ const prFields = 'number,title,headRefName,baseRefName,headRefOid,baseRefOid,isD
 const prList = (repo, state, limit, extra = [], fields = prFields) => GH.ghJson(['pr', 'list', '--repo', repo, '--state', state, '--limit', String(limit), '--json', fields, ...extra]);
 const openPRLimit = 1000;
 
-// The recently merged PRs into a trunk, shared for a few seconds by every read that asks (a head start and its use).
-const mergedReads = new Map();
-function mergedPRs(repo, trunk) {
-  const key = repo + '\0' + trunk, hit = mergedReads.get(key);
-  if (hit && Date.now() - hit.at < 10000) return hit.value;
-  const value = prList(repo, 'merged', 200, ['--base', trunk], prFields + ',mergeCommit').catch(() => []);
-  mergedReads.set(key, { at: Date.now(), value });
-  return value;
+// The recently merged PRs into a trunk.
+function mergedPRs(repo, trunk, fresh) {
+  return sharedRead(repo, 'merged\0' + trunk, () => prList(repo, 'merged', 200, ['--base', trunk], prFields + ',mergeCommit'), { fresh }).catch(() => []);
 }
 
-async function listClosedPRs(repo, head) {
-  // gh paginates to --limit. A full result can have another relevant PR beyond it.
-  for (let limit = 201; ; limit *= 2) {
-    const list = await prList(repo, 'closed', limit, ['--head', head]);
-    if (list.length < limit) return list;
-  }
+function listClosedPRs(repo, head, fresh) {
+  return sharedRead(repo, 'closed\0' + head, async () => {
+    // gh paginates to --limit. A full result can have another relevant PR beyond it.
+    for (let limit = 201; ; limit *= 2) {
+      const list = await prList(repo, 'closed', limit, ['--head', head]);
+      if (list.length < limit) return list;
+    }
+  }, { fresh });
 }
 
-async function githubStack(repo, number) {
-  const stacks = await GH.ghJson(['api', `repos/${repo}/stacks?pull_request=${number}`]).catch(() => []);
-  return Array.isArray(stacks) ? stacks.find((s) => s.pull_requests?.some((p) => p.number === number)) : null;
+// GitHub's stack holding this PR. Its answer names every PR in that stack, so it is kept for each of them that has
+// none yet: the next PR of the stack opened has its answer already.
+async function githubStack(repo, number, fresh) {
+  const stacks = await sharedRead(repo, 'stacks#' + number, async () => {
+    const answer = await GH.ghJson(['api', `repos/${repo}/stacks?pull_request=${number}`]);
+    if (!Array.isArray(answer)) throw new Error('GitHub answered no list of stacks');
+    for (const n of new Set(answer.flatMap((s) => (s.pull_requests || []).map((p) => p.number)))) {
+      const k = repoKey(repo) + '\0stacks#' + n;
+      if (n !== number && reads.get(k)?.value === undefined) keep(repo, k, ++readSeq, answer.filter((s) => s.pull_requests.some((p) => p.number === n)));
+    }
+    return answer;
+  }, { fresh }).catch(() => []);
+  return stacks.find((s) => s.pull_requests?.some((p) => p.number === number)) || null;
 }
 
-function prGraph(repo, open, trunk) {
+function prGraph(repo, open, trunk, fresh) {
   // Past the cap the list is a sample, and a sample proves nothing: not which PR a branch has, nor that a base has
   // none. So loupe infers no PR stack from it, as when the list cannot be read; GitHub's own stacks and the local
   // branches still show. (Three rounds of patching the cases a cut-off list gets wrong ended here.)
@@ -273,7 +355,7 @@ function prGraph(repo, open, trunk) {
     if (byHead.has(base)) return openParent(p);
     // If the open read succeeded and showed no PR for this base, a closed PR with the exact head can explain it.
     if (!open || !isOid(p.baseRefOid)) return null;
-    if (!historic.has(base)) historic.set(base, listClosedPRs(repo, base).catch(() => []));
+    if (!historic.has(base)) historic.set(base, listClosedPRs(repo, base, fresh).catch(() => []));
     return historic.get(base).then((prs) => prs.find((old) => !old.isCrossRepository && old.headRefOid === p.baseRefOid && old.state === 'CLOSED'));
   };
   const below = async (p, seen) => {
@@ -381,7 +463,7 @@ function prAtCut(cut, prs) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-async function addCommitStack(root, kind, m, pr, repo, chain, stack, snapshot, refs, local, commitLists) {
+async function addCommitStack(root, kind, m, pr, repo, chain, stack, snapshot, refs, local, commitLists, fresh) {
   const trunk = chain.trunk;
   if (pr?.state === 'CLOSED' || (kind === 'local' && (!trunk || !m.branch || m.branch === 'HEAD' || m.branch === trunk))) return stack;
   const namespace = kind === 'pr' && pr ? `refs/loupe/pr/${pr.number}/` : null;
@@ -413,7 +495,7 @@ async function addCommitStack(root, kind, m, pr, repo, chain, stack, snapshot, r
     .map((p) => [p.number, p.headRefOid]));
   const [remoteHistory, merged, history] = await Promise.all([
     commitLists?.(missing) || new Map(),
-    trunk ? mergedPRs(repo, trunk) : [],
+    trunk ? mergedPRs(repo, trunk, fresh) : [],
     read(root, ['rev-list', '--topo-order', '--parents', '--stdin'], {
       input: [head, ...new Set([...refs.values(), ...available]), '^' + trunkSha].join('\n') + '\n',
     }),
@@ -616,19 +698,20 @@ export async function stackFor(ws, { fresh = false, snapshot, meta = ws.meta, gi
   const { branch, headFull, trunk, base } = meta;
   const fetched = commits && ws.rec.kind === 'pr' && ws.rec.number
     ? await read(ws.gitDir, ['for-each-ref', '--format=%(objectname)', `refs/loupe/pr/${ws.rec.number}/`]) : '';
-  const key = JSON.stringify([snapshot.key, branch, headFull, trunk, base, fetched, github?.owner, github?.repo, stackFields(github?.pr), ws.rec.pr]);
+  const repo = github?.owner ? `${github.owner}/${github.repo}` : ws.rec.kind === 'pr' ? `${ws.rec.owner}/${ws.rec.repo}` : null;
+  const key = JSON.stringify([snapshot.key, branch, headFull, trunk, base, fetched, github?.owner, github?.repo, stackFields(github?.pr), ws.rec.pr, stackGeneration(repo)]);
   let entries = cache.get(ws);
   if (!entries) cache.set(ws, entries = new Map());
   if (fresh && commits) entries.delete(false);
   const hit = entries.get(commits);
   if (!fresh && hit?.key === key && Date.now() - hit.at < 120000) return hit.value;
   // Share a read for the same state. A slower old request cannot replace a newer cache entry.
-  const value = resolve(ws, snapshot, meta, github, commits).catch((e) => ({ kind: 'none', items: [], error: e.message }));
+  const value = resolve(ws, snapshot, meta, github, commits, fresh && new Map()).catch((e) => ({ kind: 'none', items: [], error: e.message }));
   entries.set(commits, { key, at: Date.now(), value });
   return value;
 }
 
-async function resolve(ws, snapshot, m, github, commits) {
+async function resolve(ws, snapshot, m, github, commits, fresh = false) {
   const { gitDir } = ws;
   // The GitHub refresh can lag a checkout, and a branch name can outlive its closed PR.
   const oldPR = github?.pr && github.pr.state !== 'OPEN' && m.headFull && github.pr.headRefOid !== m.headFull;
@@ -649,7 +732,7 @@ async function resolve(ws, snapshot, m, github, commits) {
       const [list, settings] = await Promise.all([
         // A full result can omit other PRs with the same branch name, so links require matching head OIDs.
         // If no open PR for the base appears in the list, a closed PR with the exact head still qualifies.
-        prList(repo, 'open', openPRLimit).catch(() => null),
+        sharedRead(repo, 'open', () => prList(repo, 'open', openPRLimit), { fresh }).catch(() => null),
         trunkName ? null : GH.mergeSettings(g.owner, g.repo),
       ]);
       let trunk = trunkName || settings?.defaultBranchRef?.name;
@@ -657,7 +740,7 @@ async function resolve(ws, snapshot, m, github, commits) {
         const ref = await localTrunk(gitDir);
         if (ref !== 'HEAD') trunk = branchOf(ref);
       }
-      return prGraph(repo, list, trunk);
+      return prGraph(repo, list, trunk, fresh);
     })();
     return graph;
   }
@@ -671,12 +754,12 @@ async function resolve(ws, snapshot, m, github, commits) {
       commitLists = (missing) => openCommitLists(repo, reads, bootstrap, missing);
     }
     if (m.commits?.length) {
-      if (trunkName) mergedPRs(repo, trunkName).catch(() => {});
+      if (trunkName) mergedPRs(repo, trunkName, fresh);
       else if (ws.rec.kind === 'pr' && g.pr?.baseRefName) {
         // When the fetched base is the trunk, its name is already in the PR. Start that read without repo settings.
         const namespace = `refs/loupe/pr/${g.pr.number}/`;
         read(gitDir, ['rev-parse', '--verify', '--quiet', namespace + 'trunk']).then((sha) => {
-          if (sha.trim() && sha.trim() === g.pr?.baseRefOid) return mergedPRs(repo, g.pr.baseRefName);
+          if (sha.trim() && sha.trim() === g.pr?.baseRefOid) return mergedPRs(repo, g.pr.baseRefName, fresh);
         }).catch(() => {});
       }
     }
@@ -692,19 +775,19 @@ async function resolve(ws, snapshot, m, github, commits) {
 
   if (repo && g.pr) {
     const number = g.pr.number;
-    const s = await githubStack(repo, number);
+    const s = await githubStack(repo, number, fresh);
     if (s) {
       // The open read is already underway. Only published stacks with historical entries need another read.
       const open = commits ? (await prHistory()).list : [];
       const known = new Set([number, ...open.map((p) => p.number)]);
       const recent = s.pull_requests.some((p) => !known.has(p.number))
-        ? await prList(repo, 'all', 200).catch(() => []) : [];
+        ? await sharedRead(repo, 'all', () => prList(repo, 'all', 200), { fresh }).catch(() => []) : [];
       const list = [...open, ...recent];
       const details = new Map(list.map((p) => [p.number, p]));
       details.set(number, g.pr);
       const items = await Promise.all(s.pull_requests.map(async (p) => {
         // The stack can contain a PR older than the recent list, including a closed or fork PR.
-        const detail = details.get(p.number) || await GH.ghJson(['pr', 'view', String(p.number), '--repo', repo, '--json', prFields]).catch(() => null);
+        const detail = details.get(p.number) || await sharedRead(repo, 'pr#' + p.number, () => GH.ghJson(['pr', 'view', String(p.number), '--repo', repo, '--json', prFields]), { fresh }).catch(() => null);
         const item = prItem(p), extra = detail && prItem(detail);
         return { ...item, branch: item.branch || extra?.branch, title: extra?.title || item.title,
           state: item.state || extra?.state, draft: item.draft || !!extra?.draft, merged: item.merged || !!extra?.merged,
@@ -717,7 +800,7 @@ async function resolve(ws, snapshot, m, github, commits) {
     const up = chain.above(g.pr, seen);
     if (down.length || up.length) {
       const parent = down.at(-1);
-      const ps = parent ? await githubStack(repo, parent.pr) : null;
+      const ps = parent ? await githubStack(repo, parent.pr, fresh) : null;
       return finish({ kind: 'chain', trunk, items: [...down, { ...prItem(g.pr), current: true, ...(ps && { notInStack: true }) }, ...up],
         ...(ps && { stackNumber: ps.number, parentStack: true }) });
     }
@@ -786,7 +869,7 @@ async function resolve(ws, snapshot, m, github, commits) {
           }
         }
         const below = down.at(-1);
-        const ps = below?.pr ? await githubStack(repo, below.pr) : null;
+        const ps = below?.pr ? await githubStack(repo, below.pr, fresh) : null;
         const here = g?.pr ? prItem(g.pr) : { branch: m.branch };
         return finish({ kind: 'local', trunk, items: [...down.map((row) => row.ref ? { ...row, byCommits: true } : row),
           { ...here, current: true }, ...up.map((row) => ({ ...row, byCommits: true }))],
@@ -814,7 +897,7 @@ async function resolve(ws, snapshot, m, github, commits) {
       }
       v.items = items;
       // A missing GitHub source leaves whatever the declared stack and local graph already proved.
-      v = await addCommitStack(gitDir, ws.rec.kind, m, g.pr, repo, chain, v, snapshot, refs, local, commitLists).catch(() => v);
+      v = await addCommitStack(gitDir, ws.rec.kind, m, g.pr, repo, chain, v, snapshot, refs, local, commitLists, fresh).catch(() => v);
     }
     // A backup at a rewritten branch's old tip is a copy of that work. An unchanged child at an
     // ordinary cut point can still be a real child, so look only at tips that fell out of the branch's line.

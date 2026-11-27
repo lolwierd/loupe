@@ -706,6 +706,7 @@ function listenWs() {
     else { S.github = github; hooks.githubChanged(); if (S.ws) $('#wsbtn').innerHTML = wsTitle(); }
     if (S.ws) loadStack(); // the stack's other PRs can move with this one unchanged
   });
+  on('stack', () => { if (S.ws) loadStack(); }); // what GitHub says of the stack moved, with this PR unchanged
   on('page', () => location.reload());
   on('update', (v) => hooks.updateChanged?.(v));
 }

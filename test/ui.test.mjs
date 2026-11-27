@@ -350,7 +350,7 @@ test('a file refresh keeps a brief event newer than its review snapshot', async 
   const result = { pending: false, tldr: 'New guide' };
   let finishFiles;
   const pending = vm.runInNewContext(load + '\n}\nloadFiles()', {
-    S, wsApi: (p) => p,
+    S, wsApi: (p) => p, askStack: () => () => {},
     api(url) {
       if (url === '/files') return new Promise((resolve) => { finishFiles = resolve; });
       return Promise.resolve({ brief: { pending: true } });

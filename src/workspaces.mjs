@@ -9,7 +9,7 @@ import { git, gitOk, run, JsonFile, Lru, slug, isSha, safeRel, single, serial } 
 import { WORKTREE, revParse, commitsBetween, changedFiles, fileHunks, rangePatches, readAt, lineCount, related, kindOf, reviewLines } from './git.mjs';
 import { goplsFor } from './lsp.mjs';
 import * as GH from './github.mjs';
-import { localParent, localTrunk, stackFor, stackSnapshot } from './stacks.mjs';
+import { expireStackReads, localParent, localTrunk, onStackReadsChanged, stackFor, stackSnapshot } from './stacks.mjs';
 import { fileNoteKey } from '../web/js/file-notes.js';
 
 export const registry = new JsonFile(path.join(STATE_DIR, 'state.json'), { workspaces: [], last: null, clones: {}, ownSessions: [] });
@@ -24,6 +24,13 @@ export const settings = () => {
   return st;
 };
 const live = new Map(); // id -> Workspace
+// The repository a workspace's stack is read from: a PR's own, or the one GitHub named for a checkout's branch.
+const stackRepo = (ws) => ws.rec.kind === 'pr' ? `${ws.rec.owner}/${ws.rec.repo}` : ws.github?.owner ? `${ws.github.owner}/${ws.github.repo}` : null;
+// A read behind a repository's stacks changed what GitHub had said: every page open on that repository asks for its
+// stack again, instead of drawing the old one until the next read of GitHub.
+onStackReadsChanged((repo) => {
+  for (const ws of live.values()) if (ws.clients.size && stackRepo(ws)?.toLowerCase() === repo) ws.emit('stack', {});
+});
 const fullOid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 // ------------------------------------------------------------------ targets: what someone pasted or typed
@@ -601,6 +608,8 @@ export class Workspace {
     });
   }
   async refresh() {
+    // Read again reads GitHub's answers behind the stack again too, for the whole-stack range as for the Overview.
+    if (stackRepo(this)) expireStackReads(stackRepo(this));
     if (this.rec.kind === 'pr') {
       if (this.status !== 'ready') return this.prepare();
       const before = this.meta?.headFull;
